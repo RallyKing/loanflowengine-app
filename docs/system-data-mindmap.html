@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>System data mind map — Lender List / lender-app</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3d8bfd;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 10px 14px;
+      background: var(--panel);
+      border-bottom: 1px solid #2a3544;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0;
+      margin-right: 12px;
+    }
+    header .hint { font-size: 12px; color: var(--muted); max-width: 520px; }
+    #search {
+      flex: 1;
+      min-width: 180px;
+      max-width: 320px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid #2a3544;
+      background: #0f1419;
+      color: var(--text);
+    }
+    #main {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+    #sidebar {
+      width: 260px;
+      background: var(--panel);
+      border-right: 1px solid #2a3544;
+      padding: 10px;
+      font-size: 12px;
+      overflow-y: auto;
+    }
+    #sidebar h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 14px 0 8px;
+    }
+    #sidebar label { display: flex; align-items: center; gap: 8px; margin: 4px 0; cursor: pointer; }
+    #sidebar fieldset { border: none; padding: 0; margin: 0; }
+    #graph {
+      flex: 1;
+      min-width: 0;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    footer {
+      padding: 6px 14px;
+      font-size: 11px;
+      color: var(--muted);
+      border-top: 1px solid #2a3544;
+      background: var(--panel);
+    }
+    footer a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>System data mind map</h1>
+    <input type="search" id="search" placeholder="Search nodes (tables, layers, paths)…" autocomplete="off" />
+    <span class="hint">Scroll wheel zoom · drag pane · click node for details. Source: <code>lender-app/convex/schema.ts</code> + auth/org modules. Open <a href="./system-data-mindmap.md" style="color:var(--accent)">system-data-mindmap.md</a> for prose map.</span>
+  </header>
+  <div id="main">
+    <aside id="sidebar">
+      <h2>Layers (toggle)</h2>
+      <fieldset id="layers"></fieldset>
+      <h2>Legend</h2>
+      <div><span class="legend-dot" style="background:#9b59b6"></span>Auth boundary</div>
+      <div><span class="legend-dot" style="background:#e67e22"></span>Next.js / browser</div>
+      <div><span class="legend-dot" style="background:#3498db"></span>Convex logic</div>
+      <div><span class="legend-dot" style="background:#1abc9c"></span>Org / RBAC</div>
+      <div><span class="legend-dot" style="background:#27ae60"></span>Convex tables (healthy)</div>
+      <div><span class="legend-dot" style="background:#c8a900"></span>Warning: migration / dual key</div>
+      <div><span class="legend-dot" style="background:#c0392b"></span>Risk / legacy shape</div>
+      <div><span class="legend-dot" style="background:#7f8c8d"></span>Portal / integration island</div>
+    </aside>
+    <div id="graph"></div>
+  </div>
+  <footer>
+    Generated for repository path <code>lender-app/</code> — no inferred FKs; only schema <code>v.id</code> and documented string ownership fields. Convex JWT path optional; production uses cookie session + <code>memberUserKey</code> / env fallback per <code>organizationAccess.ts</code>.
+  </footer>
+
+  <script>
+(function () {
+  const LAYERS = {
+    auth: { label: "Auth & session", re: /^(mw|cookie|api_login|sess|viewer|actor|auth_|native_)/ },
+    org: { label: "Org & permissions", re: /^(org_|rbac|perm|dom_)/ },
+    pipeline: { label: "Pipeline & deal", re: /^(pipe_|intake|shareL|ledger|pay_|disc_|lend_|cand|attach|savedF|global_|block_)/ },
+    crm_tasks: { label: "CRM, tasks, notifications", re: /^(crm_|task_|note|act_|lib_|sig_|contact)/ },
+    prefs: { label: "Preferences & onboarding", re: /^(pref_|nav_|onboard|workflow|tpl_)/ },
+    portal: { label: "Client portal & messaging", re: /^(port_|msg_|audit_sec|throt_)/ },
+    integrations: { label: "Integrations & email & webhooks", re: /^int_/ },
+    ops: { label: "Ops / backup / migration", re: /^(backup_|migr_|rate_|email_in|out_|sys_mail|org_integ)/ },
+  };
+
+  const nodes = [
+    { id: "mw", label: "middleware.ts", group: "front", layer: "auth", title: "Session gate; host→org cookie; public routes" },
+    { id: "cookie", label: "Cookies\n(dlc_session,\ndlc_csrf,\nhost org)", group: "boundary", layer: "auth", title: "sessionAuth.ts + hostOrgCookie" },
+    { id: "api_login", label: "api/auth/*", group: "front", layer: "auth", title: "login route → Convex + bridge" },
+    { id: "sess", label: "verifySession\nloadViewer", group: "front", layer: "auth", title: "lib/sessionAuth.ts, loadViewer" },
+    { id: "viewer", label: "useViewer\n(SessionContext)", group: "front", layer: "auth", title: "Hydrated profile" },
+    { id: "actor", label: "useActorUserKey\n(accountId|userKey)", group: "warn", layer: "auth", title: "lib/useActorUserKey.ts — dual identity" },
+    { id: "ls_acct", label: "localStorage\naccountId UUID", group: "warn", layer: "auth", title: "userAccountIdentity.ts" },
+    { id: "ls_org", label: "localStorage\nactive org id", group: "warn", layer: "auth", title: "activeOrganizationId.ts" },
+    { id: "convex_client", label: "ConvexReactClient\n(ConvexProvider)", group: "front", layer: "auth", title: "ConvexClientProvider.tsx" },
+
+    { id: "native_vi", label: "viewerIdentity.ts\nrequireIdentity", group: "logic", layer: "auth", title: "JWT or fallback env APP_AUTH_*" },
+    { id: "native_rmk", label: "resolveMemberUserKey", group: "logic", layer: "auth", title: "organizationAccess.ts" },
+    { id: "native_fb", label: "platformUserKeyFallback\n(APP_AUTH_USER_KEY)", group: "warn", layer: "auth", title: "Convex deployment env alignment" },
+
+    { id: "auth_users", label: "authUsers", group: "data", layer: "auth", title: "Native accounts" },
+    { id: "auth_sess", label: "authSessions", group: "data", layer: "auth", title: "userId→authUsers" },
+    { id: "auth_rst", label: "authPasswordResetTokens\nauthEmailVerificationTokens", group: "data", layer: "auth", title: "userId→authUsers" },
+    { id: "auth_rate", label: "authRateBuckets", group: "data", layer: "auth", title: "Rate limits" },
+
+    { id: "org_root", label: "organizations", group: "risk", layer: "org", title: "Optional clerkOrganizationId legacy" },
+    { id: "org_mem", label: "organizationMembers\n(userKey+org)", group: "orgn", layer: "org", title: "assignedRoleId→organizationRoles" },
+    { id: "org_role", label: "organizationRoles", group: "orgn", layer: "org", title: "permissions[]" },
+    { id: "org_perm", label: "organizationPermissions", group: "orgn", layer: "org", title: "deny overlays" },
+    { id: "org_navpol", label: "organizationNavigationPolicy", group: "orgn", layer: "org", title: "Enforced nav ids" },
+    { id: "rbac", label: "assertOrgMember\nassertOrgScopeArgs", group: "logic", layer: "org", title: "organizationAccess.ts" },
+    { id: "dom_org", label: "organizationCustomDomains", group: "orgn", layer: "org", title: "hostname→org" },
+    { id: "perm_ctx", label: "useOrgConvexQueryArgs\n(orgId+memberUserKey)", group: "logic", layer: "org", title: "lib/useOrgConvexQueryArgs.ts" },
+
+    { id: "pipe_row", label: "pipeline\n(dealData,fileDrawer…)", group: "warn", layer: "pipeline", title: "organizationId?, ownerUserKey?, intakeSheetId?" },
+    { id: "intake", label: "intakeSheets\n(NO org id)", group: "risk", layer: "pipeline", title: "intakeSchemaPart.ts — scope via pipeline link" },
+    { id: "shareL", label: "shareLinks\n(intakeId)", group: "data", layer: "pipeline", title: "Public share tokens" },
+    { id: "pipe_share", label: "pipelineFileShares", group: "data", layer: "pipeline", title: "fileId+userKey" },
+    { id: "pipe_act", label: "pipelineFileActivity", group: "data", layer: "pipeline", title: "Audit; FK file/contact/lender" },
+    { id: "ledger", label: "ledger\npayments", group: "data", layer: "pipeline", title: "fileId→pipeline" },
+    { id: "lend_row", label: "lenders\nlenderStats", group: "data", layer: "pipeline", title: "organizationId? optional global" },
+    { id: "cand", label: "lenderCandidates\ndiscoveryRuns", group: "data", layer: "pipeline", title: "AI discovery cache" },
+    { id: "attach", label: "lenderAttachments", group: "data", layer: "pipeline", title: "lenderId+storage" },
+    { id: "savedF", label: "savedFilterPresets", group: "data", layer: "pipeline", title: "Browse smart lists" },
+    { id: "global_txt", label: "globalSearchText\n(search indexes)", group: "data", layer: "pipeline", title: "On pipeline,tasks,contacts,lenders" },
+    { id: "block_cfg", label: "pipelineGlobalBlockConfig", group: "data", layer: "pipeline", title: "Singleton admin layout" },
+    { id: "tpl_user", label: "pipelineFileUserTemplates", group: "warn", layer: "pipeline", title: "accountId string" },
+
+    { id: "task_row", label: "tasks", group: "warn", layer: "crm_tasks", title: "organizationId? assigneeId string" },
+    { id: "task_not", label: "taskNotifications", group: "data", layer: "crm_tasks", title: "userKey+taskId" },
+    { id: "user_not", label: "userNotifications", group: "data", layer: "crm_tasks", title: "userKey inbox" },
+    { id: "task_att", label: "taskAttachments", group: "data", layer: "crm_tasks", title: "taskId+_storage" },
+    { id: "crm_c", label: "contacts", group: "data", layer: "crm_tasks", title: "organizationId?" },
+    { id: "crm_cfl", label: "contactFileLinks", group: "data", layer: "crm_tasks", title: "contact+file" },
+    { id: "crm_cll", label: "contactLenderLinks", group: "data", layer: "crm_tasks", title: "M:N" },
+    { id: "crm_act", label: "contactActivity", group: "data", layer: "crm_tasks", title: "Per contact timeline" },
+    { id: "act_feed", label: "activityFeed", group: "data", layer: "crm_tasks", title: "scopeKind org|user + scopeId" },
+
+    { id: "lib_doc", label: "libraryDocuments\nVersions+Links", group: "data", layer: "crm_tasks", title: "createdByUserKey; org?" },
+    { id: "sig", label: "signatureEnvelopes\nSigners+Audit", group: "data", layer: "crm_tasks", title: "E-sign" },
+
+    { id: "pref_row", label: "userPreferences", group: "warn", layer: "prefs", title: "accountId — onboarding flags here + legacy userOnboarding" },
+    { id: "nav_cfg", label: "navigationUserConfig", group: "warn", layer: "prefs", title: "accountId" },
+    { id: "onboard", label: "userOnboarding", group: "warn", layer: "prefs", title: "userKey legacy" },
+    { id: "workflow", label: "userSimpleWorkflows", group: "data", layer: "prefs", title: "accountId" },
+
+    { id: "port_id", label: "clientPortal*", group: "portal_island", layer: "portal", title: "Separate auth; not workspace cookie" },
+    { id: "msg", label: "fileMessages\n+attachments", group: "portal_island", layer: "portal", title: "Per-file chat" },
+    { id: "audit_sec", label: "securityAuditLog", group: "data", layer: "portal", title: "Security" },
+    { id: "throt_p", label: "portalAuthThrottle", group: "data", layer: "portal", title: "Portal throttles" },
+
+    { id: "int_bundle", label: "integration*\n(integrationConnectors…)", group: "portal_island", layer: "integrations", title: "API keys, OAuth, jobs, cursors" },
+    { id: "org_integ", label: "organizationIntegrationWorkflows", group: "data", layer: "integrations", title: "Org automations" },
+    { id: "email_in", label: "emailInboxSyncPreferences", group: "data", layer: "integrations", title: "Inbox sync" },
+    { id: "sys_mail", label: "systemEmailEvents\nsystemEmailLog", group: "data", layer: "integrations", title: "Outbound mail log" },
+    { id: "out_wh", label: "outboundWebhook*", group: "data", layer: "integrations", title: "Deliveries + logs" },
+
+    { id: "backup_", label: "dataBackupSnapshots\nParts", group: "data", layer: "ops", title: "Backup" },
+    { id: "migr_", label: "dataMigrationRuns\nRollbackChunks", group: "data", layer: "ops", title: "Migration audit" },
+
+    { id: "storage", label: "Convex _storage\n(binary blobs)", group: "boundary", layer: "auth", title: "Files, logos, attachments" },
+  ];
+
+  const edges = [
+    { from: "mw", to: "cookie", dashes: true },
+    { from: "cookie", to: "sess", dashes: true },
+    { from: "api_login", to: "cookie", dashes: true },
+    { from: "sess", to: "viewer", dashes: true },
+    { from: "viewer", to: "actor", dashes: true },
+    { from: "ls_acct", to: "actor", dashes: true },
+    { from: "viewer", to: "perm_ctx", dashes: true },
+    { from: "ls_org", to: "perm_ctx", dashes: true },
+    { from: "perm_ctx", to: "convex_client", dashes: true },
+    { from: "convex_client", to: "native_rmk", dashes: true, title: "queries/mutations args" },
+    { from: "native_rmk", to: "native_vi", dashes: true },
+    { from: "native_rmk", to: "native_fb", dashes: true, color: { color: "#c8a900" } },
+    { from: "native_rmk", to: "rbac", dashes: false, color: { color: "#1abc9c" } },
+    { from: "rbac", to: "org_mem", dashes: false },
+
+    { from: "auth_sess", to: "auth_users", title: "userId" },
+    { from: "auth_rst", to: "auth_users", title: "userId" },
+    { from: "org_mem", to: "org_root", title: "organizationId" },
+    { from: "org_mem", to: "org_role", title: "assignedRoleId" },
+    { from: "org_role", to: "org_root", title: "organizationId" },
+    { from: "org_perm", to: "org_root", title: "organizationId" },
+    { from: "org_navpol", to: "org_root", title: "organizationId" },
+    { from: "dom_org", to: "org_root", title: "organizationId" },
+
+    { from: "pipe_row", to: "intake", title: "intakeSheetId" },
+    { from: "pipe_row", to: "lend_row", title: "lenders[] / selectedLenderId" },
+    { from: "shareL", to: "intake", title: "intakeId" },
+    { from: "pipe_share", to: "pipe_row", title: "fileId" },
+    { from: "pipe_act", to: "pipe_row", title: "fileId" },
+    { from: "pipe_act", to: "crm_c", title: "contactId?", color: { color: "#555" } },
+    { from: "pipe_act", to: "lend_row", title: "lenderId?", color: { color: "#555" } },
+    { from: "ledger", to: "pipe_row", title: "fileId" },
+    { from: "attach", to: "lend_row", title: "lenderId" },
+    { from: "attach", to: "storage", title: "storageId", dashes: true },
+    { from: "lend_row", to: "org_root", title: "organizationId?", color: { color: "#c8a900" } },
+    { from: "pipe_row", to: "org_root", title: "organizationId?", color: { color: "#c8a900" } },
+    { from: "task_row", to: "pipe_row", title: "relatedFileId?" },
+    { from: "task_row", to: "crm_c", title: "relatedContactId?" },
+    { from: "task_row", to: "task_row", title: "parentTaskId / linkedTaskIds", color: { color: "#666" } },
+    { from: "task_not", to: "task_row", title: "taskId" },
+    { from: "user_not", to: "task_row", title: "taskId?", color: { color: "#555" } },
+    { from: "user_not", to: "pipe_row", title: "fileId?", color: { color: "#555" } },
+    { from: "task_att", to: "task_row", title: "taskId" },
+    { from: "task_att", to: "storage", dashes: true },
+    { from: "crm_cfl", to: "crm_c", title: "contactId" },
+    { from: "crm_cfl", to: "pipe_row", title: "fileId" },
+    { from: "crm_act", to: "crm_c", title: "contactId" },
+    { from: "lib_doc", to: "org_root", title: "organizationId?", color: { color: "#c8a900" } },
+
+    { from: "actor", to: "org_mem", title: "userKey should match", dashes: true, color: { color: "#c8a900" } },
+    { from: "actor", to: "pref_row", title: "accountId", dashes: true, color: { color: "#c8a900" } },
+    { from: "pref_row", to: "onboard", title: "merged in queries", dashes: true },
+  ];
+
+  const groupColors = {
+    boundary: { background: "#6c3483", border: "#9b59b6" },
+    front: { background: "#a04000", border: "#e67e22" },
+    logic: { background: "#1f618d", border: "#3498db" },
+    orgn: { background: "#117a65", border: "#1abc9c" },
+    data: { background: "#1e8449", border: "#27ae60" },
+    warn: { background: "#9a8700", border: "#f1c40f" },
+    risk: { background: "#922b21", border: "#e74c3c" },
+    portal_island: { background: "#6c3483", border: "#e91e63" },
+  };
+
+  function styleNode(n) {
+    const gc = groupColors[n.group] || groupColors.data;
+    return {
+      id: n.id,
+      label: n.label,
+      title: n.title + "\n\nLayer: " + n.layer,
+      color: gc,
+      font: { color: "#ffffff", size: 11 },
+      margin: 10,
+      chosen: { node: true, label: true },
+    };
+  }
+
+  let activeLayers = new Set(Object.keys(LAYERS));
+
+  function buildVisData() {
+    const ns = nodes
+      .filter((n) => activeLayers.has(n.layer))
+      .map(styleNode);
+    const layerKeys = new Set(
+      nodes.filter((n) => activeLayers.has(n.layer)).map((n) => n.id)
+    );
+    const es = edges.filter((e) => layerKeys.has(e.from) && layerKeys.has(e.to));
+    return {
+      nodes: new vis.DataSet(ns),
+      edges: new vis.DataSet(
+        es.map((e, i) => ({
+          id: "e" + i,
+          from: e.from,
+          to: e.to,
+          arrows: "to",
+          dashes: e.dashes || false,
+          color: e.color || { color: "#5dade2" },
+          width: e.dashes ? 1 : 2,
+        }))
+      ),
+    };
+  }
+
+  const container = document.getElementById("graph");
+  let data = buildVisData();
+  const options = {
+    physics: {
+      enabled: true,
+      stabilization: { iterations: 120 },
+      barnesHut: { gravitationalConstant: -9000 },
+    },
+    interaction: { hover: true, zoomView: true, dragView: true, multiselect: true },
+    layout: { improvedLayout: true },
+  };
+  let network = new vis.Network(container, data, options);
+
+  function refresh() {
+    const old = network.getViewPosition();
+    const scale = network.getScale();
+    data = buildVisData();
+    network.setData(data);
+    network.once("stabilizationIterationsDone", () => {
+      network.moveTo({ position: old, scale, animation: false });
+    });
+  }
+
+  const fieldset = document.getElementById("layers");
+  for (const [key, meta] of Object.entries(LAYERS)) {
+    const id = "lay_" + key;
+    const lab = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.id = id;
+    cb.addEventListener("change", () => {
+      if (cb.checked) activeLayers.add(key);
+      else activeLayers.delete(key);
+      refresh();
+    });
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(meta.label));
+    fieldset.appendChild(lab);
+  }
+
+  const search = document.getElementById("search");
+  search.addEventListener("input", () => {
+    const q = search.value.trim().toLowerCase();
+    if (!q) {
+      network.selectNodes([]);
+      return;
+    }
+    const hits = nodes
+      .filter((n) => activeLayers.has(n.layer))
+      .filter(
+        (n) =>
+          n.id.includes(q) ||
+          n.label.toLowerCase().includes(q) ||
+          (n.title && n.title.toLowerCase().includes(q))
+      )
+      .map((n) => n.id);
+    network.selectNodes(hits);
+    if (hits.length === 1) network.focus(hits[0], { scale: 1.1, animation: true });
+  });
+
+  network.on("doubleClick", (p) => {
+    if (p.nodes.length) network.focus(p.nodes[0], { scale: 1.2, animation: true });
+  });
+})();
+  </script>
+</body>
+</html>

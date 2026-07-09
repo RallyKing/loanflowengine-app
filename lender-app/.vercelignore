@@ -1,0 +1,31 @@
+# Vercel runs `npm install` + `next build` itself, so don't upload installed
+# deps, the local Next build cache, or the local Convex backend (which is
+# 700+ MB of SQLite + binaries). The Convex production deployment is reached
+# at runtime via NEXT_PUBLIC_CONVEX_URL.
+
+node_modules/
+.next/
+.convex/
+.vercel/
+.git/
+
+# Test artifacts
+test-results/
+playwright-report/
+e2e-snapshots/
+*.test.ts
+*.spec.ts
+
+# Local-only env (Vercel reads its own env from project settings)
+.env.local
+.env*.local
+
+# Misc local dev noise
+*.log
+.DS_Store
+Thumbs.db
+
+# IMPORTANT: do NOT exclude `convex/_generated/` here even though it's in
+# `.gitignore`. The Next.js build imports `@/convex/_generated/api` and there
+# is no Convex backend reachable from the Vercel build sandbox to regenerate
+# it during `next build`.

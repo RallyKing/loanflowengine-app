@@ -1,0 +1,72 @@
+# =============================================================================
+# Root .gitignore — one-time private snapshot (no secrets, no local data dumps)
+# Deployments remain Vercel CLI only; no GitHub Actions workflows are tracked.
+# =============================================================================
+
+# --- Secrets & environment (all variants) ---
+.env
+.env.*
+!.env.*.example
+!.env.example
+
+# --- GitHub Actions (Vercel CLI is the sole production deploy path) ---
+.github/
+
+# --- Dependencies, builds, platform artifacts ---
+node_modules/
+.next/
+out/
+dist/
+build/
+.vercel/
+*.tsbuildinfo
+
+# --- Logs & local operator artifacts ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Local IDE / agent tooling (not application source) ---
+.cursor/
+.playwright-mcp/
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+# Accidental empty artifact files
+lender-app/({userId
+
+# --- Database dumps, exports, migration artifacts ---
+export-bundle/
+migration-reports/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql
+
+# --- Root-level legacy data files (not application source) ---
+/*.csv
+/*.xls
+/*.xlsx
+/*.pdf
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Playwright / test auth artifacts (any path) ---
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+playwright/.auth/
+
+# --- Operator-only secrets (any path) ---
+.migration-admin.secret
+.bridge-secret*.tmp
+*_repairPrimaryMembership.args.json
+tests/auth/*.enc
+tests/auth/*.json

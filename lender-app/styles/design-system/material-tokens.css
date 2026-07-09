@@ -1,0 +1,108 @@
+/*
+ * DLC × Material Design 3 — token reference copy.
+ * The active `:root` definitions live in `app/globals.css` (single source for PostCSS).
+ * When editing tokens, update BOTH files or merge into globals only.
+ */
+
+:root {  /* —— Shape (MD3 corner family, adapted) —— */
+  --dlc-shape-corner-none: 0px;
+  --dlc-shape-corner-extra-small: 4px;
+  --dlc-shape-corner-small: 8px;
+  --dlc-shape-corner-medium: 12px;
+  --dlc-shape-corner-large: 16px;
+  --dlc-shape-corner-extra-large: 24px;
+  --dlc-shape-corner-full: 9999px;
+
+  /* —— Motion duration (MD3 naming) —— */
+  --dlc-motion-duration-instant: 50ms;
+  --dlc-motion-duration-short1: 100ms;
+  --dlc-motion-duration-short2: 200ms;
+  --dlc-motion-duration-medium1: 250ms;
+  --dlc-motion-duration-medium2: 300ms;
+  --dlc-motion-duration-long1: 350ms;
+  --dlc-motion-duration-long2: 450ms;
+
+  /* —— Motion easing —— */
+  --dlc-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --dlc-motion-easing-standard-accelerate: cubic-bezier(0.3, 0, 1, 1);
+  --dlc-motion-easing-standard-decelerate: cubic-bezier(0, 0, 0, 1);
+  --dlc-motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --dlc-motion-easing-legacy: ease-out;
+
+  /* —— State layer opacities (MD3 on-container) —— */
+  --dlc-state-hover-opacity: 0.08;
+  --dlc-state-focus-opacity: 0.12;
+  --dlc-state-pressed-opacity: 0.1;
+  --dlc-state-dragged-opacity: 0.16;
+
+  /* —— Density rhythm (rem) —— */
+  --dlc-density-compact: 0.75rem;
+  --dlc-density-default: 1rem;
+  --dlc-density-comfortable: 1.25rem;
+
+  /* —— Typography scale —— */
+  --dlc-type-display-small-size: 2.25rem;
+  --dlc-type-display-small-line: 1.2;
+  --dlc-type-display-small-tracking: -0.01em;
+
+  --dlc-type-headline-large-size: 1.75rem;
+  --dlc-type-headline-large-line: 1.25;
+  --dlc-type-headline-large-tracking: 0;
+
+  --dlc-type-headline-medium-size: 1.375rem;
+  --dlc-type-headline-medium-line: 1.3;
+  --dlc-type-headline-medium-tracking: 0;
+
+  --dlc-type-title-large-size: 1.125rem;
+  --dlc-type-title-large-line: 1.35;
+  --dlc-type-title-large-tracking: 0.01em;
+
+  --dlc-type-title-medium-size: 1rem;
+  --dlc-type-title-medium-line: 1.4;
+  --dlc-type-title-medium-tracking: 0.01em;
+
+  --dlc-type-body-large-size: 1rem;
+  --dlc-type-body-large-line: 1.55;
+  --dlc-type-body-large-tracking: 0.006em;
+
+  --dlc-type-body-medium-size: 0.875rem;
+  --dlc-type-body-medium-line: 1.5;
+  --dlc-type-body-medium-tracking: 0.015em;
+
+  --dlc-type-label-large-size: 0.875rem;
+  --dlc-type-label-large-line: 1.25;
+  --dlc-type-label-large-tracking: 0.006em;
+
+  --dlc-type-label-medium-size: 0.75rem;
+  --dlc-type-label-medium-line: 1.3;
+  --dlc-type-label-medium-tracking: 0.03em;
+
+  --dlc-type-label-small-size: 0.6875rem;
+  --dlc-type-label-small-line: 1.35;
+  --dlc-type-label-small-tracking: 0.04em;
+
+  /* —— Elevation: light-leaning shadows (tuned for slate-neutral UI) —— */
+  --dlc-elevation-0: none;
+  --dlc-elevation-1: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 3px rgb(15 23 42 / 0.08);
+  --dlc-elevation-2: 0 2px 4px rgb(15 23 42 / 0.06), 0 4px 8px rgb(15 23 42 / 0.08);
+  --dlc-elevation-3: 0 4px 8px rgb(15 23 42 / 0.08), 0 8px 16px rgb(15 23 42 / 0.1);
+  --dlc-elevation-4: 0 8px 16px rgb(15 23 42 / 0.1), 0 12px 24px rgb(15 23 42 / 0.12);
+  --dlc-elevation-5: 0 12px 24px rgb(15 23 42 / 0.12), 0 16px 32px rgb(15 23 42 / 0.14);
+
+  --dlc-scrim: rgb(15 23 42 / 0.45);
+}
+
+/*
+ * Semantic trust tokens (--dlc-semantic-*) are defined only in `app/globals.css`
+ * (classic light, OS dark, SaaS). See `lib/design-system/semanticTokens.ts`.
+ */
+
+html[data-reduce-motion="true"] {
+  --dlc-motion-duration-instant: 0ms;
+  --dlc-motion-duration-short1: 0ms;
+  --dlc-motion-duration-short2: 0ms;
+  --dlc-motion-duration-medium1: 0ms;
+  --dlc-motion-duration-medium2: 0ms;
+  --dlc-motion-duration-long1: 0ms;
+  --dlc-motion-duration-long2: 0ms;
+}

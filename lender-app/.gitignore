@@ -1,0 +1,61 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# --- Environment & secrets (never commit) ---
+.env
+.env.*
+!.env.*.example
+!.env.example
+.env.local
+.env*.local
+.env.production
+.env.production.local
+# Operator/hosted Convex template (often contains CONVEX_DEPLOY_KEY + secrets).
+.env.convex.prod
+.DS_Store
+*.tsbuildinfo
+*.log
+!debug-f25461.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+next-env.d.ts
+.vercel
+.idea/
+.vscode/
+migration-reports/
+convex/_generated/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+.env.testing
+# Vercel CLI pull / one-off operator files (may contain or empty sensitive keys)
+.env.vercel*.pull
+.bridge-secret*.tmp
+# Operator-only; first line = DATA_MIGRATION_ADMIN_SECRET (never commit)
+.migration-admin.secret
+playwright/.auth/
+tests/auth/*.enc
+tests/auth/*.json
+
+# One-off Convex repair args (may contain admin secret)
+_repairPrimaryMembership.args.json
+
+# --- Local Convex runtime / data (never commit) ---
+.convex/local/
+.convex/tmp/
+
+# --- Data dumps ---
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql
+*.xls
+*.xlsx

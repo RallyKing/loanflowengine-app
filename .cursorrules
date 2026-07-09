@@ -1,0 +1,35 @@
+# Direct Lending Connection — global Cursor instructions
+
+These instructions apply to **every** Composer window, chat, and AI-assisted edit for this workspace unless work is explicitly **docs-only** or **local tooling-only**.
+
+## Canonical documents (read before product changes)
+
+1. **`docs/ai-development-rules.md`** — master policy  
+2. **`docs/governance/`** — enterprise policies (see `MANIFEST.json`; **`npm run verify:governance:docs`** enforces file presence)  
+3. **`docs/project-intelligence-summary.md`** — architecture, terminology, systems  
+4. **`docs/scroll-architecture-rules.md`** — scroll ownership, sticky, no nested scroll without approval  
+4b. **`docs/governance/runtime-workspace-scroll-authority.md`** — pipeline file: delegated workspace scroll, non-scrolling `<main>`, Vaul, overlays  
+5. **`docs/mobile-testing-rules.md`** — **mandatory mobile QA** (devices, commands, completion criteria)  
+6. **`docs/deployment-rules.md`** — build → gate → Vercel CLI deploy → prod smoke  
+7. **`docs/ui-ux-rules.md`** — mobile-first UX, Material alignment, overlays  
+8. **`docs/performance-rules.md`** — rerenders, virtualization, scroll perf  
+
+Always Apply rule summary: `.cursor/rules/project-rules.mdc` + `.cursor/rules/governance-hub.mdc`.
+
+## Session discipline
+
+- Acknowledge architecture + scroll + mobile + deployment constraints **before** writing code.  
+- **No feature complete** without mobile validation when UI/layout/sticky/overlays/responsive behavior changed.  
+- **No shipped user-facing work** without `npm run build`, **`npm run qa:governance`** (from `lender-app/`), **`npm run deploy:prod`**, and production smoke — unless exempt per `docs/deployment-rules.md`.
+
+## Commands (`cwd: lender-app/`)
+
+- `npm run qa:governance` — automated pre-complete gate (build + mobile core + Chromium smoke)  
+- `npm run verify:governance:docs` — verify policy files exist  
+- `npm run deploy:prod` — build + Vercel production deploy (CLI; do not rely on GitHub-only deploy discipline)
+
+## Enforcement checklist
+
+- `docs/testing/governance-qa-checklist.md`
+- `docs/governance/feature-completion-checklist.md`
+- `docs/governance/MANIFEST.json` (artifact list — verified by `npm run verify:governance:docs`)

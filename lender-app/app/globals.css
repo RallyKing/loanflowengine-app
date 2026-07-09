@@ -1,0 +1,1341 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+/*
+ * Brand palette — matches the GoHighLevel set-up:
+ *   Deep Forest  #034f35   →  rgb(  3  79  53)
+ *   Gold         #bd9028   →  rgb(189 144  40)
+ *   White        #ffffff   →  rgb(255 255 255)   (light bg)
+ *   Ink          #0b1d15   →  rgb( 11  29  21)   (deep-forest near-black)
+ *
+ * The same `--primary` / `--accent` tokens are used in both schemes, but
+ * which brand color plays which role swaps:
+ *   - Light mode: primary = deep forest (forest button, white text);
+ *                 accent  = gold        (gold highlights / hovers).
+ *   - Dark  mode: primary = gold        (gold pops on dark, forest text);
+ *                 accent  = deep forest (forest highlights).
+ * Both modes preserve high contrast (WCAG AA) for body text and pills.
+ */
+
+:root {
+  /* Dynamic viewport inline size — prefer over 100vw (scrollbar bleed / mobile zoom-out) */
+  --dlc-viewport-inline: 100dvw;
+  /* —— DLC × Material 3 tokens (mirror `styles/design-system/material-tokens.css`) —— */
+  --dlc-shape-corner-none: 0px;
+  --dlc-shape-corner-extra-small: 4px;
+  --dlc-shape-corner-small: 8px;
+  --dlc-shape-corner-medium: 12px;
+  --dlc-shape-corner-large: 16px;
+  --dlc-shape-corner-extra-large: 24px;
+  --dlc-shape-corner-full: 9999px;
+  --dlc-motion-duration-instant: 50ms;
+  --dlc-motion-duration-short1: 100ms;
+  --dlc-motion-duration-short2: 200ms;
+  --dlc-motion-duration-medium1: 250ms;
+  --dlc-motion-duration-medium2: 300ms;
+  --dlc-motion-duration-long1: 350ms;
+  --dlc-motion-duration-long2: 450ms;
+  --dlc-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --dlc-motion-easing-standard-accelerate: cubic-bezier(0.3, 0, 1, 1);
+  --dlc-motion-easing-standard-decelerate: cubic-bezier(0, 0, 0, 1);
+  --dlc-motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --dlc-motion-easing-legacy: ease-out;
+  --dlc-state-hover-opacity: 0.08;
+  --dlc-state-focus-opacity: 0.12;
+  --dlc-state-pressed-opacity: 0.1;
+  --dlc-state-dragged-opacity: 0.16;
+  --dlc-density-compact: 0.75rem;
+  --dlc-density-default: 1rem;
+  --dlc-density-comfortable: 1.25rem;
+  --dlc-type-display-small-size: 2.25rem;
+  --dlc-type-display-small-line: 1.2;
+  --dlc-type-display-small-tracking: -0.01em;
+  --dlc-type-headline-large-size: 1.75rem;
+  --dlc-type-headline-large-line: 1.25;
+  --dlc-type-headline-large-tracking: 0;
+  --dlc-type-headline-medium-size: 1.375rem;
+  --dlc-type-headline-medium-line: 1.3;
+  --dlc-type-headline-medium-tracking: 0;
+  --dlc-type-title-large-size: 1.125rem;
+  --dlc-type-title-large-line: 1.35;
+  --dlc-type-title-large-tracking: 0.01em;
+  --dlc-type-title-medium-size: 1rem;
+  --dlc-type-title-medium-line: 1.4;
+  --dlc-type-title-medium-tracking: 0.01em;
+  --dlc-type-body-large-size: 1rem;
+  --dlc-type-body-large-line: 1.55;
+  --dlc-type-body-large-tracking: 0.006em;
+  --dlc-type-body-medium-size: 0.875rem;
+  --dlc-type-body-medium-line: 1.5;
+  --dlc-type-body-medium-tracking: 0.015em;
+  --dlc-type-label-large-size: 0.875rem;
+  --dlc-type-label-large-line: 1.25;
+  --dlc-type-label-large-tracking: 0.006em;
+  --dlc-type-label-medium-size: 0.75rem;
+  --dlc-type-label-medium-line: 1.3;
+  --dlc-type-label-medium-tracking: 0.03em;
+  --dlc-type-label-small-size: 0.6875rem;
+  --dlc-type-label-small-line: 1.35;
+  --dlc-type-label-small-tracking: 0.04em;
+  --dlc-elevation-0: none;
+  --dlc-elevation-1: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 3px rgb(15 23 42 / 0.08);
+  --dlc-elevation-2: 0 2px 4px rgb(15 23 42 / 0.06), 0 4px 8px rgb(15 23 42 / 0.08);
+  --dlc-elevation-3: 0 4px 8px rgb(15 23 42 / 0.08), 0 8px 16px rgb(15 23 42 / 0.1);
+  --dlc-elevation-4: 0 8px 16px rgb(15 23 42 / 0.1), 0 12px 24px rgb(15 23 42 / 0.12);
+  --dlc-elevation-5: 0 12px 24px rgb(15 23 42 / 0.12), 0 16px 32px rgb(15 23 42 / 0.14);
+  --dlc-scrim: rgb(15 23 42 / 0.45);
+  --dlc-shell-z-skip-focus: 100;
+  /* Phase 15 Step 15 — overlay layering (see lib/ui/layering.ts) */
+  --dlc-z-header: 20;
+  --dlc-z-popover: 35;
+  --dlc-z-dropdown: 38;
+  --dlc-z-sheet: 40;
+  --dlc-z-inspector: 45;
+  --dlc-z-sidebar: 45;
+  --dlc-z-help: 48;
+  --dlc-z-modal: 50;
+  --dlc-z-command-palette: 52;
+  --dlc-z-toast: 60;
+  --dlc-z-destructive-confirm: 65;
+  --dlc-z-product-tour: 62;
+
+  /* Record inspector shell — canonical padding (classic + SaaS) */
+  --dlc-inspector-pad-x: 1.5rem;
+  --dlc-inspector-pad-y-header: 0.75rem;
+  --dlc-inspector-pad-y-body: 1.25rem;
+  --dlc-inspector-footer-pad-y: 0.75rem;
+
+  /* Brand constants (don't change per-mode) */
+  --brand: 3 79 53;            /* Deep Forest */
+  --brand-fg: 255 255 255;
+  --brand-accent: 189 144 40;  /* Gold */
+  --brand-accent-fg: 11 29 21;
+
+  /* Theme tokens (light) — pure white canvas, soft neutral panels */
+  --bg: 255 255 255;           /* pure white */
+  --fg: 11 29 21;              /* near-black w/ forest hint */
+  --muted: 242 243 240;        /* soft warm-neutral panel */
+  /* Darker sage for secondary UI copy — AA on white & on muted panels */
+  --muted-fg: 52 68 58;
+  --border: 210 214 206;       /* slightly stronger than before for card/table edges */
+  /* Table header band (data grids) */
+  --table-header: 234 236 232;
+  --accent: 189 144 40;        /* gold */
+  --accent-fg: 11 29 21;
+  --primary: 3 79 53;          /* deep forest */
+  --primary-fg: 255 255 255;
+  /* Optional structural nav column (SaaS layout); same as brand when unused */
+  --nav-sidebar: 3 79 53;
+  --nav-sidebar-fg: 255 255 255;
+  /* Errors / destructive actions (text, borders, soft fills) */
+  --destructive: 185 28 28;
+  --destructive-fg: 255 255 255;
+
+  /*
+   * Optional per-account UI tints (`UserPreferences.displaySettings`).
+   * Defaults mirror theme tokens; inline overrides come from `userPreferencesContext`.
+   */
+  --ui-block-color: rgb(var(--border) / 1);
+  --ui-label: rgb(var(--muted-fg) / 1);
+  --ui-body-text: rgb(var(--fg) / 1);
+  --ui-indicator: rgb(var(--primary) / 1);
+  --ui-indicator-soft-bg: rgb(var(--primary) / 0.12);
+  --ui-indicator-border: rgb(var(--primary) / 0.35);
+
+  /*
+   * Material-aligned semantic surfaces (DLC design system).
+   * Map to existing RGB tokens — tenant / scheme aware.
+   */
+  --dlc-surface-page: rgb(var(--bg) / 1);
+  --dlc-surface-container-lowest: rgb(var(--bg) / 1);
+  --dlc-surface-container-low: rgb(var(--muted) / 0.5);
+  --dlc-surface-container: rgb(var(--muted) / 1);
+  --dlc-surface-container-high: rgb(var(--bg) / 1);
+  --dlc-surface-container-highest: rgb(var(--table-header) / 1);
+  --dlc-surface-variant: rgb(var(--border) / 0.35);
+
+  /*
+   * Semantic trust tokens — meaning divorced from brand gold/forest/SaaS blue.
+   * Use for status, validation, alerts, badges, activity. Brand tokens stay for CTAs/nav.
+   * Mapping: MD3 "container" / "on-container" / border accent.
+   */
+  --dlc-semantic-success-container: 220 252 231;
+  --dlc-semantic-success-on-container: 6 95 70;
+  --dlc-semantic-success-border: 52 211 153;
+  --dlc-semantic-warning-container: 254 252 232;
+  --dlc-semantic-warning-on-container: 113 63 18;
+  --dlc-semantic-warning-border: 234 179 8;
+  --dlc-semantic-error-container: 254 242 242;
+  --dlc-semantic-error-on-container: 127 29 29;
+  --dlc-semantic-error-border: 220 38 38;
+  --dlc-semantic-info-container: 239 246 255;
+  --dlc-semantic-info-on-container: 30 58 138;
+  --dlc-semantic-info-border: 96 165 250;
+  /* "Needs review" — violet, not gold (avoids brand-accent collision) */
+  --dlc-semantic-attention-container: 245 243 255;
+  --dlc-semantic-attention-on-container: 76 29 149;
+  --dlc-semantic-attention-border: 167 139 250;
+  --dlc-semantic-neutral-container: 243 244 246;
+  --dlc-semantic-neutral-on-container: 55 65 81;
+  --dlc-semantic-neutral-border: 156 163 175;
+  --dlc-semantic-pending-container: 254 249 240;
+  --dlc-semantic-pending-on-container: 116 66 16;
+  --dlc-semantic-pending-border: 245 158 11;
+  --dlc-semantic-approved-container: 220 252 231;
+  --dlc-semantic-approved-on-container: 6 95 70;
+  --dlc-semantic-approved-border: 34 197 94;
+  --dlc-semantic-declined-container: 254 242 242;
+  --dlc-semantic-declined-on-container: 127 29 29;
+  --dlc-semantic-declined-border: 239 68 68;
+  /* Selected row / current step (subtle brand-adjacent tint, still semantic role) */
+  --dlc-semantic-active-container: 224 242 241;
+  --dlc-semantic-active-on-container: 3 79 53;
+  --dlc-semantic-active-border: 45 115 87;
+  --dlc-semantic-inactive-container: 241 242 240;
+  --dlc-semantic-inactive-on-container: 96 106 100;
+  --dlc-semantic-inactive-border: 203 207 201;
+  /* Soft destructive surfaces (banners, inline alerts) — solid buttons still use --destructive */
+  --dlc-semantic-destructive-container: 254 242 242;
+  --dlc-semantic-destructive-on-container: 127 29 29;
+  --dlc-semantic-destructive-border: 185 28 28;
+  --dlc-semantic-destructive-emphasis: 153 27 27;
+  /* Aliases to tonal scale (consume in new code instead of ad-hoc muted/bg) */
+  --dlc-semantic-surface-page: var(--dlc-surface-page);
+  --dlc-semantic-surface-container: var(--dlc-surface-container);
+  --dlc-semantic-surface-container-high: var(--dlc-surface-container-high);
+  --dlc-semantic-surface-elevated: var(--dlc-surface-container-high);
+
+  /* Default component min touch target (Material ~48dp where possible) */
+  --dlc-touch-target-min: 44px;
+
+  /*
+   * Tenant-aware tonal surfaces (Material 3). Overridden by `applyBrandingThemeVars`
+   * when org primary/secondary hex is present; defaults match classic forest brand.
+   */
+  --dlc-tone-primary-container: 224 242 241;
+  --dlc-tone-on-primary-container: 3 79 53;
+  --dlc-tone-primary-outline: 45 115 87;
+  --dlc-tone-secondary-container: 254 252 232;
+  --dlc-tone-on-secondary-container: 113 63 18;
+  --dlc-tone-secondary-outline: 202 138 4;
+
+  /*
+   * Finance-safe momentum semantics — avoid pure "traffic light" red/green for numeric deltas.
+   * Use for P&L hints, balance trends, spreads; pair with text labels, not color alone.
+   */
+  --dlc-finance-credit: 13 116 104;
+  --dlc-finance-credit-muted: 240 253 251;
+  --dlc-finance-debit: 194 65 12;
+  --dlc-finance-debit-muted: 255 247 237;
+  --dlc-finance-stable: 71 85 105;
+  --dlc-finance-stable-muted: 248 250 252;
+
+  /* Pipeline file: extra breath for scrollIntoView / hash anchors vs sticky chrome */
+  --pipeline-scroll-anchor-gap: 12px;
+  /*
+   * Stacking: file workspace sticky chrome above modular blocks (`isolate` sections ~auto z).
+   * Portals/menus (Radix) use higher z (e.g. z-50+). Page overlays (drawers) typically z-30+.
+   */
+  --pipeline-file-sticky-z: 30;
+
+  /* Font family stack for optional Material utilities (SaaS swaps sans via html rule). */
+  --dlc-font-material: var(--font-sans);
+
+  /*
+   * `--font-brand` is injected by `next/font/google` (see app/layout.tsx).
+   * We fall back to the system serif stack so the page paints immediately
+   * if the network is slow.
+   */
+  --font-sans: var(--font-brand), ui-serif, Georgia, "Times New Roman", serif;
+}
+
+/* OS dark — classic scheme only; SaaS workspace stays light (see below). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-color-scheme="saas"]) {
+    --bg: 9 22 16;             /* deep-forest ink */
+    --fg: 240 234 215;         /* warm cream text */
+    --muted: 22 41 31;          /* dark forest panel */
+    /* Slightly brighter for secondary text on ink + on muted panels */
+    --muted-fg: 206 214 198;
+    --border: 48 72 58;         /* clearer separation on dark UI */
+    --table-header: 18 36 28;
+    --accent: 60 45 14;         /* deep gold tint bg */
+    --accent-fg: 230 184 92;    /* bright gold text */
+    --primary: 189 144 40;      /* gold (pops on dark) */
+    --primary-fg: 11 29 21;     /* deep forest */
+    --nav-sidebar: 8 50 40;
+    --nav-sidebar-fg: 240 234 215;
+    --destructive: 239 68 68;
+    --destructive-fg: 255 255 255;
+
+    --dlc-semantic-success-container: 6 78 59;
+    --dlc-semantic-success-on-container: 209 250 229;
+    --dlc-semantic-success-border: 52 211 153;
+    --dlc-semantic-warning-container: 69 26 3;
+    --dlc-semantic-warning-on-container: 254 240 138;
+    --dlc-semantic-warning-border: 202 138 4;
+    --dlc-semantic-error-container: 69 10 10;
+    --dlc-semantic-error-on-container: 254 202 202;
+    --dlc-semantic-error-border: 248 113 113;
+    --dlc-semantic-info-container: 23 37 84;
+    --dlc-semantic-info-on-container: 219 234 254;
+    --dlc-semantic-info-border: 129 140 248;
+    --dlc-semantic-attention-container: 46 16 101;
+    --dlc-semantic-attention-on-container: 237 233 254;
+    --dlc-semantic-attention-border: 167 139 250;
+    --dlc-semantic-neutral-container: 31 41 55;
+    --dlc-semantic-neutral-on-container: 229 231 235;
+    --dlc-semantic-neutral-border: 107 114 128;
+    --dlc-semantic-pending-container: 69 26 3;
+    --dlc-semantic-pending-on-container: 253 230 138;
+    --dlc-semantic-pending-border: 245 158 11;
+    --dlc-semantic-approved-container: 6 78 59;
+    --dlc-semantic-approved-on-container: 209 250 229;
+    --dlc-semantic-approved-border: 74 222 128;
+    --dlc-semantic-declined-container: 69 10 10;
+    --dlc-semantic-declined-on-container: 254 202 202;
+    --dlc-semantic-declined-border: 248 113 113;
+    --dlc-semantic-active-container: 22 41 31;
+    --dlc-semantic-active-on-container: 187 247 208;
+    --dlc-semantic-active-border: 74 222 128;
+    --dlc-semantic-inactive-container: 28 35 31;
+    --dlc-semantic-inactive-on-container: 148 163 148;
+    --dlc-semantic-inactive-border: 71 85 76;
+    --dlc-semantic-destructive-container: 69 10 10;
+    --dlc-semantic-destructive-on-container: 254 202 202;
+    --dlc-semantic-destructive-border: 239 68 68;
+    --dlc-semantic-destructive-emphasis: 252 165 165;
+
+    /* Tonal + finance (dark classic) */
+    --dlc-tone-primary-container: 22 41 31;
+    --dlc-tone-on-primary-container: 187 247 208;
+    --dlc-tone-primary-outline: 74 222 128;
+    --dlc-tone-secondary-container: 69 26 3;
+    --dlc-tone-on-secondary-container: 254 240 138;
+    --dlc-tone-secondary-outline: 202 138 4;
+    --dlc-finance-credit: 110 231 183;
+    --dlc-finance-credit-muted: 6 55 42;
+    --dlc-finance-debit: 251 146 60;
+    --dlc-finance-debit-muted: 55 30 8;
+    --dlc-finance-stable: 203 213 225;
+    --dlc-finance-stable-muted: 30 41 58;
+
+    /* Dark scheme: deeper shadows (higher contrast lift) */
+    --dlc-elevation-1: 0 1px 3px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.35);
+    --dlc-elevation-2: 0 2px 6px rgb(0 0 0 / 0.45), 0 4px 12px rgb(0 0 0 / 0.38);
+    --dlc-elevation-3: 0 4px 12px rgb(0 0 0 / 0.5), 0 8px 20px rgb(0 0 0 / 0.4);
+    --dlc-elevation-4: 0 8px 20px rgb(0 0 0 / 0.55), 0 14px 28px rgb(0 0 0 / 0.45);
+    --dlc-elevation-5: 0 12px 28px rgb(0 0 0 / 0.6), 0 20px 40px rgb(0 0 0 / 0.5);
+    --dlc-scrim: rgb(0 0 0 / 0.58);
+  }
+}
+
+/*
+ * SaaS-inspired workspace: dark green navigation (separate column), light
+ * canvas, blue for primary actions & links. Ignores OS dark for the main
+ * workspace to match the reference (high-contrast light table area).
+ * Inspired by common CRM / pipeline UIs: structure = green, interactivity = blue.
+ */
+[data-color-scheme="saas"] {
+  --app-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --bg: 248 250 252;            /* slate-50 — barely cooler than gray-50 */
+  --fg: 15 23 42;                /* slate-900 body (stronger than slate-800) */
+  --muted: 255 255 255;         /* white cards / panels */
+  /* slate-600/700 blend — comfortable secondary on white + on cards */
+  --muted-fg: 71 85 105;
+  --border: 203 213 225;        /* slate-300 — clearer edges on white */
+  --table-header: 241 245 249;   /* slate-100 */
+  /* Blue = primary buttons, key CTAs, interactive highlights */
+  --primary: 26 115 232;        /* ~#1A73E8 */
+  --primary-fg: 255 255 255;
+  --accent: 239 246 255;        /* indigo-50 soft chip */
+  --accent-fg: 30 64 175;        /* indigo-800 on chips */
+  /* Brand tokens: structural green in nav; accent follows blue in this mode */
+  --brand: 11 65 51;            /* ~#0B4133 deep green */
+  --brand-fg: 255 255 255;
+  --brand-accent: 26 115 232;   /* align link hovers with actions */
+  --brand-accent-fg: 255 255 255;
+  --nav-sidebar: 11 65 51;
+  --nav-sidebar-fg: 255 255 255;
+  --destructive: 220 38 38;
+  --destructive-fg: 255 255 255;
+  --font-sans: var(--app-sans);
+
+  /* SaaS light workspace: slightly crisper cards on cool gray canvas */
+  --dlc-elevation-1: 0 1px 2px rgb(15 23 42 / 0.05), 0 1px 3px rgb(15 23 42 / 0.07);
+  --dlc-elevation-2: 0 2px 4px rgb(15 23 42 / 0.05), 0 4px 10px rgb(15 23 42 / 0.08);
+  --dlc-elevation-3: 0 4px 10px rgb(15 23 42 / 0.07), 0 8px 18px rgb(15 23 42 / 0.1);
+
+  --dlc-semantic-success-container: 236 253 245;
+  --dlc-semantic-success-on-container: 6 78 59;
+  --dlc-semantic-success-border: 52 211 153;
+  --dlc-semantic-warning-container: 255 251 235;
+  --dlc-semantic-warning-on-container: 120 53 15;
+  --dlc-semantic-warning-border: 251 191 36;
+  --dlc-semantic-error-container: 254 242 242;
+  --dlc-semantic-error-on-container: 127 29 29;
+  --dlc-semantic-error-border: 239 68 68;
+  --dlc-semantic-info-container: 238 242 255;
+  --dlc-semantic-info-on-container: 49 46 129;
+  --dlc-semantic-info-border: 99 102 241;
+  --dlc-semantic-attention-container: 245 243 255;
+  --dlc-semantic-attention-on-container: 91 33 182;
+  --dlc-semantic-attention-border: 167 139 250;
+  --dlc-semantic-neutral-container: 241 245 249;
+  --dlc-semantic-neutral-on-container: 51 65 85;
+  --dlc-semantic-neutral-border: 148 163 184;
+  --dlc-semantic-pending-container: 255 247 237;
+  --dlc-semantic-pending-on-container: 124 45 18;
+  --dlc-semantic-pending-border: 251 146 60;
+  --dlc-semantic-approved-container: 236 253 245;
+  --dlc-semantic-approved-on-container: 6 78 59;
+  --dlc-semantic-approved-border: 34 197 94;
+  --dlc-semantic-declined-container: 254 242 242;
+  --dlc-semantic-declined-on-container: 127 29 29;
+  --dlc-semantic-declined-border: 248 113 113;
+  --dlc-semantic-active-container: 224 242 254;
+  --dlc-semantic-active-on-container: 30 64 175;
+  --dlc-semantic-active-border: 59 130 246;
+  --dlc-semantic-inactive-container: 248 250 252;
+  --dlc-semantic-inactive-on-container: 100 116 139;
+  --dlc-semantic-inactive-border: 203 213 225;
+  --dlc-semantic-destructive-container: 254 242 242;
+  --dlc-semantic-destructive-on-container: 127 29 29;
+  --dlc-semantic-destructive-border: 220 38 38;
+  --dlc-semantic-destructive-emphasis: 185 28 28;
+
+  /* SaaS tonal + finance (light workspace) */
+  --dlc-tone-primary-container: 219 234 254;
+  --dlc-tone-on-primary-container: 30 58 138;
+  --dlc-tone-primary-outline: 59 130 246;
+  --dlc-tone-secondary-container: 224 242 254;
+  --dlc-tone-on-secondary-container: 30 64 175;
+  --dlc-tone-secondary-outline: 96 165 250;
+  --dlc-finance-credit: 15 118 110;
+  --dlc-finance-credit-muted: 240 253 250;
+  --dlc-finance-debit: 194 65 12;
+  --dlc-finance-debit-muted: 255 247 237;
+  --dlc-finance-stable: 71 85 105;
+  --dlc-finance-stable-muted: 241 245 249;
+}
+
+html[data-color-scheme="saas"] {
+  font-family: var(--app-sans);
+  /* Keep native UI (scrollbars, form controls) in light mode alongside Tailwind `dark:` fix */
+  color-scheme: light;
+}
+
+html {
+  /*
+   * Percentage heights resolve from here — keep `height: 100%` for flex chains;
+   * Phase 24.4H: `min-height: 100dvh` tracks mobile dynamic viewport (URL bar).
+   */
+  height: 100%;
+  min-height: 100dvh;
+  /* Phase 15A: lock document inline size — prevents shrink-to-fit zoom-out on mobile */
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+body {
+  /*
+   * Phase 2 root layout contract:
+   *   - html/body fill the viewport at 100% height
+   *   - the document never scrolls — the AppChrome <main> is the
+   *     SOLE vertical scroll container in the app
+   *   - drawers/modals overlay above this shell with their own
+   *     internal scroll (see PipelineFileWorkspace/LenderDrawer/TaskDrawer)
+   * `overflow-x: clip` keeps the legacy horizontal-wobble guard.
+   */
+  height: 100%;
+  min-height: 100dvh;
+  background: rgb(var(--bg));
+  color: var(--ui-body-text);
+  font-family: var(--font-sans);
+  line-height: 1.55;
+  letter-spacing: 0.006em;
+  overflow-x: clip;
+  overflow-y: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Sign-in / sign-up routes mount outside AppChrome and need their own
+   internal scroll surface so a tall form (or password-manager UI) does
+   not get clipped by the document-level overflow lock. */
+body[data-shell="auth"] {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+*,
+*::before,
+*::after {
+  border-color: rgb(var(--border));
+  box-sizing: border-box;
+}
+
+/* Linked / shared field chip — follows account indicator tint when set */
+.ui-sync-indicator-linked {
+  border-color: var(--ui-indicator-border, rgb(var(--primary) / 0.35));
+  background-color: var(--ui-indicator-soft-bg, rgb(var(--primary) / 0.1));
+  color: var(--ui-indicator, rgb(var(--primary) / 1));
+}
+
+/* Selection styling — gold highlight on cream, forest on dark */
+::selection {
+  background: rgb(var(--accent) / 0.45);
+  color: var(--ui-body-text);
+}
+[data-color-scheme="saas"] ::selection {
+  background: rgb(var(--primary) / 0.22);
+  color: var(--ui-body-text);
+}
+
+/* Focus ring uses the brand accent for visibility on both modes */
+:where(button, a, input, select, textarea, [role="button"]):focus-visible {
+  outline: 2px solid rgb(var(--brand-accent));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Narrow scroll bar — tinted with brand */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--muted-fg) / 0.4);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted-fg) / 0.65);
+}
+
+/* Drawer slide-in — timing uses design tokens (reduced motion zeroed in material-tokens.css) */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slide-in-right var(--dlc-motion-duration-short2)
+    var(--dlc-motion-easing-standard);
+}
+
+/* Drop zone hover */
+.dropzone-active {
+  background: rgb(var(--accent) / 0.4);
+  border-color: rgb(var(--accent-fg));
+}
+
+/* Brand link hover: gold in classic, blue in SaaS */
+a:hover {
+  color: rgb(var(--brand-accent));
+}
+[data-color-scheme="saas"] a:hover {
+  color: rgb(var(--primary));
+}
+
+/* User settings: text scale (Settings → persisted on <html data-text-scale>) */
+html[data-text-scale="large"] {
+  font-size: 1.05rem;
+}
+
+/* Analyst / operator density — driven by `UserPreferences.displaySettings.uiDensity` */
+html[data-ui-density="compact"] {
+  --dlc-density-compact: 0.6875rem;
+  --dlc-density-default: 0.875rem;
+  --dlc-density-comfortable: 1.0625rem;
+}
+
+html[data-ui-density="analyst"] {
+  --dlc-density-compact: 0.5625rem;
+  --dlc-density-default: 0.75rem;
+  --dlc-density-comfortable: 0.875rem;
+  --dlc-type-body-medium-size: 0.8125rem;
+  --dlc-type-body-medium-line: 1.42;
+  --dlc-type-label-medium-size: 0.6875rem;
+  --dlc-type-title-medium-size: 0.9375rem;
+}
+
+/* Shared skeleton surface — list rows, inspector placeholders */
+@keyframes dlc-skeleton-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.dlc-surface-skeleton {
+  border-radius: var(--dlc-shape-corner-small);
+  background: rgb(var(--muted) / 0.42);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dlc-surface-skeleton {
+    animation: dlc-skeleton-breathe 1.25s var(--dlc-motion-easing-standard)
+      infinite;
+  }
+}
+
+/* Status / chip transition — factual reassurance without celebration */
+@keyframes dlc-status-settle {
+  from {
+    opacity: 0.88;
+    transform: scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.dlc-motion-status-settle {
+  animation: dlc-status-settle var(--dlc-motion-duration-medium1)
+    var(--dlc-motion-easing-emphasized);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dlc-surface-skeleton,
+  .dlc-motion-status-settle {
+    animation: none;
+  }
+}
+
+/* Finance momentum chips — always pair with visible text / icons */
+.dlc-finance-credit-chip {
+  background: rgb(var(--dlc-finance-credit-muted) / 1);
+  color: rgb(var(--dlc-finance-credit) / 1);
+  border: 1px solid rgb(var(--dlc-finance-credit) / 0.28);
+}
+.dlc-finance-debit-chip {
+  background: rgb(var(--dlc-finance-debit-muted) / 1);
+  color: rgb(var(--dlc-finance-debit) / 1);
+  border: 1px solid rgb(var(--dlc-finance-debit) / 0.28);
+}
+.dlc-finance-stable-chip {
+  background: rgb(var(--dlc-finance-stable-muted) / 1);
+  color: rgb(var(--dlc-finance-stable) / 1);
+  border: 1px solid rgb(var(--dlc-finance-stable) / 0.22);
+}
+
+/*
+ * Pipeline file workspace (workspace sheet): vertical scroll lives in
+ * `[data-pipeline-workspace-scroll]` — not in `AppChrome` `<main>` on `/pipeline/[fileId]`.
+ * Snap header is a `shrink-0` region above the scroller (no sticky, no measured CSS vars).
+ * Scroll-margin uses a stable cushion token (tune if chrome height changes materially).
+ *
+ * Other routes: `body` does not scroll; `[data-app-main-scroll]` remains the primary scroller.
+ */
+[data-pipeline-workspace-scroll] {
+  scroll-padding-top: calc(
+    var(--pipeline-ws-chrome-cushion, 6.75rem) + var(--pipeline-scroll-anchor-gap)
+  );
+}
+
+@media (max-width: 767px) {
+  /**
+   * Mobile file chrome (safe-area + two-row snap header) needs more clearance so
+   * in-scroller `scrollIntoView` / hash targets (e.g. File details) stay below the chrome.
+   */
+  [data-pipeline-workspace-scroll] {
+    --pipeline-ws-chrome-cushion: 8.25rem;
+  }
+}
+
+[data-pipeline-workspace-scroll]
+  section[data-section-type]:not([data-section-type="chrome"]):not(
+    [data-section-type="workspace-root"]
+  ):not([data-section-type="status"]):not([data-section-type="overlay"]) {
+  scroll-margin-top: calc(
+    var(--pipeline-ws-chrome-cushion, 6.75rem) + var(--pipeline-scroll-anchor-gap)
+  );
+}
+
+[data-pipeline-workspace-scroll] #file-details {
+  scroll-margin-top: calc(
+    var(--pipeline-ws-chrome-cushion, 6.75rem) + var(--pipeline-scroll-anchor-gap)
+  );
+}
+
+/* Primary app scrollport + pipeline/registry workspace scrollports (same interaction contract). */
+[data-app-main-scroll],
+[data-pipeline-workspace-scroll],
+[data-registry-workspace-scroll] {
+  scroll-behavior: smooth;
+  /* Momentum + vertical touch routing (pairs with `.touch-scroll-y`). */
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+  @supports (overflow-anchor: none) {
+    overflow-anchor: none;
+  }
+}
+
+/* Phase 24.4B — pipeline surfaces: native scroll only (no smooth scroll coupling). */
+[data-app-main-scroll]:has([data-pipeline-page-root]),
+[data-pipeline-workspace-scroll] {
+  scroll-behavior: auto;
+}
+html[data-reduce-motion="true"] [data-app-main-scroll],
+html[data-reduce-motion="true"] [data-pipeline-workspace-scroll],
+html[data-reduce-motion="true"] [data-registry-workspace-scroll] {
+  scroll-behavior: auto;
+}
+
+/* Phase 24.4J — pipeline bottom nav cannot slide off-screen (CSS override). */
+html[data-pipeline-bottom-nav-locked] nav[aria-label="Primary"] {
+  transform: translate3d(0, 0, 0) !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+}
+
+/* Phase 24.4L — DOM mount lock: nav never display:none or translate off-screen on pipeline. */
+@media (max-width: 767px) {
+  html[data-pipeline-nav-dom-lock="true"] nav[aria-label="Primary"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    transform: translate3d(0, 0, 0) !important;
+    pointer-events: auto !important;
+  }
+}
+
+/*
+ * Phase 24.4R — mobile native document scroll (Track A).
+ * Unlocks html/body; demotes nested `#app-main-scroll` so browser URL bar
+ * physics target the document, not a hidden overflow parent.
+ */
+@media (max-width: 768px) {
+  html[data-native-document-scroll="true"],
+  html[data-pipeline-native-scroll-test="true"] {
+    height: auto !important;
+    min-height: 100dvh;
+    overflow-y: auto !important;
+    overflow-x: clip;
+    overscroll-behavior-y: none !important;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: auto !important;
+  }
+
+  html[data-native-document-scroll="true"] body,
+  html[data-pipeline-native-scroll-test="true"] body {
+    height: auto !important;
+    min-height: 100dvh;
+    overflow-y: auto !important;
+    overflow-x: clip;
+    overscroll-behavior-y: none !important;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: auto !important;
+  }
+
+  html[data-native-document-scroll="true"] body[data-shell="app"],
+  html[data-pipeline-native-scroll-test="true"] body[data-shell="app"] {
+    overflow-y: auto !important;
+    overscroll-behavior-y: none !important;
+  }
+
+  /* App layout flex wrapper (direct child of body). */
+  html[data-native-document-scroll="true"] body[data-shell="app"] > div,
+  html[data-pipeline-native-scroll-test="true"] body[data-shell="app"] > div {
+    min-height: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+    flex: none !important;
+  }
+
+  html[data-native-document-scroll="true"] [data-app-shell-root],
+  html[data-pipeline-native-scroll-test="true"] [data-app-shell-root] {
+    overflow: visible !important;
+    min-height: auto !important;
+    height: auto !important;
+  }
+
+  html[data-native-document-scroll="true"] #app-main-scroll,
+  html[data-native-document-scroll="true"] [data-app-main-scroll],
+  html[data-pipeline-native-scroll-test="true"] #app-main-scroll,
+  html[data-pipeline-native-scroll-test="true"] [data-app-main-scroll] {
+    overflow-y: visible !important;
+    overflow-x: clip;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    flex: none !important;
+    overscroll-behavior-y: none !important;
+    touch-action: auto;
+    scroll-behavior: auto !important;
+  }
+
+  html[data-native-document-scroll="true"] [data-app-main-scroll] > div,
+  html[data-pipeline-native-scroll-test="true"] [data-app-main-scroll] > div {
+    min-height: auto !important;
+    flex: none !important;
+  }
+
+  /* Top chrome stays in view while the document scrolls. */
+  html[data-native-document-scroll="true"] header[data-testid="app-masterpage-chrome"] {
+    position: sticky;
+    top: 0;
+    z-index: var(--dlc-z-header, 20);
+  }
+
+  /* Bottom nav fixed to viewport (not shell scroll offset). */
+  html[data-native-document-scroll="true"]
+    nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"] {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    z-index: 40 !important;
+  }
+}
+
+/*
+ * Phase 24.4N — pipeline hub velocity: block overscroll chaining on fast momentum
+ * swipes (no rubber-band transfer to hidden parents). Single scroll owner stays
+ * `#app-main-scroll` when 24.4K native window test is reverted.
+ */
+html[data-pipeline-velocity-overscroll-none="true"],
+html[data-pipeline-velocity-overscroll-none="true"] body,
+html[data-pipeline-velocity-overscroll-none="true"] body[data-shell="app"],
+html[data-pipeline-velocity-overscroll-none="true"] #app-main-scroll,
+html[data-pipeline-velocity-overscroll-none="true"] [data-app-main-scroll] {
+  overscroll-behavior-y: none;
+}
+
+/*
+ * Phase 24.4P — master layout lock: fixed top chrome, no sticky hub bands,
+ * frozen safe-area stand-ins (24px bottom ≈ pb-6).
+ */
+html[data-pipeline-safe-area-frozen="true"] {
+  --dlc-pipeline-safe-top: 0px;
+  --dlc-pipeline-safe-bottom: 24px;
+}
+
+html[data-pipeline-master-layout-lock="true"]
+  header[data-pipeline-layout-locked="true"] {
+  height: 4rem;
+  min-height: 4rem;
+  max-height: 4rem;
+  flex-shrink: 0;
+}
+
+html[data-pipeline-master-layout-lock="true"]
+  header[data-pipeline-layout-locked="true"]
+  .will-change-transform {
+  transform: none !important;
+  opacity: 1 !important;
+  transition: none !important;
+}
+
+html[data-pipeline-master-layout-lock="true"]
+  header[data-pipeline-layout-locked="true"]
+  .max-md\:grid {
+  height: 4rem;
+  min-height: 4rem;
+  max-height: 4rem;
+}
+
+html[data-pipeline-safe-area-frozen="true"]
+  nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"] {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  padding-bottom: 1.5rem !important;
+}
+
+html[data-pipeline-safe-area-frozen="true"]
+  [data-pipeline-page-root]
+  [data-testid="pipeline-hub-batch-bar"],
+html[data-pipeline-safe-area-frozen="true"]
+  [data-pipeline-page-root]
+  [data-testid="operational-batch-bar"] {
+  bottom: calc(4.5rem + var(--dlc-pipeline-safe-bottom, 24px)) !important;
+}
+
+html[data-pipeline-master-layout-lock="true"] [data-pipeline-page-root] .sticky {
+  position: relative !important;
+  top: auto !important;
+  z-index: auto !important;
+}
+
+/*
+ * Phase 24.4Q — pipeline: no smooth-scroll coupling on momentum touch scroll.
+ */
+@media (max-width: 767px) {
+  html[data-pipeline-scroll-behavior-auto="true"],
+  html[data-pipeline-scroll-behavior-auto="true"] body,
+  html[data-pipeline-scroll-behavior-auto="true"] body[data-shell="app"],
+  html[data-pipeline-scroll-behavior-auto="true"] #app-main-scroll,
+  html[data-pipeline-scroll-behavior-auto="true"] [data-app-main-scroll],
+  html[data-pipeline-scroll-behavior-auto="true"] [data-pipeline-workspace-scroll] {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Phase 24.4I — hub hierarchy layout containment (opt-in via html attribute). */
+html[data-pipeline-hub-layout-contain="true"] [data-pipeline-hub-hierarchy] > section {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 120px;
+  min-height: 120px;
+}
+
+html[data-pipeline-hub-layout-contain="true"]
+  [data-pipeline-hub-hierarchy]
+  [data-testid="pipeline-hub-project-row"] {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 80px;
+}
+
+html[data-pipeline-hub-layout-contain="true"]
+  [data-pipeline-hub-hierarchy]
+  [data-pipeline-hub-component="LoanStackRow"] {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 56px;
+}
+
+/* Phase 24.4E — debug-only: disable scroll anchoring on hub hierarchy root (opt-in). */
+html[data-pipeline-layout-debug-anchor-off="true"] [data-pipeline-hub-hierarchy] {
+  @supports (overflow-anchor: none) {
+    overflow-anchor: none;
+  }
+}
+
+/*
+ * Nested scrollports inside a primary scroller (inspector body, activity lists).
+ * Contain overscroll so inner panes do not yank the page/workspace scroll position.
+ */
+[data-nested-scroll] {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+  @supports (overflow-anchor: none) {
+    overflow-anchor: none;
+  }
+}
+
+/* App shell — block accidental horizontal pan on narrow viewports (320–430px). */
+@media (max-width: 767px) {
+  [data-app-shell-root] {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+}
+
+/* Vaul drawer: honor in-app reduced motion. */
+html[data-reduce-motion="true"] [data-vaul-drawer] {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+}
+
+[data-workspace-sheet-drag-locked="true"] [data-vaul-handle],
+[data-workspace-sheet-drag-locked="true"] [data-vaul-handle-hitarea] {
+  pointer-events: none;
+  opacity: 0.35;
+}
+
+/* User settings: effective reduced motion (OS + in-app “Reduce motion” / “Match device”) */
+html[data-reduce-motion="true"] {
+  scroll-behavior: auto;
+  --dlc-motion-duration-instant: 0ms;
+  --dlc-motion-duration-short1: 0ms;
+  --dlc-motion-duration-short2: 0ms;
+  --dlc-motion-duration-medium1: 0ms;
+  --dlc-motion-duration-medium2: 0ms;
+  --dlc-motion-duration-long1: 0ms;
+  --dlc-motion-duration-long2: 0ms;
+}
+html[data-reduce-motion="true"] *,
+html[data-reduce-motion="true"] *::before,
+html[data-reduce-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0.01ms !important;
+}
+
+/* User settings: stronger :focus-visible (Settings → “Stronger focus indicators”) */
+html[data-focus-rings="enhanced"] :is(a, button, input, select, textarea, summary):focus-visible,
+html[data-focus-rings="enhanced"] [tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 2px;
+}
+
+/* Settings → side panel animation: skip slide-in for drawers using `.animate-slide-in-right` */
+html[data-panel-slide="none"] .animate-slide-in-right {
+  animation: none !important;
+}
+html[data-panel-slide="none"] .animate-slide-in-up {
+  animation: none !important;
+}
+
+/* Shared data tables — scan lines, hover affordance, calmer header band */
+@layer components {
+  .dlc-data-table thead {
+    background: rgb(var(--table-header) / 0.92);
+  }
+  .dlc-data-table thead th {
+    color: rgb(var(--muted-fg));
+    font-weight: 600;
+  }
+  .dlc-data-table tbody tr {
+    border-bottom: 1px solid rgb(var(--border) / 0.55);
+    transition: background-color var(--dlc-motion-duration-short1)
+      var(--dlc-motion-easing-standard);
+  }
+  .dlc-data-table tbody tr:hover {
+    background: rgb(var(--muted) / 0.35);
+  }
+  [data-color-scheme="saas"] .dlc-data-table tbody tr:hover {
+    background: rgb(var(--table-header) / 0.75);
+  }
+
+  /* —— Material-aligned surfaces (prefer over ad-hoc bg/border/shadow) —— */
+  .dlc-surface-card {
+    background: var(--dlc-surface-container);
+    border: 1px solid rgb(var(--border) / 0.85);
+    border-radius: var(--dlc-shape-corner-medium);
+    box-shadow: var(--dlc-elevation-1);
+  }
+
+  /* Phase 18.5 — open workspace interior bands (pipeline file, contacts, ledger) */
+  .dlc-workspace-island {
+    border: none;
+    border-radius: var(--dlc-shape-corner-medium);
+    background: rgb(var(--muted) / 0.14);
+    box-shadow: none;
+  }
+
+  .op-micro-control-wrap {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+    vertical-align: middle;
+  }
+
+  .op-micro-control-wrap .op-micro-control {
+    margin: 0;
+  }
+
+  input.op-micro-control[type="checkbox"],
+  input.op-micro-control[type="radio"] {
+    height: 1rem;
+    width: 1rem;
+    flex-shrink: 0;
+    cursor: pointer;
+    border: 1px solid rgb(var(--border) / 0.55);
+    border-radius: 0.25rem;
+    background: rgb(var(--background));
+    accent-color: rgb(var(--primary));
+    opacity: 0.92;
+    transition:
+      border-color 140ms ease-out,
+      background-color 140ms ease-out,
+      box-shadow 140ms ease-out,
+      opacity 140ms ease-out;
+  }
+
+  input.op-micro-control[type="radio"] {
+    border-radius: 9999px;
+  }
+
+  input.op-micro-control[type="checkbox"]:not(:checked),
+  input.op-micro-control[type="radio"]:not(:checked) {
+    opacity: 0.72;
+  }
+
+  input.op-micro-control[type="checkbox"]:hover:not(:disabled),
+  input.op-micro-control[type="radio"]:hover:not(:disabled) {
+    border-color: rgb(var(--border) / 0.75);
+    background: rgb(var(--muted) / 0.25);
+  }
+
+  input.op-micro-control:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgb(var(--primary) / 0.22);
+  }
+
+  input.op-micro-control:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+
+  /*
+   * Phase 24.3B — mobile input zoom elimination.
+   * Floor editable native controls at 16px below `md` (does not block pinch-zoom).
+   */
+  @media (max-width: 767px) {
+    :where(
+      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+          [type="hidden"]
+        ):not([type="file"]):not([type="button"]):not([type="submit"]):not(
+          [type="reset"]
+        ):not([type="image"]):not(.op-micro-control),
+      textarea,
+      select
+    ) {
+      font-size: 1rem;
+      line-height: 1.5rem;
+    }
+
+    :where([contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]) {
+      font-size: 1rem;
+      line-height: 1.5rem;
+    }
+  }
+
+  .dlc-surface-raised {
+    background: var(--dlc-surface-container-high);
+    border-radius: var(--dlc-shape-corner-medium);
+    box-shadow: var(--dlc-elevation-2);
+  }
+  .dlc-surface-overlay {
+    background: var(--dlc-surface-container-highest);
+    border-radius: var(--dlc-shape-corner-large);
+    box-shadow: var(--dlc-elevation-4);
+  }
+
+  /* Phase 18.8F — desktop destructive confirm (workspace-centered, not sheet) */
+  @keyframes dlc-destructive-confirm-desktop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  .dlc-destructive-confirm-desktop {
+    animation: dlc-destructive-confirm-desktop-in 200ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  @keyframes dlc-destructive-confirm-sheet-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .dlc-destructive-confirm-sheet {
+    animation: dlc-destructive-confirm-sheet-in 220ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  html[data-reduce-motion="true"] .dlc-destructive-confirm-desktop,
+  html[data-reduce-motion="true"] .dlc-destructive-confirm-sheet {
+    animation: none;
+  }
+
+  /* Phase 18.8G — hierarchy row action rail (never hosts overlay DOM) */
+  .hub-row-action-rail {
+    flex: none;
+    min-width: 9.25rem;
+    max-width: 9.25rem;
+  }
+
+  /* Phase 18.8H — body-level overlay stack (never inside row/hierarchy flex) */
+  #dlc-global-overlay-root {
+    position: fixed;
+    inset: 0;
+    z-index: var(--dlc-z-destructive-confirm, 65);
+    pointer-events: none;
+    overflow: visible;
+    isolation: isolate;
+    contain: none;
+    width: 100vw;
+    max-width: none;
+    min-width: 0;
+    height: 100dvh;
+    transform: none;
+  }
+
+  #dlc-global-overlay-root > * {
+    pointer-events: auto;
+  }
+
+  /*
+   * Semantic trust surfaces — use instead of raw amber/red/sky Tailwind for
+   * status meaning. Pairs: *-fill + *-ink optional for text-only hints.
+   */
+  .dlc-semantic-badge {
+    border-radius: var(--dlc-shape-corner-full);
+    border-width: 1px;
+    border-style: solid;
+    font-weight: 500;
+    font-size: var(--dlc-type-label-medium-size);
+    line-height: var(--dlc-type-label-medium-line);
+    letter-spacing: var(--dlc-type-label-medium-tracking);
+    padding: 0.125rem 0.625rem;
+    box-shadow: var(--dlc-elevation-1);
+  }
+  .dlc-semantic-success {
+    background: rgb(var(--dlc-semantic-success-container) / 1);
+    color: rgb(var(--dlc-semantic-success-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-success-border) / 0.4);
+  }
+  .dlc-semantic-warning {
+    background: rgb(var(--dlc-semantic-warning-container) / 1);
+    color: rgb(var(--dlc-semantic-warning-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-warning-border) / 0.45);
+  }
+  .dlc-semantic-error {
+    background: rgb(var(--dlc-semantic-error-container) / 1);
+    color: rgb(var(--dlc-semantic-error-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-error-border) / 0.45);
+  }
+  .dlc-semantic-info {
+    background: rgb(var(--dlc-semantic-info-container) / 1);
+    color: rgb(var(--dlc-semantic-info-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-info-border) / 0.4);
+  }
+  .dlc-semantic-attention {
+    background: rgb(var(--dlc-semantic-attention-container) / 1);
+    color: rgb(var(--dlc-semantic-attention-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-attention-border) / 0.42);
+  }
+  .dlc-semantic-neutral {
+    background: rgb(var(--dlc-semantic-neutral-container) / 1);
+    color: rgb(var(--dlc-semantic-neutral-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-neutral-border) / 0.45);
+  }
+  .dlc-semantic-pending {
+    background: rgb(var(--dlc-semantic-pending-container) / 1);
+    color: rgb(var(--dlc-semantic-pending-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-pending-border) / 0.45);
+  }
+  .dlc-semantic-approved {
+    background: rgb(var(--dlc-semantic-approved-container) / 1);
+    color: rgb(var(--dlc-semantic-approved-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-approved-border) / 0.42);
+  }
+  .dlc-semantic-declined {
+    background: rgb(var(--dlc-semantic-declined-container) / 1);
+    color: rgb(var(--dlc-semantic-declined-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-declined-border) / 0.45);
+  }
+  .dlc-semantic-active {
+    background: rgb(var(--dlc-semantic-active-container) / 1);
+    color: rgb(var(--dlc-semantic-active-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-active-border) / 0.38);
+  }
+  .dlc-semantic-inactive {
+    background: rgb(var(--dlc-semantic-inactive-container) / 1);
+    color: rgb(var(--dlc-semantic-inactive-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-inactive-border) / 0.5);
+  }
+  .dlc-semantic-destructive {
+    background: rgb(var(--dlc-semantic-destructive-container) / 1);
+    color: rgb(var(--dlc-semantic-destructive-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-destructive-border) / 0.5);
+  }
+
+  /* Inline alerts / banners (calm, not neon) */
+  .dlc-alert {
+    border-radius: var(--dlc-shape-corner-medium);
+    border-width: 1px;
+    border-style: solid;
+    padding: 0.75rem 1rem;
+    font-size: var(--dlc-type-body-medium-size);
+    line-height: var(--dlc-type-body-medium-line);
+  }
+  .dlc-alert-warning {
+    background: rgb(var(--dlc-semantic-warning-container) / 1);
+    color: rgb(var(--dlc-semantic-warning-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-warning-border) / 0.35);
+  }
+  .dlc-alert-error {
+    background: rgb(var(--dlc-semantic-error-container) / 1);
+    color: rgb(var(--dlc-semantic-error-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-error-border) / 0.35);
+  }
+  .dlc-alert-info {
+    background: rgb(var(--dlc-semantic-info-container) / 1);
+    color: rgb(var(--dlc-semantic-info-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-info-border) / 0.32);
+  }
+  .dlc-alert-destructive {
+    background: rgb(var(--dlc-semantic-destructive-container) / 1);
+    color: rgb(var(--dlc-semantic-destructive-on-container) / 1);
+    border-color: rgb(var(--dlc-semantic-destructive-border) / 0.4);
+  }
+
+  .dlc-field-hint-error {
+    color: rgb(var(--dlc-semantic-destructive-emphasis) / 1);
+    font-size: var(--dlc-type-label-medium-size);
+  }
+  /* Secondary destructive control — outline; primary destructive stays solid `Button variant="danger"` */
+  .dlc-btn-destructive-outline {
+    border: 1px solid rgb(var(--dlc-semantic-destructive-border) / 0.85);
+    background: rgb(var(--dlc-semantic-destructive-container) / 0.35);
+    color: rgb(var(--dlc-semantic-destructive-on-container) / 1);
+  }
+  .dlc-btn-destructive-outline:hover {
+    background: rgb(var(--dlc-semantic-destructive-container) / 0.55);
+  }
+}
+
+/**
+ * Mobile / iOS: momentum (“inertia”) scrolling inside overflow regions.
+ * - `touch-action` routes drags to the intended axis (avoids stuck scrollers).
+ * - Use `touch-scroll-x` on horizontal-only overflow wrappers (desktop table pan).
+ * - Use `touch-pan-xy` when the region scrolls horizontally but must not steal
+ *   vertical pans from the page (`<main>`): both axes are allowed; the browser
+ *   picks the right scroll container.
+ */
+@layer utilities {
+  .touch-scroll-y {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+  .touch-scroll-x {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+  }
+  /** Horizontal overflow + allow vertical gesture to reach parent scroll (e.g. `<main>`). */
+  .touch-pan-xy {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+  }
+
+  /** Minimum 44×44px hit target on mobile (pairs with `--dlc-touch-target-min`). */
+  .dlc-touch-target {
+    min-height: var(--dlc-touch-target-min);
+    min-width: var(--dlc-touch-target-min);
+    touch-action: manipulation;
+  }
+
+  /**
+   * Governed motion utilities — `html[data-reduce-motion="true"]` zeros underlying durations.
+   * Prefer these over ad-hoc `transition-all` on finance flows.
+   */
+  .dlc-motion-productive {
+    transition-property: opacity, transform, background-color, border-color, box-shadow;
+    transition-duration: var(--dlc-motion-duration-short1);
+    transition-timing-function: var(--dlc-motion-easing-standard);
+  }
+  .dlc-motion-standard {
+    transition-property: opacity, transform, background-color, border-color, box-shadow;
+    transition-duration: var(--dlc-motion-duration-short2);
+    transition-timing-function: var(--dlc-motion-easing-standard);
+  }
+  .dlc-motion-emphasized {
+    transition-property: opacity, transform, background-color, border-color, box-shadow;
+    transition-duration: var(--dlc-motion-duration-medium1);
+    transition-timing-function: var(--dlc-motion-easing-emphasized);
+  }
+}
+
+/* Document vault editor — crop overlay scoped to viewport (Phase 48.9.3) */
+[data-testid="document-editor-crop-viewport"] .reactEasyCrop_CropArea {
+  color: transparent !important;
+}
