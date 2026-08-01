@@ -264,4 +264,32 @@ http.route({
   handler: integrationHandler,
 });
 
+/**
+ * Public JWKS for local Next.js → cloud Convex JWT validation.
+ * Set `CONVEX_JWT_JWKS_JSON` to the same keyset Next publishes (kid: dlc-workspace-rs256).
+ */
+http.route({
+  path: "/.well-known/jwks.json",
+  method: "GET",
+  handler: httpAction(async () => {
+    const raw = process.env.CONVEX_JWT_JWKS_JSON?.trim();
+    if (!raw) {
+      return new Response(JSON.stringify({ keys: [] }), {
+        status: 503,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+    return new Response(raw, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "public, max-age=300",
+      },
+    });
+  }),
+});
+
 export default http;
