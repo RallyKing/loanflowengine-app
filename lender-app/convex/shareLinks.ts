@@ -1,11 +1,17 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   mergePartialCoverOnPatch,
   mergePartialSubjectPropertyOnPatch,
   syncLinkedPipelineDealDataAfterIntakeChange,
 } from "./dealDataMerge";
 import { SECTION_KEYS, isShareSection } from "./shareSections";
+import {
+  assertCanMutatePipelineRow,
+  assertCanReadPipelineRow,
+} from "./organizationAccess";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 type ShareLinkDoc = {
   section?: string;
@@ -31,9 +37,67 @@ function normalizeAccess(link: ShareLinkDoc): "view" | "edit" {
   return link.access === "view" ? "view" : "edit";
 }
 
+async function pipelineForIntake(
+  ctx: QueryCtx | MutationCtx,
+  intakeId: Id<"intakeSheets">,
+) {
+  return await ctx.db
+    .query("pipeline")
+    .withIndex("by_intakeSheetId", (q) => q.eq("intakeSheetId", intakeId))
+    .first();
+}
+
+async function assertIntakeShareRead(
+  ctx: QueryCtx,
+  intakeId: Id<"intakeSheets">,
+  memberUserKey: string | undefined,
+): Promise<void> {
+  const pipeline = await pipelineForIntake(ctx, intakeId);
+  if (!pipeline) {
+    throw new Error("Intake is not linked to an authorized workspace file.");
+  }
+  await assertCanReadPipelineRow(ctx, pipeline, memberUserKey);
+}
+
+async function assertIntakeShareWrite(
+  ctx: MutationCtx,
+  intakeId: Id<"intakeSheets">,
+  memberUserKey: string | undefined,
+): Promise<void> {
+  const pipeline = await pipelineForIntake(ctx, intakeId);
+  if (!pipeline) {
+    throw new Error("Intake is not linked to an authorized workspace file.");
+  }
+  await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
+}
+
+function pickIntakeForSections(
+  intake: Doc<"intakeSheets">,
+  sections: string[],
+): Record<string, unknown> {
+  const allowed = new Set<string>(["_id", "updatedAt"]);
+  for (const s of sections) {
+    if (!isShareSection(s)) continue;
+    for (const key of SECTION_KEYS[s] as readonly string[]) {
+      allowed.add(key);
+    }
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(intake, key)) {
+      out[key] = (intake as Record<string, unknown>)[key];
+    }
+  }
+  return out;
+}
+
 export const listForIntake = query({
-  args: { intakeId: v.id("intakeSheets") },
-  handler: async (ctx, { intakeId }) => {
+  args: {
+    intakeId: v.id("intakeSheets"),
+    memberUserKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { intakeId, memberUserKey }) => {
+    await assertIntakeShareRead(ctx, intakeId, memberUserKey);
     return await ctx.db
       .query("shareLinks")
       .withIndex("by_intake", (q) => q.eq("intakeId", intakeId))
@@ -44,6 +108,7 @@ export const listForIntake = query({
 export const create = mutation({
   args: {
     intakeId: v.id("intakeSheets"),
+    memberUserKey: v.optional(v.string()),
     sections: v.array(v.string()),
     access: v.optional(v.string()), // "view" | "edit"
     audience: v.optional(v.string()), // "client" | "lender" | "partner" | "other"
@@ -52,8 +117,9 @@ export const create = mutation({
   },
   handler: async (
     ctx,
-    { intakeId, sections, access, audience, label, expiresAt },
+    { intakeId, memberUserKey, sections, access, audience, label, expiresAt },
   ) => {
+    await assertIntakeShareWrite(ctx, intakeId, memberUserKey);
     if (!sections || sections.length === 0) {
       throw new Error("At least one section is required.");
     }
@@ -84,17 +150,27 @@ export const create = mutation({
 });
 
 export const revoke = mutation({
-  args: { id: v.id("shareLinks") },
-  handler: async (ctx, { id }) => {
+  args: {
+    id: v.id("shareLinks"),
+    memberUserKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, memberUserKey }) => {
     const link = await ctx.db.get(id);
     if (!link) return;
+    await assertIntakeShareWrite(ctx, link.intakeId, memberUserKey);
     await ctx.db.patch(id, { revokedAt: Date.now() });
   },
 });
 
 export const remove = mutation({
-  args: { id: v.id("shareLinks") },
-  handler: async (ctx, { id }) => {
+  args: {
+    id: v.id("shareLinks"),
+    memberUserKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, memberUserKey }) => {
+    const link = await ctx.db.get(id);
+    if (!link) return;
+    await assertIntakeShareWrite(ctx, link.intakeId, memberUserKey);
     await ctx.db.delete(id);
   },
 });
@@ -114,18 +190,19 @@ export const getByToken = query({
     const intake = await ctx.db.get(link.intakeId);
     if (!intake) return { status: "not_found" as const };
 
+    const sections = normalizeSections(link);
     return {
       status: "ok" as const,
       link: {
         _id: link._id,
-        sections: normalizeSections(link),
+        sections,
         access: normalizeAccess(link),
         audience: link.audience ?? "client",
         label: link.label,
         createdAt: link.createdAt,
         expiresAt: link.expiresAt,
       },
-      intake,
+      intake: pickIntakeForSections(intake, sections),
     };
   },
 });

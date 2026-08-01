@@ -47,13 +47,13 @@ export function RegistryPartyLinker({
 
   const results = useQuery(
     api.registry.list,
-    trimmed.length >= 2
+    trimmed.length >= 1
       ? {
           organizationId,
           memberUserKey,
           searchQuery: trimmed,
           typeFilter,
-          limit: 8,
+          limit: 12,
         }
       : "skip",
   );
@@ -237,7 +237,7 @@ export function RegistryPartyLinker({
         />
       </div>
 
-      {trimmed.length >= 2 ? (
+      {trimmed.length >= 1 ? (
         <ul className="mt-1.5 max-h-40 space-y-1 overflow-y-auto">
           {results === undefined ? (
             <li className="px-1 py-1 text-xs text-muted-foreground">Searching…</li>

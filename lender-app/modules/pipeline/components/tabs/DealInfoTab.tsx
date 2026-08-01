@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -49,6 +49,11 @@ import {
   toggleDealInfoSectionHidden,
   type DealInfoSectionId,
 } from "@/lib/file/dealInfoTabLayout";
+import type { RegisterCommandCenterSections } from "@/lib/file/commandCenterSectionRegistry";
+import type {
+  CommandCenterSectionRenderer,
+  DealInfoCommandCenterSectionId,
+} from "@/lib/file/dealInfoCommandCenterLayout";
 import { DEAL_TAB_LABELS } from "@/lib/file/dealWorkspaceLayout";
 import {
   DealWorkspaceSaveStatus,
@@ -93,6 +98,9 @@ export type DealInfoTabProps = {
   fileInsightsSnapshot?: PipelineFileInsightsSnapshot | null;
   /** Skip canvas + toolbar when nested in unified Deal Info tab. */
   embedded?: boolean;
+  /** Parent owns DnD — register section renderers instead of SortableSectionList. */
+  suppressInternalDnd?: boolean;
+  onRegisterSections?: RegisterCommandCenterSections;
   organizationId?: Id<"organizations">;
   memberUserKey?: string;
   contactFileLinks?: Doc<"contactFileLinks">[];
@@ -218,6 +226,8 @@ export function DealInfoTab({
   combineBorrowersGuarantors = false,
   fileInsightsSnapshot,
   embedded = false,
+  suppressInternalDnd = false,
+  onRegisterSections,
   organizationId,
   memberUserKey,
   contactFileLinks,
@@ -258,7 +268,9 @@ export function DealInfoTab({
   const visibleSectionIds = useMemo(() => {
     const ordered = dealInfoLayout.order.filter((id) => {
       if (!allowedSectionIds.includes(id)) return false;
-      if (!isDealInfoSectionVisible(dealInfoLayout, id)) return false;
+      if (!suppressInternalDnd && !isDealInfoSectionVisible(dealInfoLayout, id)) {
+        return false;
+      }
       if (sectionGroupFilter && !sectionGroupFilter.has(id)) return false;
       if (combineBorrowersGuarantors && id === "guarantors") return false;
       return true;
@@ -269,6 +281,7 @@ export function DealInfoTab({
     combineBorrowersGuarantors,
     dealInfoLayout,
     sectionGroupFilter,
+    suppressInternalDnd,
   ]);
 
   const onToggleSectionVisibility = useCallback(
@@ -682,6 +695,70 @@ export function DealInfoTab({
     }
   };
 
+  const dealInfoRegisterSig = useMemo(
+    () =>
+      [
+        visibleSectionIds.join(","),
+        draft?.updatedAt ?? 0,
+        draft?.borrowers?.length ?? 0,
+        draft?.guarantors?.length ?? 0,
+        contactFileLinks?.length ?? 0,
+        contactFileLinks
+          ?.map((l) => `${l.contactId}:${l.role ?? ""}`)
+          .sort()
+          .join(",") ?? "",
+        (draft?.business as { legalName?: string; ein?: string; entityType?: string } | undefined)
+          ?.legalName ?? "",
+        (draft?.business as { ein?: string } | undefined)?.ein ?? "",
+        (draft?.business as { entityType?: string } | undefined)?.entityType ?? "",
+        fileInsightsSnapshot?.healthSummary ?? "",
+        licensing.licenseDisplay.loading ? "loading" : "ready",
+      ].join("|"),
+    [
+      draft?.borrowers?.length,
+      draft?.guarantors?.length,
+      draft?.updatedAt,
+      contactFileLinks,
+      draft?.business,
+      fileInsightsSnapshot?.healthSummary,
+      licensing.licenseDisplay.loading,
+      visibleSectionIds,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    if (!suppressInternalDnd || !onRegisterSections || !draft) return;
+
+    const sections: Partial<
+      Record<DealInfoCommandCenterSectionId, CommandCenterSectionRenderer>
+    > = {};
+    for (const sectionId of visibleSectionIds) {
+      if (sectionId === "fileDetails") {
+        sections.fileDetails = (handle) =>
+          renderDealInfoSection("fileDetails", handle);
+      } else if (
+        sectionId === "borrowers" ||
+        (combineBorrowersGuarantors && sectionId === "guarantors")
+      ) {
+        sections.borrowers = (handle) =>
+          renderDealInfoSection(
+            combineBorrowersGuarantors ? "borrowers" : sectionId,
+            handle,
+          );
+      }
+    }
+
+    const contentSig = dealInfoRegisterSig;
+
+    onRegisterSections(sections, contentSig);
+  }, [
+    combineBorrowersGuarantors,
+    dealInfoRegisterSig,
+    onRegisterSections,
+    suppressInternalDnd,
+    visibleSectionIds,
+  ]);
+
   if (!draft) {
     return (
       <div
@@ -704,7 +781,7 @@ export function DealInfoTab({
   }
 
   const sectionsBody =
-    visibleSectionIds.length > 0 ? (
+    visibleSectionIds.length > 0 && !suppressInternalDnd ? (
       <SortableSectionList
         itemIds={visibleSectionIds}
         onDragEnd={onDealInfoDragEnd}
@@ -721,6 +798,10 @@ export function DealInfoTab({
         </div>
       </SortableSectionList>
     ) : null;
+
+  if (embedded && suppressInternalDnd) {
+    return null;
+  }
 
   if (embedded) {
     return (

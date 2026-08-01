@@ -475,10 +475,6 @@ export function FormsApplicationsTab({
   const onCreatePreset = async (
     preset: (typeof BUILTIN_INTAKE_FORM_PRESETS)[number],
   ) => {
-    if (preset.formType === "referral") {
-      setError("Referral forms are org-level templates — coming soon.");
-      return;
-    }
     setCreating(true);
     setError(null);
     try {

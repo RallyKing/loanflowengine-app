@@ -25,7 +25,13 @@ export type PipelineFileActivityKind =
   | "share_grant"
   | "share_revoke"
   | "share_update"
-  | "client_momentum";
+  | "client_momentum"
+  | "vault_client_upload"
+  | "vault_broker_review"
+  | "lender_delivery_accessed"
+  | "lender_document_previewed"
+  | "lender_folder_expanded"
+  | "lender_package_exported";
 
 export function clampActivitySummary(s: string | undefined): string | undefined {
   if (!s) return undefined;
@@ -104,6 +110,18 @@ export function kindLabel(kind: PipelineFileActivityKind): string {
       return "Sharing updated";
     case "client_momentum":
       return "Client confidence";
+    case "vault_client_upload":
+      return "Client upload";
+    case "vault_broker_review":
+      return "Broker review";
+    case "lender_delivery_accessed":
+      return "Lender data room";
+    case "lender_document_previewed":
+      return "Document previewed";
+    case "lender_folder_expanded":
+      return "Folder viewed";
+    case "lender_package_exported":
+      return "Package downloaded";
     default:
       return kind;
   }

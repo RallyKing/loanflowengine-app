@@ -6,6 +6,7 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  TouchSensor,
   closestCenter,
   pointerWithin,
   useSensor,
@@ -16,6 +17,10 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
@@ -47,16 +52,26 @@ import {
   parseVaultDocumentDragId,
   parseVaultFolderActiveId,
   parseVaultFolderSortableId,
-  resolveVaultDocumentDropFolderId,
+  parseVaultFileTaskSortableId,
+  parseVaultFileTaskTargetId,
+  isVaultFileTaskTargetId,
+  resolveVaultDocumentDropTarget,
+  vaultFolderSortableId,
+  vaultFileTaskSortableId,
+  VAULT_DROP_ROOT,
+  VAULT_DROP_FOLDER_PREFIX,
+  VAULT_SORT_FOLDER_PREFIX,
 } from "@/lib/library/documentVaultDnD";
 import {
   EMPTY_FOLDER_DRAG_VISUAL,
+  resolveFolderDragHoverExpandTarget,
   resolveFolderDragVisual,
   type FolderDragVisualState,
 } from "@/lib/library/documentVaultFolderDragUi";
 import { downloadVaultDocumentAsPdf } from "@/lib/documents/pdfExport";
 import { documentMatchesVaultSearch } from "@/lib/library/vaultDocumentSearch";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
+import { extractClientPortalTokenFromPreview, extractCompanySlugFromPreview } from "@/lib/portalToken";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
 import { unlinkConfirm } from "@/lib/ui/confirmDestructive";
 import type {
@@ -91,6 +106,11 @@ import {
   type VaultGridTypeFilter,
 } from "@/lib/library/vaultGridFilters";
 import { DocumentVaultBulkToolbar } from "@/components/library/DocumentVaultBulkToolbar";
+import { FileTaskConfigModal } from "@/components/library/FileTaskConfigModal";
+import { DocumentVaultApplyTemplateDrawer } from "@/components/library/DocumentVaultApplyTemplateDrawer";
+import { ClientLinkGeneratorModal } from "@/components/library/ClientLinkGeneratorModal";
+import { ClientPortalLinkRepository } from "@/components/library/ClientPortalLinkRepository";
+import { DeliverToLenderModal } from "@/components/library/DeliverToLenderModal";
 import { DealBibleCompilerModal } from "@/components/library/compiler/DealBibleCompilerModal";
 import { DocumentVaultCreatorModal } from "@/components/pipeline/deal/DocumentVaultCreatorModal";
 import type { DocumentCreatorTokenContext } from "@/lib/pipeline/documentVaultCreator";
@@ -105,6 +125,9 @@ import { DocumentPropertiesPanel } from "@/components/library/DocumentProperties
 import { LibraryDocumentsList } from "@/components/library/LibraryDocumentsList";
 import { LibraryDocumentsVaultGridSkeleton } from "@/components/library/LibraryDocumentsVaultGrid";
 import { downloadVaultDocumentsZip } from "@/lib/library/downloadVaultDocumentsZip";
+import { buildVaultDocumentZipPath } from "@/lib/library/vaultZipPaths";
+import { FileTaskReviewActions } from "@/components/library/FileTaskReviewActions";
+import { FileTaskRejectModal } from "@/components/library/FileTaskRejectModal";
 import {
   premiumWorkspaceCanvasClass,
   premiumTabStackClass,
@@ -146,6 +169,7 @@ type DocRow = {
   documentCategory?: LibraryDocumentCategory;
   taxYear?: string;
   folderId?: Id<"documentFolders">;
+  fileTaskId?: Id<"documentVaultFileTasks">;
   expiresAt?: number;
   expiryStatus?: "none" | "active" | "expiring_soon" | "expired";
   linkScope: LibraryDocumentLinkScope;
@@ -158,6 +182,9 @@ type DocRow = {
   reviewStatus?: "rejected";
   rejectionReason?: string;
   isSharedWithClient?: boolean;
+  assignedContactId?: Id<"contacts">;
+  assignedClientId?: Id<"clients">;
+  assignedLenderId?: Id<"lenders">;
 };
 
 type OptimisticLinkMeta = {
@@ -231,8 +258,21 @@ export function LibraryDocumentsWorkspace({
   );
   const bulkMoveDocuments = useMutation(api.libraryDocuments.bulkMoveDocuments);
   const moveFolder = useMutation(api.documentFolders.moveFolder);
+  const assignFolderToFileTask = useMutation(
+    api.documentFolders.assignFolderToFileTask,
+  );
   const reorderSiblingFolders = useMutation(
     api.documentFolders.reorderSiblingFolders,
+  );
+  const createFileTaskWithConfig = useMutation(
+    api.documentVaultFileTasks.createWithConfig,
+  );
+  const reorderFileTasks = useMutation(api.documentVaultFileTasks.reorder);
+  const acceptFileTaskReview = useMutation(
+    api.documentVaultFileTasks.acceptFileTaskReview,
+  );
+  const rejectFileTaskReview = useMutation(
+    api.documentVaultFileTasks.rejectFileTaskReview,
   );
   const rejectAndRequestDocument = useMutation(
     api.libraryDocuments.rejectAndRequestDocument,
@@ -321,7 +361,48 @@ export function LibraryDocumentsWorkspace({
   const [assignTarget, setAssignTarget] = useState<DocRow | null>(null);
   const [exportingPdfDocId, setExportingPdfDocId] =
     useState<Id<"libraryDocuments"> | null>(null);
+  const [showArchivedTasks, setShowArchivedTasks] = useState(false);
   const vaultFolders = useDocumentVaultFolders(vaultPipelineFileId, memberUserKey);
+  const fileTasksQueryArgs = useMemo(() => {
+    if (!vaultPipelineFileId) return "skip" as const;
+    return memberUserKey
+      ? { pipelineFileId: vaultPipelineFileId, memberUserKey }
+      : { pipelineFileId: vaultPipelineFileId };
+  }, [vaultPipelineFileId, memberUserKey]);
+  const vaultFileTasks = useQuery(
+    api.documentVaultFileTasks.listByPipeline,
+    fileTasksQueryArgs,
+  );
+  const archivedFileTasksQueryArgs = useMemo(() => {
+    if (!vaultPipelineFileId || !showArchivedTasks) return "skip" as const;
+    return memberUserKey
+      ? {
+          pipelineFileId: vaultPipelineFileId,
+          archivedOnly: true,
+          memberUserKey,
+        }
+      : {
+          pipelineFileId: vaultPipelineFileId,
+          archivedOnly: true,
+        };
+  }, [vaultPipelineFileId, memberUserKey, showArchivedTasks]);
+  const archivedVaultFileTasks = useQuery(
+    api.documentVaultFileTasks.listByPipeline,
+    archivedFileTasksQueryArgs,
+  );
+  const [fileTaskBatchOpen, setFileTaskBatchOpen] = useState(false);
+  const [applyTemplateOpen, setApplyTemplateOpen] = useState(false);
+  const [clientLinkOpen, setClientLinkOpen] = useState(false);
+  const [linkRepositoryOpen, setLinkRepositoryOpen] = useState(false);
+  const [deliverLenderOpen, setDeliverLenderOpen] = useState(false);
+  const issueViewAsClient = useMutation(
+    api.documentVaultClientBundlePortal.issueViewAsClientPreview,
+  );
+  const [optimisticFileTaskOrder, setOptimisticFileTaskOrder] = useState<
+    Id<"documentVaultFileTasks">[] | undefined
+  >(undefined);
+  const [activeDragFileTaskId, setActiveDragFileTaskId] =
+    useState<Id<"documentVaultFileTasks"> | null>(null);
   const rootLabelQueryArgs = useMemo(() => {
     if (!vaultPipelineFileId) return "skip" as const;
     return memberUserKey
@@ -385,10 +466,20 @@ export function LibraryDocumentsWorkspace({
   const folderDragVisualRef = useRef<FolderDragVisualState>(
     EMPTY_FOLDER_DRAG_VISUAL,
   );
+  const dragExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragExpandFolderRef = useRef<Id<"documentFolders"> | null>(null);
+  const [dragAutoExpandFolderIds, setDragAutoExpandFolderIds] = useState<
+    Id<"documentFolders">[]
+  >([]);
   const [optimisticSiblingOrder, setOptimisticSiblingOrder] = useState<
     Record<string, Id<"documentFolders">[]>
   >({});
   const [compilerOpen, setCompilerOpen] = useState(false);
+  const [previewRejectTask, setPreviewRejectTask] = useState<{
+    _id: Id<"documentVaultFileTasks">;
+    title: string;
+  } | null>(null);
+  const [previewReviewBusy, setPreviewReviewBusy] = useState(false);
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [creatorSaving, setCreatorSaving] = useState(false);
   const [expanded, setExpanded] = useState<Id<"libraryDocuments"> | null>(null);
@@ -504,13 +595,17 @@ export function LibraryDocumentsWorkspace({
           ? (args: {
               documentId: Id<"libraryDocuments">;
               proof: LibraryDocumentsProof;
-              folderId: Id<"documentFolders">;
+              folderId?: Id<"documentFolders">;
+              fileTaskId?: Id<"documentVaultFileTasks">;
               memberUserKey: string;
             }) =>
               patchLinkMetadata({
                 documentId: args.documentId,
                 proof: args.proof,
-                folderId: args.folderId,
+                ...(args.folderId != null ? { folderId: args.folderId } : {}),
+                ...(args.fileTaskId != null
+                  ? { fileTaskId: args.fileTaskId }
+                  : {}),
                 memberUserKey: args.memberUserKey,
               })
           : undefined,
@@ -816,6 +911,7 @@ export function LibraryDocumentsWorkspace({
       latestFileName: d.latestFileName,
       latestContentType: d.latestContentType,
       folderId: d.folderId,
+      fileTaskId: d.fileTaskId,
       linkScope: d.linkScope,
       latestVersionNumber: d.latestVersionNumber,
     }));
@@ -846,6 +942,52 @@ export function LibraryDocumentsWorkspace({
     () => (selectedRow ? proofForDocRow(context, selectedRow) : null),
     [context, selectedRow],
   );
+
+  const previewReviewTask = useMemo(() => {
+    if (!selectedRow?.fileTaskId || !vaultFileTasks) return null;
+    const task = vaultFileTasks.find((t) => t._id === selectedRow.fileTaskId);
+    if (!task || task.status !== "pending_review") return null;
+    return task;
+  }, [selectedRow?.fileTaskId, vaultFileTasks]);
+
+  const previewReviewFooter = useMemo(() => {
+    if (!previewReviewTask || !canMutate || !memberUserKey) return null;
+    return (
+      <FileTaskReviewActions
+        className="mx-3 mb-3 shrink-0"
+        busy={previewReviewBusy}
+        onApprove={async () => {
+          setPreviewReviewBusy(true);
+          try {
+            await acceptFileTaskReview({
+              fileTaskId: previewReviewTask._id,
+              memberUserKey,
+            });
+            showOperationalToast({
+              title: "Submission approved",
+              variant: "success",
+            });
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+          } finally {
+            setPreviewReviewBusy(false);
+          }
+        }}
+        onRequestRevision={() =>
+          setPreviewRejectTask({
+            _id: previewReviewTask._id,
+            title: previewReviewTask.title,
+          })
+        }
+      />
+    );
+  }, [
+    acceptFileTaskReview,
+    canMutate,
+    memberUserKey,
+    previewReviewBusy,
+    previewReviewTask,
+  ]);
 
   const pdfMergeCandidates = useMemo((): DocumentVaultMergeCandidate[] => {
     if (!listRows || !selectedDocumentId) return [];
@@ -1015,6 +1157,14 @@ export function LibraryDocumentsWorkspace({
             versionId: d.latestVersionId,
             fileName: d.latestFileName ?? d.title,
             url: urlResult.url,
+            zipPath: vaultFolders
+              ? buildVaultDocumentZipPath(
+                  vaultFolders,
+                  d.folderId,
+                  d.latestFileName ?? d.title,
+                  rootLabel ?? "Root",
+                )
+              : undefined,
           };
         }),
       );
@@ -1024,7 +1174,7 @@ export function LibraryDocumentsWorkspace({
     } finally {
       setBulkBusy(false);
     }
-  }, [bulkSelectableRows, bulkSelectedIds, convex, memberUserKey]);
+  }, [bulkSelectableRows, bulkSelectedIds, convex, memberUserKey, rootLabel, vaultFolders]);
 
   const handleDownloadAsPdf = useCallback(
     async (doc: DocRow) => {
@@ -1064,7 +1214,11 @@ export function LibraryDocumentsWorkspace({
   );
 
   const handleMoveDocumentToFolder = useCallback(
-    async (doc: DocRow, folderId: Id<"documentFolders"> | null) => {
+    async (
+      doc: DocRow,
+      folderId: Id<"documentFolders"> | null,
+      fileTaskId?: Id<"documentVaultFileTasks"> | null,
+    ) => {
       if (!memberUserKey || !vaultPipelineFileId) return;
       setErr(null);
       try {
@@ -1072,6 +1226,9 @@ export function LibraryDocumentsWorkspace({
           documentId: doc._id,
           proof: { kind: "pipeline", pipelineFileId: vaultPipelineFileId },
           folderId: folderId ?? "__unset__",
+          ...(fileTaskId !== undefined
+            ? { fileTaskId: fileTaskId ?? "__unset__" }
+            : {}),
           memberUserKey,
         });
       } catch (e) {
@@ -1086,14 +1243,59 @@ export function LibraryDocumentsWorkspace({
     useSensor(PointerSensor, {
       activationConstraint: { distance: 8 },
     }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 6 },
+    }),
   );
 
+  const allVaultSortableIds = useMemo(() => {
+    const folderIds = (vaultFolders ?? []).map((f) => vaultFolderSortableId(f._id));
+    const taskIds = (vaultFileTasks ?? []).map((t) =>
+      vaultFileTaskSortableId(t._id),
+    );
+    return [...taskIds, ...folderIds];
+  }, [vaultFolders, vaultFileTasks]);
+
   const vaultCollisionDetection: CollisionDetection = useCallback((args) => {
+    const activeId = String(args.active.id);
+    const activeIsFolder = parseVaultFolderActiveId(activeId) != null;
+    const activeIsDoc = parseVaultDocumentDragId(activeId) != null;
     const pointerHits = pointerWithin(args);
-    if (pointerHits.length > 0) {
-      return pointerHits;
+    const hits = pointerHits.length > 0 ? pointerHits : closestCenter(args);
+    if (hits.length === 0) return hits;
+
+    const pickFirst = (match: (id: string) => boolean) =>
+      hits.find((collision) => match(String(collision.id)));
+
+    const withoutRoot = hits.filter((collision) => collision.id !== VAULT_DROP_ROOT);
+
+    if (activeIsFolder) {
+      const folderDropHit = pickFirst((id) =>
+        id.startsWith(VAULT_DROP_FOLDER_PREFIX),
+      );
+      if (folderDropHit) return [folderDropHit];
+      const fileTaskHit = pickFirst((id) => isVaultFileTaskTargetId(id));
+      if (fileTaskHit) return [fileTaskHit];
+      const folderSortHit = pickFirst((id) =>
+        id.startsWith(VAULT_SORT_FOLDER_PREFIX),
+      );
+      if (folderSortHit) return [folderSortHit];
+      return withoutRoot.length > 0 ? withoutRoot : hits;
     }
-    return closestCenter(args);
+
+    if (activeIsDoc) {
+      const folderHit = pickFirst(
+        (id) =>
+          id.startsWith(VAULT_DROP_FOLDER_PREFIX) ||
+          id.startsWith(VAULT_SORT_FOLDER_PREFIX),
+      );
+      if (folderHit) return [folderHit];
+      const fileTaskHit = pickFirst((id) => isVaultFileTaskTargetId(id));
+      if (fileTaskHit) return [fileTaskHit];
+      return withoutRoot.length > 0 ? withoutRoot : hits;
+    }
+
+    return hits;
   }, []);
 
   const resolveFolderDropLabel = useCallback(
@@ -1134,6 +1336,14 @@ export function LibraryDocumentsWorkspace({
 
   const handleVaultDragStart = useCallback(
     (event: DragStartEvent) => {
+      const fileTaskId = parseVaultFileTaskSortableId(String(event.active.id));
+      if (fileTaskId) {
+        setActiveDragFileTaskId(fileTaskId);
+        setActiveDragFolderId(null);
+        setActiveDragDocId(null);
+        setActiveDragDocIds([]);
+        return;
+      }
       const folderId = parseVaultFolderActiveId(String(event.active.id));
       if (folderId) {
         setActiveDragFolderId(folderId);
@@ -1154,41 +1364,103 @@ export function LibraryDocumentsWorkspace({
 
   const handleVaultDragOver = useCallback((event: DragOverEvent) => {
     const activeFolderId = parseVaultFolderSortableId(String(event.active.id));
-    if (!activeFolderId) {
-      if (folderDragVisualRef.current !== EMPTY_FOLDER_DRAG_VISUAL) {
-        folderDragVisualRef.current = EMPTY_FOLDER_DRAG_VISUAL;
-        setFolderDragVisual(EMPTY_FOLDER_DRAG_VISUAL);
-      }
-      return;
+    if (activeFolderId) {
+      const visual = resolveFolderDragVisual(event);
+      folderDragVisualRef.current = visual;
+      setFolderDragVisual(visual);
+    } else if (folderDragVisualRef.current !== EMPTY_FOLDER_DRAG_VISUAL) {
+      folderDragVisualRef.current = EMPTY_FOLDER_DRAG_VISUAL;
+      setFolderDragVisual(EMPTY_FOLDER_DRAG_VISUAL);
     }
-    const visual = resolveFolderDragVisual(event);
-    folderDragVisualRef.current = visual;
-    setFolderDragVisual(visual);
+
+    const hoverFolderId = resolveFolderDragHoverExpandTarget(event);
+    if (hoverFolderId && hoverFolderId !== dragExpandFolderRef.current) {
+      dragExpandFolderRef.current = hoverFolderId;
+      if (dragExpandTimerRef.current) {
+        clearTimeout(dragExpandTimerRef.current);
+      }
+      dragExpandTimerRef.current = setTimeout(() => {
+        setDragAutoExpandFolderIds([hoverFolderId]);
+      }, 1000);
+    } else if (!hoverFolderId) {
+      if (dragExpandTimerRef.current) {
+        clearTimeout(dragExpandTimerRef.current);
+        dragExpandTimerRef.current = null;
+      }
+      dragExpandFolderRef.current = null;
+    }
+  }, []);
+
+  const clearDragExpandState = useCallback(() => {
+    if (dragExpandTimerRef.current) {
+      clearTimeout(dragExpandTimerRef.current);
+      dragExpandTimerRef.current = null;
+    }
+    dragExpandFolderRef.current = null;
+    setDragAutoExpandFolderIds([]);
   }, []);
 
   const handleVaultDragCancel = useCallback(() => {
     folderDragVisualRef.current = EMPTY_FOLDER_DRAG_VISUAL;
     setFolderDragVisual(EMPTY_FOLDER_DRAG_VISUAL);
+    clearDragExpandState();
     setActiveDragDocId(null);
     setActiveDragDocIds([]);
     setActiveDragFolderId(null);
-  }, []);
+    setActiveDragFileTaskId(null);
+  }, [clearDragExpandState]);
 
   const handleVaultDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const visual = folderDragVisualRef.current;
       folderDragVisualRef.current = EMPTY_FOLDER_DRAG_VISUAL;
       setFolderDragVisual(EMPTY_FOLDER_DRAG_VISUAL);
+      clearDragExpandState();
 
       const draggedFolderId =
         activeDragFolderId ??
         parseVaultFolderActiveId(String(event.active.id));
+      const draggedFileTaskId =
+        activeDragFileTaskId ??
+        parseVaultFileTaskSortableId(String(event.active.id));
       const documentIds = activeDragDocIds;
       setActiveDragDocId(null);
       setActiveDragDocIds([]);
       setActiveDragFolderId(null);
+      setActiveDragFileTaskId(null);
 
       if (!event.over || !vaultPipelineFileId || !memberUserKey) {
+        return;
+      }
+
+      if (draggedFileTaskId && vaultFileTasks) {
+        const overTaskId = parseVaultFileTaskSortableId(String(event.over.id));
+        if (!overTaskId || overTaskId === draggedFileTaskId) return;
+
+        const taskIds = vaultFileTasks.map((t) => t._id);
+        const oldIndex = taskIds.indexOf(draggedFileTaskId);
+        const newIndex = taskIds.indexOf(overTaskId);
+        if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
+          return;
+        }
+
+        const newOrder = arrayMove(taskIds, oldIndex, newIndex);
+        setOptimisticFileTaskOrder(newOrder);
+        try {
+          await reorderFileTasks({
+            pipelineFileId: vaultPipelineFileId,
+            orderedFileTaskIds: newOrder,
+            memberUserKey,
+          });
+          showOperationalToast({
+            title: "File task order updated",
+            variant: "success",
+          });
+          setOptimisticFileTaskOrder(undefined);
+        } catch (e) {
+          setOptimisticFileTaskOrder(undefined);
+          setErr(e instanceof Error ? e.message : String(e));
+        }
         return;
       }
 
@@ -1198,6 +1470,27 @@ export function LibraryDocumentsWorkspace({
         const draggedRow = vaultFolders.find((f) => f._id === draggedFolderId);
         if (!draggedRow) return;
 
+        const dropOnTaskId = parseVaultFileTaskTargetId(String(event.over.id));
+        if (dropOnTaskId) {
+          try {
+            await assignFolderToFileTask({
+              folderId: draggedFolderId,
+              fileTaskId: dropOnTaskId,
+              memberUserKey,
+            });
+            showOperationalToast({
+              title: "Folder moved to file task",
+              description:
+                vaultFileTasks?.find((t) => t._id === dropOnTaskId)?.title ??
+                "Requirement",
+              variant: "success",
+            });
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+          }
+          return;
+        }
+
         const currentParent = draggedRow.parentFolderId ?? null;
 
         if (visual.mode === "nest") {
@@ -1206,10 +1499,17 @@ export function LibraryDocumentsWorkspace({
             draggedFolderId !== targetParent &&
             (currentParent ?? null) !== (targetParent ?? null)
           ) {
+            const targetRow = targetParent
+              ? vaultFolders.find((f) => f._id === targetParent)
+              : null;
             try {
               await moveFolder({
                 folderId: draggedFolderId,
                 parentFolderId: targetParent,
+                fileTaskId:
+                  targetParent == null
+                    ? null
+                    : (targetRow?.fileTaskId ?? null),
                 memberUserKey,
               });
               showOperationalToast({
@@ -1284,27 +1584,40 @@ export function LibraryDocumentsWorkspace({
         return;
       }
 
-      const targetFolderId = resolveVaultDocumentDropFolderId(
-        String(event.over.id),
-      );
-      if (targetFolderId === undefined) return;
+      const dropTarget = resolveVaultDocumentDropTarget(String(event.over.id));
+      if (!dropTarget) return;
+
+      const targetFolderId = dropTarget.folderId;
+      let targetFileTaskId = dropTarget.fileTaskId;
+      if (targetFolderId && !targetFileTaskId) {
+        const folderRow = vaultFolders?.find((f) => f._id === targetFolderId);
+        targetFileTaskId = folderRow?.fileTaskId;
+      }
 
       const movableIds = documentIds.filter((id) => {
         const row = displayRows?.find((d) => d._id === id);
         return (
           row?.linkScope === "pipeline" &&
           row.reviewStatus !== "rejected" &&
-          (row.folderId ?? null) !== targetFolderId
+          ((row.folderId ?? null) !== targetFolderId ||
+            (row.fileTaskId ?? null) !== (targetFileTaskId ?? null))
         );
       });
       if (movableIds.length === 0) return;
 
-      const folderName = resolveFolderDropLabel(targetFolderId);
+      const folderName = targetFileTaskId
+        ? (vaultFileTasks?.find((t) => t._id === targetFileTaskId)?.title ??
+          "file task")
+        : resolveFolderDropLabel(targetFolderId);
       try {
         if (movableIds.length === 1) {
           const doc = displayRows?.find((d) => d._id === movableIds[0]);
           if (!doc) return;
-          await handleMoveDocumentToFolder(doc, targetFolderId);
+          await handleMoveDocumentToFolder(
+            doc,
+            targetFolderId,
+            targetFileTaskId ?? null,
+          );
           showOperationalToast({
             title: `Moved 1 file to ${folderName}`,
             variant: "success",
@@ -1314,6 +1627,7 @@ export function LibraryDocumentsWorkspace({
             pipelineFileId: vaultPipelineFileId,
             documentIds: movableIds,
             folderId: targetFolderId ?? "__unset__",
+            fileTaskId: targetFileTaskId ?? "__unset__",
             memberUserKey,
           });
           if (result.failures.length > 0) {
@@ -1331,16 +1645,21 @@ export function LibraryDocumentsWorkspace({
     },
     [
       activeDragDocIds,
+      activeDragFileTaskId,
       activeDragFolderId,
+      assignFolderToFileTask,
       bulkMoveDocuments,
       clearBulkSelection,
+      clearDragExpandState,
       displayRows,
       handleMoveDocumentToFolder,
       memberUserKey,
       moveFolder,
       optimisticSiblingOrder,
+      reorderFileTasks,
       reorderSiblingFolders,
       resolveFolderDropLabel,
+      vaultFileTasks,
       vaultFolders,
       vaultPipelineFileId,
     ],
@@ -1588,6 +1907,7 @@ export function LibraryDocumentsWorkspace({
   async function onBatchUpload(
     files: FileList | File[],
     targetFolderId?: Id<"documentFolders"> | null,
+    targetFileTaskId?: Id<"documentVaultFileTasks"> | null,
   ) {
     if (!memberUserKey || uploadBusy) return;
     const list = Array.from(files);
@@ -1598,6 +1918,7 @@ export function LibraryDocumentsWorkspace({
         : vaultPipelineFileId
           ? currentFolderId
           : null;
+    const fileTaskId = targetFileTaskId ?? undefined;
     setErr(null);
     setBatchUploading(true);
     const failures: string[] = [];
@@ -1611,6 +1932,7 @@ export function LibraryDocumentsWorkspace({
             memberUserKey,
             title: newTitle.trim() || titleFromVaultFileName(file.name),
             folderId: vaultPipelineFileId ? folderId : null,
+            fileTaskId: vaultPipelineFileId ? fileTaskId : null,
             mutations: vaultUploadMutations,
             fileIndex: i + 1,
             fileCount: list.length,
@@ -1926,6 +2248,7 @@ export function LibraryDocumentsWorkspace({
 
           {vaultPipelineFileId ? (
             <DndContext
+              autoScroll={false}
               sensors={vaultDragSensors}
               collisionDetection={vaultCollisionDetection}
               onDragStart={handleVaultDragStart}
@@ -1948,6 +2271,68 @@ export function LibraryDocumentsWorkspace({
                 onRecallFromClientVault={
                   canMutate && hasLinkedContacts
                     ? () => setRecallClientVaultOpen(true)
+                    : undefined
+                }
+                onGenerateClientLink={
+                  canMutate ? () => setClientLinkOpen(true) : undefined
+                }
+                onManagePortalLinks={
+                  canMutate && memberUserKey && vaultPipelineFileId
+                    ? () => setLinkRepositoryOpen(true)
+                    : undefined
+                }
+                onViewAsClient={
+                  canMutate && memberUserKey && vaultPipelineFileId
+                    ? () => {
+                        void (async () => {
+                          try {
+                            const result = await issueViewAsClient({
+                              pipelineFileId: vaultPipelineFileId,
+                              memberUserKey,
+                              writeMode: true,
+                            });
+                            if (!result.ok) {
+                              setErr(result.message);
+                              return;
+                            }
+                            const token = extractClientPortalTokenFromPreview(result);
+                            const slug = extractCompanySlugFromPreview(result);
+                            if (!token) {
+                              setErr(
+                                "Preview link was created but the token could not be read. Try again or redeploy Convex.",
+                              );
+                              return;
+                            }
+                            const previewPath = slug
+                              ? `/${encodeURIComponent(slug)}/${encodeURIComponent(token)}`
+                              : `/client-portal/${encodeURIComponent(token)}`;
+                            const previewUrl = result.previewUrl?.trim()
+                              ? result.previewUrl
+                              : `${window.location.origin}${previewPath}`;
+                            window.open(
+                              previewUrl,
+                              "_blank",
+                              "noopener,noreferrer",
+                            );
+                          } catch (e) {
+                            setErr(
+                              e instanceof Error
+                                ? e.message
+                                : "Preview failed.",
+                            );
+                          }
+                        })();
+                      }
+                    : undefined
+                }
+                onApplyTemplates={
+                  canMutate && organizationId
+                    ? () => setApplyTemplateOpen(true)
+                    : undefined
+                }
+                onDeliverToLender={
+                  canMutate && organizationId
+                    ? () => setDeliverLenderOpen(true)
                     : undefined
                 }
                 onFilesSelected={(files) => onBatchUpload(files)}
@@ -1989,31 +2374,40 @@ export function LibraryDocumentsWorkspace({
               ) : null}
 
               {explorerDocumentRows === undefined ||
-              vaultFolders === undefined ? (
+              vaultFolders === undefined ||
+              vaultFileTasks === undefined ? (
                 <LibraryDocumentsVaultGridSkeleton />
-              ) : explorerDocumentRows.length === 0 &&
-                displayRows !== undefined &&
-                displayRows.length === 0 &&
-                vaultFolders.length === 0 ? (
-                <div
-                  className="rounded-dlc-md border border-dashed border-border/70 bg-dlc-surface-high/40 px-4 py-14 text-center"
-                  data-testid="pipeline-documents-vault-empty"
-                >
-                  <p className="text-sm font-medium text-foreground">
-                    No documents yet
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Upload underwriting files, IDs, tax returns, and other deal
-                    documents. Each item is versioned and stored securely.
-                  </p>
-                </div>
               ) : (
-                <DocumentVaultDirectoryTree
-                  className="min-h-[28rem] w-full"
+                <SortableContext
+                  items={allVaultSortableIds}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <DocumentVaultDirectoryTree
+                  className="w-full"
                   pipelineFileId={vaultPipelineFileId}
                   memberUserKey={memberUserKey}
                   canMutate={canMutate}
                   folders={vaultFolders}
+                  fileTasks={vaultFileTasks}
+                  optimisticFileTaskOrder={optimisticFileTaskOrder}
+                  onAddFileTasks={
+                    canMutate ? () => setFileTaskBatchOpen(true) : undefined
+                  }
+                  onApplyTemplates={
+                    canMutate && organizationId
+                      ? () => setApplyTemplateOpen(true)
+                      : undefined
+                  }
+                  organizationId={organizationId}
+                  archivedFileTasks={archivedVaultFileTasks}
+                  showArchived={showArchivedTasks}
+                  onToggleShowArchived={() => setShowArchivedTasks((v) => !v)}
+                  onOsFilesDroppedToTask={
+                    canMutate
+                      ? (files, fileTaskId) =>
+                          void onBatchUpload(files, null, fileTaskId)
+                      : undefined
+                  }
                   documentRows={explorerDocumentRows}
                   fileRowHandlers={explorerFileRowHandlers}
                   rootLabel={dealPackageLabel || rootLabel || "Deal Package"}
@@ -2027,10 +2421,12 @@ export function LibraryDocumentsWorkspace({
                       : undefined
                   }
                   folderDragVisual={folderDragVisual}
+                  autoExpandFolderIds={dragAutoExpandFolderIds}
                   optimisticSiblingOrder={optimisticSiblingOrder}
                   onImportFromContact={() => setImportFromContactOpen(true)}
                   onError={(message) => setErr(message)}
                 />
+                </SortableContext>
               )}
 
               {propertiesDocumentId && propertiesRow ? (
@@ -2194,6 +2590,35 @@ export function LibraryDocumentsWorkspace({
               }
               onOpenProperties={() => openProperties(selectedRow._id)}
               lastModified={selectedRow.updatedAt}
+              reviewFooter={previewReviewFooter}
+            />
+          ) : null}
+
+          {previewRejectTask ? (
+            <FileTaskRejectModal
+              open
+              taskTitle={previewRejectTask.title}
+              onClose={() => setPreviewRejectTask(null)}
+              onConfirm={async (note) => {
+                if (!memberUserKey) return;
+                setPreviewReviewBusy(true);
+                try {
+                  await rejectFileTaskReview({
+                    fileTaskId: previewRejectTask._id,
+                    rejectionNote: note,
+                    memberUserKey,
+                  });
+                  setPreviewRejectTask(null);
+                  showOperationalToast({
+                    title: "Revision requested",
+                    variant: "success",
+                  });
+                } catch (e) {
+                  setErr(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setPreviewReviewBusy(false);
+                }
+              }}
             />
           ) : null}
         </div>
@@ -2226,9 +2651,11 @@ export function LibraryDocumentsWorkspace({
           open={compilerOpen}
           onClose={() => setCompilerOpen(false)}
           pipelineFileId={vaultPipelineFileId}
+          organizationId={organizationId}
           memberUserKey={memberUserKey}
           packageLabel={dealPackageLabel}
           folders={vaultFolders}
+          fileTasks={vaultFileTasks ?? undefined}
           documents={compilerDocuments}
           vaultUploadMutations={vaultUploadMutations}
           onError={(message) => setErr(message)}
@@ -2254,6 +2681,93 @@ export function LibraryDocumentsWorkspace({
           uploadEditorImage={
             canMutate && memberUserKey ? uploadCreatorEditorImage : undefined
           }
+        />
+      ) : null}
+
+      {vaultPipelineFileId ? (
+        <FileTaskConfigModal
+          open={fileTaskBatchOpen}
+          onClose={() => setFileTaskBatchOpen(false)}
+          mode="create"
+          pipelineFileId={vaultPipelineFileId}
+          memberUserKey={memberUserKey}
+          onSubmit={async (payload) => {
+            if (!memberUserKey) {
+              showOperationalToast({
+                title: "Cannot create task",
+                description: "Sign in to create file tasks.",
+                variant: "destructive",
+              });
+              return;
+            }
+            await createFileTaskWithConfig({
+              pipelineFileId: vaultPipelineFileId,
+              memberUserKey,
+              title: payload.title,
+              description: payload.description,
+              taskType: payload.taskType,
+              clientInstructionText: payload.clientInstructionText,
+              instructionUrl: payload.instructionUrl,
+              assignedBlockEntries: payload.assignedBlockEntries,
+              isRequired: payload.isRequired,
+              isPortalVisible: payload.isPortalVisible,
+              dueDate: payload.dueDate,
+              priority: payload.priority,
+            });
+          }}
+        />
+      ) : null}
+
+      {vaultPipelineFileId && organizationId ? (
+        <DocumentVaultApplyTemplateDrawer
+          open={applyTemplateOpen}
+          onClose={() => setApplyTemplateOpen(false)}
+          organizationId={organizationId}
+          pipelineFileId={vaultPipelineFileId}
+          memberUserKey={memberUserKey}
+          onSuccess={(created) =>
+            showOperationalToast({
+              title: `Injected ${created} file task${created === 1 ? "" : "s"}`,
+              variant: "success",
+            })
+          }
+          onError={(message) => setErr(message)}
+        />
+      ) : null}
+
+      {vaultPipelineFileId && vaultFileTasks ? (
+        <ClientLinkGeneratorModal
+          open={clientLinkOpen}
+          onClose={() => setClientLinkOpen(false)}
+          pipelineFileId={vaultPipelineFileId}
+          organizationId={organizationId}
+          memberUserKey={memberUserKey}
+          fileTasks={vaultFileTasks}
+          onError={(message) => setErr(message)}
+        />
+      ) : null}
+
+      {vaultPipelineFileId && memberUserKey ? (
+        <ClientPortalLinkRepository
+          open={linkRepositoryOpen}
+          onClose={() => setLinkRepositoryOpen(false)}
+          pipelineFileId={vaultPipelineFileId}
+          memberUserKey={memberUserKey}
+          onError={(message) => setErr(message)}
+        />
+      ) : null}
+
+      {vaultPipelineFileId && organizationId && vaultFileTasks && vaultFolders ? (
+        <DeliverToLenderModal
+          open={deliverLenderOpen}
+          onClose={() => setDeliverLenderOpen(false)}
+          pipelineFileId={vaultPipelineFileId}
+          organizationId={organizationId}
+          memberUserKey={memberUserKey}
+          fileTasks={vaultFileTasks}
+          folders={vaultFolders}
+          documents={explorerDocumentRows ?? []}
+          onError={(message) => setErr(message)}
         />
       ) : null}
     </>

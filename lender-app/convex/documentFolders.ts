@@ -108,9 +108,10 @@ export const createFolder = mutation({
     pipelineFileId: v.id("pipeline"),
     name: v.string(),
     parentFolderId: v.optional(v.id("documentFolders")),
+    fileTaskId: v.optional(v.id("documentVaultFileTasks")),
     ...memberKeyArg,
   },
-  handler: async (ctx, { pipelineFileId, name, parentFolderId, memberUserKey }) => {
+  handler: async (ctx, { pipelineFileId, name, parentFolderId, fileTaskId, memberUserKey }) => {
     const pipeline = await loadPipelineOrThrow(ctx, pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
 
@@ -118,15 +119,23 @@ export const createFolder = mutation({
     if (parentFolderId) {
       await assertParentFolderMatchesPipeline(ctx, parentFolderId, pipelineFileId);
     }
+    if (fileTaskId) {
+      const task = await ctx.db.get(fileTaskId);
+      if (!task || task.pipelineFileId !== pipelineFileId) {
+        throw new Error("File task does not belong to this pipeline file.");
+      }
+    }
 
     const siblings = await ctx.db
       .query("documentFolders")
       .withIndex("by_pipeline", (q) => q.eq("pipelineFileId", pipelineFileId))
       .collect();
     const parentKey = parentFolderId ?? null;
+    const taskKey = fileTaskId ?? null;
     const nameTaken = siblings.some(
       (f) =>
         (f.parentFolderId ?? null) === parentKey &&
+        (f.fileTaskId ?? null) === taskKey &&
         f.name.localeCompare(safeName, undefined, { sensitivity: "base" }) ===
           0,
     );
@@ -136,7 +145,11 @@ export const createFolder = mutation({
 
     const now = Date.now();
     const siblingOrders = siblings
-      .filter((f) => (f.parentFolderId ?? null) === parentKey)
+      .filter(
+        (f) =>
+          (f.parentFolderId ?? null) === parentKey &&
+          (f.fileTaskId ?? null) === taskKey,
+      )
       .map((f) => (typeof f.sortOrder === "number" && Number.isFinite(f.sortOrder) ? f.sortOrder : 0));
     const maxOrder =
       siblingOrders.length > 0 ? Math.max(...siblingOrders) : 0;
@@ -145,6 +158,7 @@ export const createFolder = mutation({
       name: safeName,
       pipelineFileId,
       ...(parentFolderId != null ? { parentFolderId } : {}),
+      ...(fileTaskId != null ? { fileTaskId } : {}),
       sortOrder: nextSortOrder,
       createdAt: now,
       updatedAt: now,
@@ -370,10 +384,13 @@ export const moveFolder = mutation({
     parentFolderId: v.optional(
       v.union(v.id("documentFolders"), v.null()),
     ),
+    fileTaskId: v.optional(
+      v.union(v.id("documentVaultFileTasks"), v.null()),
+    ),
     sortOrder: v.optional(v.number()),
     ...memberKeyArg,
   },
-  handler: async (ctx, { folderId, parentFolderId, sortOrder, memberUserKey }) => {
+  handler: async (ctx, { folderId, parentFolderId, fileTaskId, sortOrder, memberUserKey }) => {
     const folder = await loadFolderOrThrow(ctx, folderId);
     const pipeline = await loadPipelineOrThrow(ctx, folder.pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
@@ -398,11 +415,24 @@ export const moveFolder = mutation({
       await assertParentFolderMatchesPipeline(ctx, nextParent, folder.pipelineFileId);
     }
 
+    const nextFileTask =
+      fileTaskId === undefined
+        ? (folder.fileTaskId ?? null)
+        : fileTaskId;
+    if (nextFileTask) {
+      const task = await ctx.db.get(nextFileTask);
+      if (!task || task.pipelineFileId !== folder.pipelineFileId) {
+        throw new Error("File task does not belong to this pipeline file.");
+      }
+    }
+
     const parentKey = nextParent ?? null;
+    const taskKey = nextFileTask ?? null;
     const nameTaken = siblings.some(
       (f) =>
         f._id !== folderId &&
         (f.parentFolderId ?? null) === parentKey &&
+        (f.fileTaskId ?? null) === taskKey &&
         f.name.localeCompare(folder.name, undefined, { sensitivity: "base" }) ===
           0,
     );
@@ -414,12 +444,16 @@ export const moveFolder = mutation({
 
     const patch: {
       parentFolderId?: Id<"documentFolders">;
+      fileTaskId?: Id<"documentVaultFileTasks">;
       sortOrder?: number;
       updatedAt: number;
     } = { updatedAt: Date.now() };
 
     if (parentFolderId !== undefined) {
       patch.parentFolderId = nextParent ?? undefined;
+    }
+    if (fileTaskId !== undefined) {
+      patch.fileTaskId = nextFileTask ?? undefined;
     }
     if (sortOrder !== undefined) {
       patch.sortOrder = sortOrder;
@@ -517,5 +551,76 @@ export const renameVaultRoot = mutation({
       updatedAt: Date.now(),
     });
     return { ok: true as const, rootLabel: trimmed };
+  },
+});
+
+/** Assign a folder (and its subtree) to a File Task container root. */
+export const assignFolderToFileTask = mutation({
+  args: {
+    folderId: v.id("documentFolders"),
+    fileTaskId: v.union(v.id("documentVaultFileTasks"), v.null()),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, { folderId, fileTaskId, memberUserKey }) => {
+    const folder = await loadFolderOrThrow(ctx, folderId);
+    const pipeline = await loadPipelineOrThrow(ctx, folder.pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
+
+    if (fileTaskId) {
+      const task = await ctx.db.get(fileTaskId);
+      if (!task || task.pipelineFileId !== folder.pipelineFileId) {
+        throw new Error("File task does not belong to this pipeline file.");
+      }
+    }
+
+    const allFolders = await ctx.db
+      .query("documentFolders")
+      .withIndex("by_pipeline", (q) =>
+        q.eq("pipelineFileId", folder.pipelineFileId),
+      )
+      .collect();
+
+    const subtreeIds: Id<"documentFolders">[] = [];
+    const queue: Id<"documentFolders">[] = [folderId];
+    const seen = new Set<string>();
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (seen.has(String(id))) continue;
+      seen.add(String(id));
+      subtreeIds.push(id);
+      for (const child of allFolders.filter((f) => f.parentFolderId === id)) {
+        queue.push(child._id);
+      }
+    }
+
+    const now = Date.now();
+    for (const id of subtreeIds) {
+      await ctx.db.patch(id, {
+        fileTaskId: fileTaskId ?? undefined,
+        ...(id === folderId && fileTaskId
+          ? { parentFolderId: undefined }
+          : {}),
+        updatedAt: now,
+      });
+    }
+
+    const subtreeSet = new Set(subtreeIds.map(String));
+    const links = await ctx.db
+      .query("libraryDocumentLinks")
+      .withIndex("by_pipeline_linkedAt", (q) =>
+        q.eq("pipelineFileId", folder.pipelineFileId),
+      )
+      .collect();
+    for (const link of links) {
+      const inSubtreeFolder =
+        link.folderId != null && subtreeSet.has(String(link.folderId));
+      if (inSubtreeFolder) {
+        await ctx.db.patch(link._id, {
+          fileTaskId: fileTaskId ?? undefined,
+        });
+      }
+    }
+
+    return { ok: true as const };
   },
 });

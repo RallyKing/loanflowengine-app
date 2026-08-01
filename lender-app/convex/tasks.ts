@@ -5,6 +5,11 @@ import { appendTaskFeed } from "./activityFeed";
 import { notifyTaskAssigneeChange } from "./taskNotifications";
 import { newMentionHandlesOnly } from "../lib/mentions";
 import { dispatchUserNotification } from "./notifications";
+import {
+  pipelineDealName,
+  scheduleWebhookQueueEvent,
+  webhookVaultContext,
+} from "./webhookEventHelpers";
 import { refreshTaskGlobalSearchText } from "./globalSearchSync";
 import { removeAllLibraryLinksForTasks } from "./libraryDocumentsCleanup";
 import {
@@ -1204,6 +1209,20 @@ export const patch = mutation({
           `Task “${updated.title.trim()}” → ${rest.status}`,
           actorUserKey ?? actor,
         );
+        await scheduleWebhookQueueEvent(ctx, {
+          organizationId,
+          event: "task_status_changed",
+          data: {
+            taskTitle: updated.title.trim(),
+            oldStatus: existing.status,
+            newStatus: rest.status,
+            taskId: String(id),
+            taskKind: "pipeline_task",
+            pipelineFileId: updated.relatedFileId
+              ? String(updated.relatedFileId)
+              : undefined,
+          },
+        });
       }
       if (rest.assigneeId !== undefined) {
         await syncAssigneeNotification(

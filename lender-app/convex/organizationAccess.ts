@@ -11,12 +11,17 @@ import {
   resolveEffectivePermissionStrings,
 } from "./organizationRbac";
 import { orgPermissionFail, safeUserKeyHint } from "./orgPermissionTelemetry";
-import { platformUserKeyFallback } from "./viewerIdentity";
+import { requireAuthenticatedCaller } from "./callerAuth";
 import { assertOrganizationId } from "./organizationValidators";
 import {
   authUserHasGlobalAdminElevation,
   tryGetAuthUserByPermissionKey,
 } from "./auth/globalAdmin";
+import {
+  assertOrgReadableForGodModeOrMember,
+  callerIsPlatformGodMode,
+} from "./auth/platformGodMode";
+import { rowBelongsToOrganizationScope } from "./orgScopeMatching";
 import {
   assertCanAccessFile as assertCanAccessFileAcl,
   assertCanMutatePipelineRow as assertCanMutatePipelineRowAcl,
@@ -52,44 +57,13 @@ export async function sessionKeyIsGlobalAdmin(
  *   1. Convex JWT subject (when an auth provider is mounted — none today).
  *   2. Explicit `memberUserKey` arg from the client (set by most components
  *      via `useOrgConvexQueryArgs`).
- *   3. `platformUserKeyFallback()` (from `APP_AUTH_USER_KEY` on the deployment).
- *
- * The cookie session has already been verified at the Next.js layer before
- * any Convex traffic reaches us, so the fallback is no weaker than the rest
- * of the app's auth posture.
+ *   3. `platformUserKeyFallback()` only when `CONVEX_ALLOW_PLATFORM_KEY_FALLBACK=1`.
  */
 export async function resolveMemberUserKey(
   ctx: QueryCtx | MutationCtx,
   memberUserKey: string | undefined,
 ): Promise<string> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (identity) {
-    const sub = identity.subject?.trim() ?? "";
-    if (!sub) {
-      const hint = safeUserKeyHint(memberUserKey);
-      orgPermissionFail(
-        "resolveMemberUserKey.emptyJwtSubject",
-        {
-          hasIdentity: true,
-          tokenIdentifier: identity.tokenIdentifier ?? null,
-          clientKey: hint,
-        },
-        new Error("Invalid authenticated subject."),
-      );
-      throw new Error("Invalid authenticated subject.");
-    }
-    const arg = memberUserKey?.trim();
-    if (arg && arg !== sub) {
-      console.warn(
-        "[resolveMemberUserKey] ignoring client memberUserKey that disagrees with JWT subject",
-        { jwtSubject: sub, clientArg: arg },
-      );
-    }
-    return sub;
-  }
-  const key = memberUserKey?.trim();
-  if (key) return key;
-  return platformUserKeyFallback();
+  return requireAuthenticatedCaller(ctx, memberUserKey);
 }
 
 export async function assertOrgMember(
@@ -97,17 +71,27 @@ export async function assertOrgMember(
   organizationId: Id<"organizations">,
   userKey: string | undefined,
 ): Promise<void> {
-  // Identity resolution priority mirrors `resolveMemberUserKey`.
-  let key = userKey?.trim() ?? "";
-  if (!key) {
-    const identity = await ctx.auth.getUserIdentity();
-    key = identity?.subject?.trim() ?? "";
+  const key = await requireAuthenticatedCaller(ctx, userKey);
+  if (await callerIsPlatformGodMode(ctx, key)) {
+    await assertOrgReadableForGodModeOrMember(ctx, organizationId);
+    return;
   }
-  if (!key) key = platformUserKeyFallback();
   const perms = await resolveEffectivePermissionStrings(ctx, organizationId, key);
   if (!perms) {
-    // Log enough state to debug stale-org-in-localStorage / cross-org leaks
-    // without revealing other tenants' data.
+    if (!(await callerIsPlatformGodMode(ctx, key))) {
+      const identity = await ctx.auth.getUserIdentity();
+      console.error(
+        "[auth] membership denied",
+        JSON.stringify({
+          stage: "assertOrgMember.notMember",
+          organizationId: String(organizationId),
+          userKeyPrefix: key.slice(0, 14),
+          hasIdentity: Boolean(identity),
+          subjectPrefix: identity?.subject?.trim().slice(0, 14) ?? null,
+          email: typeof identity?.email === "string" ? identity.email : null,
+        }),
+      );
+    }
     console.warn(
       "[assertOrgMember] not a member",
       { organizationId, userKey: key },
@@ -130,11 +114,16 @@ export async function assertOrgScopeArgs(
   await assertOrgMember(ctx, id, key);
 }
 
+/** Legacy single-tenant rows without `organizationId` belong to the primary workspace. */
+export { rowBelongsToOrganizationScope } from "./orgScopeMatching";
+
 export function filterPipelineByOrgScope(
   rows: Doc<"pipeline">[],
   organizationId: Id<"organizations">,
 ): Doc<"pipeline">[] {
-  return rows.filter((r) => r.organizationId === organizationId);
+  return rows.filter((r) =>
+    rowBelongsToOrganizationScope(r.organizationId, organizationId),
+  );
 }
 
 export function filterContactsByOrgScope(
@@ -142,7 +131,9 @@ export function filterContactsByOrgScope(
   organizationId: Id<"organizations"> | undefined,
 ): Doc<"contacts">[] {
   if (!organizationId) return rows;
-  return rows.filter((r) => r.organizationId === organizationId);
+  return rows.filter((r) =>
+    rowBelongsToOrganizationScope(r.organizationId, organizationId),
+  );
 }
 
 /** Effective access to an org-scoped pipeline file (legacy rows use full access in mutators). */
@@ -258,7 +249,14 @@ export async function assertCanReadContactRow(
   row: Doc<"contacts">,
   memberUserKey: string | undefined,
 ): Promise<void> {
-  if (!row.organizationId) return;
+  if (!row.organizationId) {
+    const key = await resolveMemberUserKey(ctx, memberUserKey);
+    const authUser = await tryGetAuthUserByPermissionKey(ctx, key);
+    if (!authUserHasGlobalAdminElevation(authUser)) {
+      throw new Error("You do not have access to this contact.");
+    }
+    return;
+  }
   const key = await resolveMemberUserKey(ctx, memberUserKey);
   await assertOrgPermission(ctx, row.organizationId, key, "contacts.view");
 }
@@ -268,7 +266,14 @@ export async function assertCanMutateContactRow(
   row: Doc<"contacts">,
   memberUserKey: string | undefined,
 ): Promise<void> {
-  if (!row.organizationId) return;
+  if (!row.organizationId) {
+    const key = await resolveMemberUserKey(ctx, memberUserKey);
+    const authUser = await tryGetAuthUserByPermissionKey(ctx, key);
+    if (!authUserHasGlobalAdminElevation(authUser)) {
+      throw new Error("You do not have permission to edit this contact.");
+    }
+    return;
+  }
   const key = await resolveMemberUserKey(ctx, memberUserKey);
   await assertOrgPermission(ctx, row.organizationId, key, "contacts.manage");
 }

@@ -13,6 +13,8 @@ import type { DocumentVaultNavigationFocus } from "@/lib/pipeline/documentVaultN
 import type { DocumentCreatorTokenContext } from "@/lib/pipeline/documentVaultCreator";
 import { DocumentVaultStateProvider } from "@/lib/library/documentVaultState";
 import { documentVaultBlockMeta } from "@/lib/pipeline/collapsibleBlockMetadata";
+import { DocumentVaultAuditPanel } from "@/components/library/DocumentVaultAuditPanel";
+import { Shield } from "lucide-react";
 
 export type DocumentVaultTabProps = {
   fileId: Id<"pipeline">;
@@ -53,6 +55,13 @@ export function DocumentVaultTab({
 
   const rows = useQuery(api.libraryDocuments.listForProof, listArgs);
 
+  const pendingReview = useQuery(
+    api.documentVaultFileTasks.countPendingReviewByPipeline,
+    memberUserKey
+      ? { pipelineFileId: fileId, memberUserKey }
+      : { pipelineFileId: fileId },
+  );
+
   const lastUploadedAt = useMemo(() => {
     if (!rows?.length) return undefined;
     let max = 0;
@@ -63,7 +72,11 @@ export function DocumentVaultTab({
     return max > 0 ? max : undefined;
   }, [rows]);
 
-  const vaultMeta = documentVaultBlockMeta(rows?.length, lastUploadedAt);
+  const vaultMeta = documentVaultBlockMeta(
+    rows?.length,
+    lastUploadedAt,
+    pendingReview?.count,
+  );
 
   return (
     <div
@@ -97,6 +110,19 @@ export function DocumentVaultTab({
             navigationFocus={navigationFocus}
             onNavigationFocusConsumed={onNavigationFocusConsumed}
           />
+        </CollapsibleBlock>
+
+        <CollapsibleBlock
+          id={DOCUMENTS_TAB_SECTION_IDS.auditTrail}
+          title="Vault audit trail"
+          status="Compliance"
+          summary="Client uploads, broker reviews, lender data room access"
+          icon={<Shield className="h-4 w-4" aria-hidden />}
+          description="Compliance-grade chronological history for this loan file's document vault."
+          defaultOpen={false}
+          lazyMount
+        >
+          <DocumentVaultAuditPanel fileId={fileId} />
         </CollapsibleBlock>
       </DocumentVaultStateProvider>
     </div>

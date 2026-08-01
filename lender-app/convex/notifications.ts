@@ -5,6 +5,7 @@ import {
   mutation,
   query,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
@@ -18,6 +19,20 @@ import {
   type NotificationCategory,
 } from "../lib/notificationPreferences";
 import { resolveDisplayUsernameForUserKey } from "./auth/displayIdentity";
+import { requireAuthenticatedCaller } from "./callerAuth";
+
+async function assertCallerOwnsUserKey(
+  ctx: QueryCtx | MutationCtx,
+  userKey: string,
+  memberUserKey: string | undefined,
+): Promise<string> {
+  const caller = await requireAuthenticatedCaller(ctx, memberUserKey);
+  const target = userKey.trim();
+  if (!target || caller !== target) {
+    throw new Error("Unauthorized");
+  }
+  return caller;
+}
 
 async function loadResolvedPrefs(ctx: MutationCtx, userKey: string) {
   const prefRows = await ctx.db
@@ -123,10 +138,15 @@ export async function dispatchUserNotification(
 }
 
 export const listUnreadForUser = query({
-  args: { userKey: v.string(), limit: v.optional(v.number()) },
-  handler: async (ctx, { userKey, limit }) => {
+  args: {
+    userKey: v.string(),
+    memberUserKey: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { userKey, memberUserKey, limit }) => {
     const k = userKey.trim();
     if (!k) return [];
+    await assertCallerOwnsUserKey(ctx, k, memberUserKey);
     const cap = Math.min(Math.max(limit ?? 30, 1), 80);
     const rows = await ctx.db
       .query("userNotifications")
@@ -155,10 +175,14 @@ export const listUnreadForUser = query({
 });
 
 export const unreadCountForUser = query({
-  args: { userKey: v.string() },
-  handler: async (ctx, { userKey }) => {
+  args: {
+    userKey: v.string(),
+    memberUserKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { userKey, memberUserKey }) => {
     const k = userKey.trim();
     if (!k) return 0;
+    await assertCallerOwnsUserKey(ctx, k, memberUserKey);
     const t = Date.now();
     const rows = await ctx.db
       .query("userNotifications")
@@ -176,29 +200,39 @@ export const unreadCountForUser = query({
 export const snooze = mutation({
   args: {
     id: v.id("userNotifications"),
+    memberUserKey: v.optional(v.string()),
     until: v.number(),
   },
-  handler: async (ctx, { id, until }) => {
+  handler: async (ctx, { id, memberUserKey, until }) => {
     const row = await ctx.db.get(id);
     if (!row) return;
+    await assertCallerOwnsUserKey(ctx, row.userKey, memberUserKey);
     await ctx.db.patch(id, { snoozedUntil: until });
   },
 });
 
 export const markRead = mutation({
-  args: { id: v.id("userNotifications") },
-  handler: async (ctx, { id }) => {
+  args: {
+    id: v.id("userNotifications"),
+    memberUserKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, memberUserKey }) => {
     const row = await ctx.db.get(id);
     if (!row) return;
+    await assertCallerOwnsUserKey(ctx, row.userKey, memberUserKey);
     await ctx.db.patch(id, { readAt: Date.now() });
   },
 });
 
 export const markAllReadForUser = mutation({
-  args: { userKey: v.string() },
-  handler: async (ctx, { userKey }) => {
+  args: {
+    userKey: v.string(),
+    memberUserKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { userKey, memberUserKey }) => {
     const k = userKey.trim();
     if (!k) return { updated: 0 };
+    await assertCallerOwnsUserKey(ctx, k, memberUserKey);
     const rows = await ctx.db
       .query("userNotifications")
       .withIndex("by_user_created", (q) => q.eq("userKey", k))
@@ -216,10 +250,15 @@ export const markAllReadForUser = mutation({
 });
 
 export const markReadForTaskForUser = mutation({
-  args: { userKey: v.string(), taskId: v.id("tasks") },
-  handler: async (ctx, { userKey, taskId }) => {
+  args: {
+    userKey: v.string(),
+    memberUserKey: v.optional(v.string()),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, { userKey, memberUserKey, taskId }) => {
     const k = userKey.trim();
     if (!k) return { updated: 0 };
+    await assertCallerOwnsUserKey(ctx, k, memberUserKey);
     const rows = await ctx.db
       .query("userNotifications")
       .withIndex("by_task", (q) => q.eq("taskId", taskId))
@@ -236,10 +275,15 @@ export const markReadForTaskForUser = mutation({
 });
 
 export const markReadForFileForUser = mutation({
-  args: { userKey: v.string(), fileId: v.id("pipeline") },
-  handler: async (ctx, { userKey, fileId }) => {
+  args: {
+    userKey: v.string(),
+    memberUserKey: v.optional(v.string()),
+    fileId: v.id("pipeline"),
+  },
+  handler: async (ctx, { userKey, memberUserKey, fileId }) => {
     const k = userKey.trim();
     if (!k) return { updated: 0 };
+    await assertCallerOwnsUserKey(ctx, k, memberUserKey);
     const rows = await ctx.db
       .query("userNotifications")
       .withIndex("by_file", (q) => q.eq("fileId", fileId))

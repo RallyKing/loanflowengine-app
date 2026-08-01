@@ -70,3 +70,9 @@ playwright/.auth/
 *_repairPrimaryMembership.args.json
 tests/auth/*.enc
 tests/auth/*.json
+.convex-jwt-keys.generated.txt
+_convex_run_args.json
+
+# --- Local debug dumps (never ship) ---
+lender-app/debug-*.log
+lender-app/debug-*.ndjson

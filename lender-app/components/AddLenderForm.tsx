@@ -20,6 +20,7 @@ import { cn } from "@/lib/cn";
 import { useLiveConnection } from "@/lib/useLiveConnection";
 import { LiveDataPausedNotice } from "@/components/LiveDataPausedNotice";
 import { SettingsLink } from "@/components/SettingsLink";
+import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 
 const ADD_FIELD_GROUPS: {
   title: string;
@@ -84,6 +85,7 @@ export function AddLenderForm() {
     id?: string;
   }>(null);
   const upsert = useMutation(api.lenders.upsert);
+  const orgScope = useOrgConvexQueryArgs();
   const { canUseHub, browserOnline, actionTitle } = useLiveConnection();
 
   function update<K extends keyof Lender>(k: K, v: string) {
@@ -97,12 +99,16 @@ export function AddLenderForm() {
       setFlash({ type: "err", message: "Company is required." });
       return;
     }
+    if (!orgScope) {
+      setFlash({ type: "err", message: "Sign in and select a workspace to add lenders." });
+      return;
+    }
     setSubmitting(true);
     try {
       const entityType =
         draft.entityType ||
         classifyEntity(draft.company, draft.primaryNiche, draft.notes);
-      const result = await upsert({ ...draft, entityType });
+      const result = await upsert({ ...draft, entityType, ...orgScope });
       setFlash({
         type: "ok",
         action: result.action,

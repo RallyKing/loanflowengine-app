@@ -11,6 +11,7 @@ import {
   matchContactByNormalizedEmail,
   matchContactByNormalizedName,
 } from "@/lib/contacts/borrowerIdentityFromDeal";
+import { guarantorPanelRowKey } from "@/lib/contacts/guarantorIdentityFromDeal";
 import type { SectionProps } from "@/components/intake/IntakeEditor";
 import { DealPartyInstancePanel } from "@/modules/pipeline/components/deal/DealPartyInstancePanel";
 import { RegistryPartyLinker } from "@/modules/pipeline/components/deal/RegistryPartyLinker";
@@ -87,7 +88,7 @@ export function DealGuarantorsPanel({
 
         return (
           <DealPartyInstancePanel
-            key={index}
+            key={guarantorPanelRowKey(row, index)}
             partyKind="guarantor"
             index={index}
             row={row}

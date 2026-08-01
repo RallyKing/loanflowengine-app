@@ -47,7 +47,10 @@ async function afterLayoutSettle(page: Page) {
 async function safeGoto(
   page: Page,
   path: string,
-  options?: { waitUntil?: Parameters<Page["goto"]>[1]["waitUntil"]; timeoutMs?: number },
+  options?: {
+    waitUntil?: "load" | "commit" | "domcontentloaded" | "networkidle";
+    timeoutMs?: number;
+  },
 ): Promise<void> {
   const waitUntil = options?.waitUntil ?? "domcontentloaded";
   const timeout = options?.timeoutMs ?? 45_000;

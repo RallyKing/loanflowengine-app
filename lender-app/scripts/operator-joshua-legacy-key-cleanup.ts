@@ -62,7 +62,7 @@ async function main() {
   const extras = parseExtraKeys(process.argv);
   const client = new ConvexHttpClient(url);
   const r = await client.mutation(
-    // @ts-expect-error Convex `anyApi` value type omits quoted migration paths; runtime includes them.
+    // @ts-expect-error slash-path migration modules are runtime-valid
     api["migrations/joshuaLegacyUserKeyCleanup"].applyJoshuaLegacyUserKeyCleanup,
     {
       adminSecret,

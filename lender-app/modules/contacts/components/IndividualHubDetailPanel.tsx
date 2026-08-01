@@ -6,9 +6,11 @@ import { useQuery } from "convex/react";
 import {
   Briefcase,
   ExternalLink,
+  Loader2,
   Mail,
   Phone,
   Plus,
+  Save,
   Trash2,
 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -441,6 +443,7 @@ export function IndividualHubDetailPanel({
         type="button"
         onClick={() => void onSave()}
         disabled={saving || !editorDraft.name.trim()}
+        data-testid="contact-hub-save-bottom"
       >
         {saving ? "Saving…" : "Save"}
       </Button>
@@ -459,13 +462,56 @@ export function IndividualHubDetailPanel({
     </div>
   );
 
+  const stickyCommandCenterHeader =
+    layoutMode === "commandCenter" ? (
+      <div className="sticky top-0 z-50 border-b border-border/60 bg-dlc-surface/90 shadow-sm backdrop-blur-md">
+        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-5">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <Link
+              href={backHref}
+              className="shrink-0 text-dlc-label-md font-medium text-primary hover:underline"
+            >
+              ← Contacts
+            </Link>
+            <div className="min-w-0 border-l border-border/60 pl-3">
+              <p className="truncate text-base font-semibold tracking-tight text-foreground">
+                {editorDraft.name.trim() || "New contact"}
+              </p>
+              {roleLabels.length > 0 ? (
+                <p className="truncate text-xs text-muted-foreground">
+                  {roleLabels.join(" · ")}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Contact profile</p>
+              )}
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="min-h-9 shrink-0 gap-1.5"
+            onClick={() => void onSave()}
+            disabled={saving || !editorDraft.name.trim()}
+            data-testid="contact-hub-save-sticky"
+          >
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Save className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+    ) : null;
+
   const operations = (
     <HubDetailTabs
       activeTabId={activeTabId}
       onTabChange={setActiveTabId}
       panelRef={tabsPanelRef}
       defaultTabId="profile-info"
-      scrollablePanel={layoutMode === "commandCenter"}
+      scrollablePanel={false}
       tabs={[
         { id: "profile-info", label: "Profile Info", content: profileInfoTab },
         { id: "relationships", label: "Relationships", content: relationshipsTab },
@@ -487,16 +533,7 @@ export function IndividualHubDetailPanel({
 
   return (
     <div className={hubDetailStyles.commandCenterPage} data-testid="contact-command-center">
-      {layoutMode === "commandCenter" ? (
-        <div className="border-b border-border/80 bg-dlc-surface/80 px-4 py-3 md:px-8">
-          <Link
-            href={backHref}
-            className="text-dlc-label-md font-medium text-primary hover:underline"
-          >
-            ← Back to contacts
-          </Link>
-        </div>
-      ) : null}
+      {stickyCommandCenterHeader}
       <div className={shellClass}>
         <HubExecutiveLayout
           banner={

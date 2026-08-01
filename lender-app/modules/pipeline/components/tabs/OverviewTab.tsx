@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrgMemberQueryArgs } from "@/lib/convex/useStableConvexArgs";
@@ -40,6 +40,11 @@ import {
   toggleOverviewSectionHidden,
   type OverviewSectionId,
 } from "@/lib/file/overviewTabLayout";
+import type { RegisterCommandCenterSections } from "@/lib/file/commandCenterSectionRegistry";
+import type {
+  CommandCenterSectionRenderer,
+  DealInfoCommandCenterSectionId,
+} from "@/lib/file/dealInfoCommandCenterLayout";
 import {
   DealWorkspaceSaveStatus,
   useDealWorkspaceEditor,
@@ -69,6 +74,9 @@ export type OverviewTabProps = {
   dataTestId?: string;
   /** Skip canvas + toolbar when nested in unified Deal Info tab. */
   embedded?: boolean;
+  /** Parent owns DnD — register section renderers instead of SortableSectionList. */
+  suppressInternalDnd?: boolean;
+  onRegisterSections?: RegisterCommandCenterSections;
   notes: {
     organizationId: Id<"organizations"> | null;
     memberUserKey?: string;
@@ -110,7 +118,7 @@ const OVERVIEW_SECTION_DESCRIPTIONS: Record<OverviewSectionId, ReactNode> = {
   notes: "Pinned notes, links, and attachments for this file.",
   contacts: "People linked to this loan file.",
   tasks: "File-level triage and follow-ups.",
-  lenders: "Search and attach lenders; choose one as the primary for this file.",
+  lenders: "Search lenders to add to the shortlist; assign Primary or Secondary roles on the board.",
 };
 
 function overviewAnchorForSection(sectionId: OverviewSectionId): string {
@@ -222,6 +230,8 @@ export function OverviewTab({
   sectionIncludeFilter,
   dataTestId = "pipeline-overview-tab",
   embedded = false,
+  suppressInternalDnd = false,
+  onRegisterSections,
   notes,
   contacts,
   tasks,
@@ -259,9 +269,10 @@ export function OverviewTab({
       overviewLayout.order.filter(
         (id) =>
           allowedSectionIds.includes(id) &&
-          isOverviewSectionVisible(overviewLayout, id),
+          (suppressInternalDnd ||
+            isOverviewSectionVisible(overviewLayout, id)),
       ),
-    [allowedSectionIds, overviewLayout],
+    [allowedSectionIds, overviewLayout, suppressInternalDnd],
   );
 
   const onOverviewDragEnd = useCallback(
@@ -473,7 +484,65 @@ export function OverviewTab({
     }
   };
 
-  const sectionsBody = (
+  const overviewRegisterSig = useMemo(
+    () =>
+      [
+        visibleSectionIds.join(","),
+        overviewLayout.order.join(","),
+        overviewLayout.hidden.join(","),
+        Object.entries(overviewLayout.expanded)
+          .filter(([, open]) => open)
+          .map(([id]) => id)
+          .sort()
+          .join(","),
+        tasks.tasks.length,
+        triageLabels.length,
+        fileInsights.snapshot?.healthSummary ?? "",
+        notes.organizationId ?? "",
+      ].join("|"),
+    [
+      fileInsights.snapshot?.healthSummary,
+      notes.organizationId,
+      overviewLayout.expanded,
+      overviewLayout.hidden,
+      overviewLayout.order,
+      tasks.tasks.length,
+      triageLabels.length,
+      visibleSectionIds,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    if (!suppressInternalDnd || !onRegisterSections) return;
+
+    const sections: Partial<
+      Record<DealInfoCommandCenterSectionId, CommandCenterSectionRenderer>
+    > = {};
+    for (const sectionId of visibleSectionIds) {
+      if (
+        sectionId === "contacts" ||
+        sectionId === "notes" ||
+        sectionId === "tasks" ||
+        sectionId === "lenders"
+      ) {
+        sections[sectionId] = (handle) => renderSection(sectionId, handle);
+      }
+    }
+    onRegisterSections(sections, overviewRegisterSig);
+  }, [
+    contacts,
+    fileInsights,
+    lenders,
+    notes,
+    onRegisterSections,
+    overviewRegisterSig,
+    suppressInternalDnd,
+    tasks,
+    visibleSectionIds,
+  ]);
+
+  const sectionsBody =
+    !suppressInternalDnd ? (
     <SortableSectionList
       itemIds={visibleSectionIds}
       onDragEnd={onOverviewDragEnd}
@@ -486,7 +555,11 @@ export function OverviewTab({
         ))}
       </div>
     </SortableSectionList>
-  );
+  ) : null;
+
+  if (embedded && suppressInternalDnd) {
+    return null;
+  }
 
   if (embedded) {
     return (

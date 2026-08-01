@@ -96,6 +96,8 @@ export const intakePatchableFields = {
   dealWorkspaceTab3Layout: v.optional(v.any()),
   /** Tab 2 Deal Info: section order / visibility (v1 object). */
   dealInfoTabLayout: v.optional(v.any()),
+  /** Deal Info command center — unified block order / visibility (v1 object). */
+  dealInfoCommandCenterLayout: v.optional(v.any()),
   /** Tab 1 File Overview: section expand/collapse (v1 object). */
   overviewTabLayout: v.optional(v.any()),
   /** Tab 5 Client Portal: section order / visibility (v1 object). */

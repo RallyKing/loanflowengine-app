@@ -49,9 +49,15 @@ export function folderDisplayPath(
 export function foldersInParent(
   folders: DocumentFolderRow[],
   parentFolderId: Id<"documentFolders"> | null,
+  fileTaskId?: Id<"documentVaultFileTasks"> | null,
 ): DocumentFolderRow[] {
+  const taskKey = fileTaskId ?? null;
   return folders
-    .filter((f) => (f.parentFolderId ?? null) === parentFolderId)
+    .filter(
+      (f) =>
+        (f.parentFolderId ?? null) === parentFolderId &&
+        (fileTaskId === undefined || (f.fileTaskId ?? null) === taskKey),
+    )
     .sort((a, b) => {
       const ao = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
       const bo = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
@@ -119,11 +125,12 @@ export function buildFolderTree(
   folders: DocumentFolderRow[],
   parentFolderId: Id<"documentFolders"> | null = null,
   siblingOrderByParent?: Record<string, Id<"documentFolders">[]>,
+  fileTaskId?: Id<"documentVaultFileTasks"> | null,
 ): FolderTreeNode[] {
   const parentKey =
     parentFolderId == null ? "__root__" : String(parentFolderId);
   const override = siblingOrderByParent?.[parentKey];
-  let siblings = foldersInParent(folders, parentFolderId);
+  let siblings = foldersInParent(folders, parentFolderId, fileTaskId);
   if (override?.length) {
     const byId = new Map(siblings.map((s) => [String(s._id), s]));
     const ordered: DocumentFolderRow[] = [];
@@ -142,6 +149,7 @@ export function buildFolderTree(
       folders,
       folder._id,
       siblingOrderByParent,
+      fileTaskId,
     ),
   }));
 }

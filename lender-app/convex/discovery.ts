@@ -24,6 +24,29 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { applyLenderWrite, isLenderIncomplete } from "./lenderWriteStats";
 import { buildLenderSearchBlob } from "./lenderSearchText";
+import { assertOrgScopeArgs, resolveMemberUserKey } from "./organizationAccess";
+import { assertOrgPermission } from "./organizationRbac";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+
+async function assertDiscoveryAccess(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  memberUserKey: string,
+): Promise<void> {
+  await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
+  const key = await resolveMemberUserKey(ctx, memberUserKey);
+  await assertOrgPermission(ctx, organizationId, key, "lenders.edit");
+}
+
+export const _assertDiscoveryAccess = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await assertDiscoveryAccess(ctx, args.organizationId, args.memberUserKey);
+  },
+});
 
 /* ------------------------------------------------------------------ */
 /* Prompt + JSON schema                                                */
@@ -414,11 +437,17 @@ interface DiscoveryResult {
 
 export const runDiscovery = action({
   args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
     query: v.string(),
     maxResults: v.optional(v.number()),
     provider: v.optional(v.union(v.literal("openai"), v.literal("perplexity"))),
   },
-  handler: async (ctx, { query, maxResults, provider }): Promise<DiscoveryResult> => {
+  handler: async (ctx, { organizationId, memberUserKey, query, maxResults, provider }): Promise<DiscoveryResult> => {
+    await ctx.runMutation(internal.discovery._assertDiscoveryAccess, {
+      organizationId,
+      memberUserKey,
+    });
     const q = query.trim();
     if (!q) throw new Error("Query is required");
     const cap = Math.max(1, Math.min(maxResults ?? 10, 25));
@@ -497,6 +526,8 @@ export const runDiscovery = action({
 
 export const listCandidates = query({
   args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
     status: v.optional(
       v.union(
         v.literal("pending"),
@@ -508,7 +539,8 @@ export const listCandidates = query({
     ),
     limit: v.optional(v.number()),
   },
-  handler: async (ctx, { status, limit }) => {
+  handler: async (ctx, { organizationId, memberUserKey, status, limit }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     const cap = Math.min(limit ?? 200, 500);
     const effective = status ?? "pending";
     if (effective === "all") {
@@ -523,8 +555,13 @@ export const listCandidates = query({
 });
 
 export const recentRuns = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { organizationId, memberUserKey, limit }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     const cap = Math.min(limit ?? 20, 100);
     return await ctx.db
       .query("discoveryRuns")
@@ -535,8 +572,12 @@ export const recentRuns = query({
 });
 
 export const providerStatus = query({
-  args: {},
-  handler: async () => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+  },
+  handler: async (ctx, { organizationId, memberUserKey }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     return {
       openai: Boolean(process.env.OPENAI_API_KEY),
       perplexity: Boolean(process.env.PERPLEXITY_API_KEY),
@@ -550,6 +591,8 @@ export const providerStatus = query({
 
 export const updateCandidate = mutation({
   args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
     id: v.id("lenderCandidates"),
     patch: v.object({
       company: v.optional(v.string()),
@@ -568,7 +611,8 @@ export const updateCandidate = mutation({
       sourceUrl: v.optional(v.string()),
     }),
   },
-  handler: async (ctx, { id, patch }) => {
+  handler: async (ctx, { organizationId, memberUserKey, id, patch }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error("Candidate not found");
     const clean: Record<string, string> = {};
@@ -587,24 +631,38 @@ export const updateCandidate = mutation({
 });
 
 export const dismissCandidate = mutation({
-  args: { id: v.id("lenderCandidates") },
-  handler: async (ctx, { id }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    id: v.id("lenderCandidates"),
+  },
+  handler: async (ctx, { organizationId, memberUserKey, id }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     await ctx.db.patch(id, { status: "dismissed", updatedAt: Date.now() });
     return { ok: true };
   },
 });
 
 export const deleteCandidate = mutation({
-  args: { id: v.id("lenderCandidates") },
-  handler: async (ctx, { id }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    id: v.id("lenderCandidates"),
+  },
+  handler: async (ctx, { organizationId, memberUserKey, id }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     await ctx.db.delete(id);
     return { ok: true };
   },
 });
 
 export const clearDismissed = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+  },
+  handler: async (ctx, { organizationId, memberUserKey }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     const rows = await ctx.db
       .query("lenderCandidates")
       .withIndex("by_status", (q) => q.eq("status", "dismissed"))
@@ -615,8 +673,13 @@ export const clearDismissed = mutation({
 });
 
 export const acceptCandidate = mutation({
-  args: { id: v.id("lenderCandidates") },
-  handler: async (ctx, { id }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    id: v.id("lenderCandidates"),
+  },
+  handler: async (ctx, { organizationId, memberUserKey, id }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     const c = await ctx.db.get(id);
     if (!c) throw new Error("Candidate not found");
     const now = Date.now();
@@ -728,8 +791,13 @@ export const acceptCandidate = mutation({
 });
 
 export const acceptMany = mutation({
-  args: { ids: v.array(v.id("lenderCandidates")) },
-  handler: async (ctx, { ids }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    ids: v.array(v.id("lenderCandidates")),
+  },
+  handler: async (ctx, { organizationId, memberUserKey, ids }) => {
+    await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     let accepted = 0;
     const now = Date.now();
     const today = new Date(now).toISOString().slice(0, 10);

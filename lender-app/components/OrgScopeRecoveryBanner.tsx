@@ -15,6 +15,9 @@ import { useAuthStateOptional } from "@/lib/auth/authStateContext";
 import { cn } from "@/lib/cn";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useActorUserKey } from "@/lib/useActorUserKey";
+import { useViewer } from "@/lib/sessionContext";
+import { parseOrganizationId } from "@/lib/orgIdValidation";
+import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
 
 /** Don’t flash “transient server” copy during initial RBAC load or brief subscription churn. */
 const TRANSIENT_SCOPE_DEBOUNCE_MS = 2800;
@@ -25,6 +28,8 @@ function scopeMessage(code: string | undefined): string {
       return "This workspace no longer exists. If you had it saved on this device, that selection was cleared.";
     case "ORG_ID_MALFORMED":
       return "Your saved workspace id was invalid and has been cleared.";
+    case "AUTH_PENDING":
+      return "Signing you in to this workspace…";
     case "SCOPE_TRANSIENT":
       return "We couldn’t verify workspace access right now (connection or temporary server issue). Your team selection was left unchanged — try again shortly.";
     case "SCOPE_ERROR":
@@ -46,9 +51,11 @@ export function OrgScopeRecoveryBanner() {
     auth?.state === "unauthenticated";
   const { activeOrganizationId, effective } = useOrgPermissions();
   const actorKey = useActorUserKey();
+  const viewer = useViewer();
+  const orgQueryReady = useConvexOrgQueryReady();
   const trimmed = actorKey.trim();
   const scopeCheckEnabled = Boolean(
-    activeOrganizationId && trimmed && !sessionBroken,
+    orgQueryReady && activeOrganizationId && trimmed && !sessionBroken,
   );
 
   const scopeQueries = useMemo((): RequestForQueries => {
@@ -104,12 +111,19 @@ export function OrgScopeRecoveryBanner() {
       return;
     }
 
+    if (scopeRaw.code === "AUTH_PENDING") {
+      setShow(false);
+      setCode(undefined);
+      return;
+    }
+
     const orgId = activeOrganizationId!;
     const badKey = String(orgId);
     if (clearedForRef.current !== badKey) {
       const stored = getStoredActiveOrganizationId();
       if (stored && stored === orgId) {
-        setStoredActiveOrganizationId(null);
+        const sessionOrg = parseOrganizationId(viewer?.organizationId ?? null);
+        setStoredActiveOrganizationId(sessionOrg);
         clearedForRef.current = badKey;
         if (process.env.NODE_ENV === "development") {
           console.warn("[org-scope] Cleared invalid stored active organization", {
@@ -121,11 +135,12 @@ export function OrgScopeRecoveryBanner() {
 
     setCode(scopeRaw.code);
     setShow(true);
-  }, [scopeCheckEnabled, scopeRaw, activeOrganizationId, effective]);
+  }, [scopeCheckEnabled, scopeRaw, activeOrganizationId, effective, viewer?.organizationId, orgQueryReady]);
 
-  if (!show || dismissed || scopeRaw === undefined) return null;
+  if (!orgQueryReady || !show || dismissed || scopeRaw === undefined) return null;
 
-  const transientNotice = code === "SCOPE_TRANSIENT";
+  const transientNotice =
+    code === "SCOPE_TRANSIENT" || code === "AUTH_PENDING";
 
   return (
     <div

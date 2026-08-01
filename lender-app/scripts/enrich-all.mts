@@ -61,6 +61,9 @@ const DELAY_MS = Math.min(
 
 const client = new ConvexHttpClient(url);
 
+const { loadOperatorOrgScope } = await import("./lib/operatorConvexIdentity.js");
+const orgScope = loadOperatorOrgScope();
+
 async function main() {
   let rounds = 0;
   let totalOk = 0;
@@ -72,7 +75,7 @@ async function main() {
   );
 
   while (rounds < MAX_ROUNDS) {
-    const stats = (await client.query(api.lenders.stats, {})) as {
+    const stats = (await client.query(api.lenders.stats, orgScope)) as {
       incompleteCount: number;
     };
     if (stats.incompleteCount === 0) {
@@ -95,7 +98,7 @@ async function main() {
     totalFailed += res.failed;
     totalFilled += res.filled;
 
-    const after = (await client.query(api.lenders.stats, {})) as {
+    const after = (await client.query(api.lenders.stats, orgScope)) as {
       incompleteCount: number;
     };
 

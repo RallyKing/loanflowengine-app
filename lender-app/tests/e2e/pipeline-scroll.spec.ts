@@ -92,7 +92,10 @@ async function waitPipelineLoaded(page: Page) {
 }
 
 /** Long notes + many block-like sections (simulates heavy UI). */
-function stressSectionsHtml(which: "main" | "drawer", count: number): string {
+function stressSectionsHtml(
+  which: "main" | "drawer" | "workspace",
+  count: number,
+): string {
   const blocks: string[] = [];
   const longNote =
     "Borrower scenario note: ".repeat(30) +
@@ -118,9 +121,12 @@ ${blocks.join("")}
 async function injectStressMarkup(
   page: Page,
   locator: Locator,
-  which: "main" | "drawer"
+  which: "main" | "drawer" | "workspace",
 ) {
-  const html = stressSectionsHtml(which, which === "main" ? 36 : 28);
+  const html = stressSectionsHtml(
+    which,
+    which === "main" ? 36 : which === "workspace" ? 32 : 28,
+  );
   await locator.evaluate((el, markup) => {
     const t = document.createElement("template");
     t.innerHTML = markup.trim();

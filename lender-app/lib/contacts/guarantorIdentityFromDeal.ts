@@ -1,8 +1,10 @@
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   contactMethodsToConvexFields,
   mergeScalarsIntoContactMethods,
   normalizeContactMethods,
+  primaryContactEmail,
+  primaryContactPhone,
   type ContactEmailEntry,
   type ContactPhoneEntry,
 } from "@/lib/contact/contactMethods";
@@ -14,6 +16,7 @@ import {
   normalizePersonNameKey,
   type BorrowerContactLookups,
 } from "@/lib/contacts/borrowerIdentityFromDeal";
+import { contactPiiToDealStringFields } from "@/lib/contacts/contactProfileToDeal";
 
 export type DealGuarantorRow = {
   name?: string;
@@ -122,6 +125,33 @@ export function matchGuarantorContact(
     if (normalizePersonNameKey(co.name) === nameKey) return co;
   }
   return matchContactByNormalizedName(name, lookups);
+}
+
+/** Hydrate deal guarantor row identity from a linked CRM contact. */
+export function guarantorRowIdentityFromContact(
+  contact: Pick<
+    Doc<"contacts">,
+    "name" | "fico" | "ssn" | "dob" | "email" | "phone" | "emails" | "phones"
+  >,
+): Record<string, unknown> {
+  const email = primaryContactEmail(contact);
+  const phone = primaryContactPhone(contact);
+  return {
+    name: contact.name.trim(),
+    ...(email ? { email } : {}),
+    ...(phone ? { mobile: phone } : {}),
+    ...contactPiiToDealStringFields(contact),
+    role: "Primary",
+  };
+}
+
+/** Stable React key for guarantor panel rows — prefer CRM contact id. */
+export function guarantorPanelRowKey(row: unknown, index: number): string {
+  if (row && typeof row === "object") {
+    const contactId = (row as { contactId?: Id<"contacts"> }).contactId;
+    if (contactId) return `guarantor-contact-${contactId}`;
+  }
+  return `guarantor-slot-${index}`;
 }
 
 export { buildBorrowerContactLookups };

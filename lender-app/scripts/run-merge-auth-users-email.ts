@@ -88,7 +88,7 @@ async function main() {
   const client = new ConvexHttpClient(url);
   // api typings use slash-path modules; Convex client accepts the function reference at runtime.
   const result = await client.mutation(
-    // @ts-expect-error migrations live under "migrations/*" paths
+    // @ts-expect-error slash-path migration modules are runtime-valid
     api["migrations/mergeAuthUsersByEmail"].mergeAuthUsersByEmail,
     {
       adminSecret,

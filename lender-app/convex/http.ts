@@ -24,7 +24,7 @@ async function webhookVerified(
   secret: string | undefined,
 ): Promise<boolean> {
   if (!secret?.trim()) {
-    return true;
+    return process.env.CONVEX_ALLOW_UNSIGNED_WEBHOOKS === "1";
   }
   if (!signatureHeader?.trim()) {
     return false;
@@ -79,12 +79,37 @@ http.route({
 });
 
 http.route({
+  path: "/public/resolve-portal-link",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const token = url.searchParams.get("token")?.trim() ?? "";
+    const route = await ctx.runQuery(api.clientPortalLinks.resolvePortalLinkRoute, {
+      token,
+    });
+    return new Response(JSON.stringify(route), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+    });
+  }),
+});
+
+http.route({
   path: "/webhooks/signatures/dropbox-sign",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const raw = await request.text();
     const sig = request.headers.get("X-HelloSign-Signature");
     const secret = process.env.DROPBOX_SIGN_WEBHOOK_SECRET?.trim();
+    if (!secret) {
+      console.error(
+        "[dropbox-sign-webhook] DROPBOX_SIGN_WEBHOOK_SECRET is unset — rejecting payload (fail-closed).",
+      );
+      return new Response("webhook secret not configured", { status: 500 });
+    }
     if (!(await webhookVerified(raw, sig, secret))) {
       return new Response("invalid signature", { status: 401 });
     }

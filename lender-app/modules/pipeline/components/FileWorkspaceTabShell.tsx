@@ -159,6 +159,10 @@ export type FileWorkspaceTabNavProps = {
   onActiveTabChange: (tab: FileWorkspaceTabId) => void;
   placement?: "pinned" | "inline";
   className?: string;
+  /** Optional attention indicators per tab (e.g. pending client uploads). */
+  tabIndicators?: Partial<
+    Record<FileWorkspaceTabId, { showDot?: boolean; count?: number }>
+  >;
 };
 
 export function FileWorkspaceTabNav({
@@ -166,6 +170,7 @@ export function FileWorkspaceTabNav({
   onActiveTabChange,
   placement = "pinned",
   className,
+  tabIndicators,
 }: FileWorkspaceTabNavProps) {
   const navHighlightTab = navHighlightTabFor(activeTab);
 
@@ -193,6 +198,7 @@ export function FileWorkspaceTabNav({
           >
             {FILE_WORKSPACE_COMMAND_CENTER_TAB_IDS.map((tabId) => {
               const selected = navHighlightTab === tabId;
+              const indicator = tabIndicators?.[tabId];
               return (
                 <button
                   key={tabId}
@@ -205,10 +211,21 @@ export function FileWorkspaceTabNav({
                   onClick={() => onActiveTabChange(tabId)}
                   className={cn(
                     hubDetailStyles.tabButton(selected),
-                    "min-h-9 shrink-0 whitespace-nowrap sm:flex-1 sm:shrink",
+                    "relative min-h-9 shrink-0 whitespace-nowrap sm:flex-1 sm:shrink",
                   )}
                 >
                   {TAB_LABELS[tabId]}
+                  {indicator?.showDot ? (
+                    <span
+                      className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500"
+                      aria-label={
+                        indicator.count
+                          ? `${indicator.count} items need review`
+                          : "Needs review"
+                      }
+                      data-testid={`pipeline-file-tab-dot-${tabId}`}
+                    />
+                  ) : null}
                 </button>
               );
             })}

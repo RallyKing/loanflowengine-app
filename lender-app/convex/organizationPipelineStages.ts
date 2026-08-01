@@ -3,7 +3,11 @@ import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOrgPermission } from "./organizationRbac";
 import { assertOrganizationId } from "./organizationValidators";
-import { resolveMemberUserKey } from "./organizationAccess";
+import {
+  isSuperAdmin,
+  requireOrgReaderKey,
+  requireOrgSettingsAdminKey,
+} from "./authUtils";
 import {
   appendStageArchitectureActivity,
   listOrgStageBundle,
@@ -17,24 +21,32 @@ const orgArgs = {
 };
 
 async function requireMemberKey(
-  ctx: Parameters<typeof resolveMemberUserKey>[0],
+  ctx: Parameters<typeof requireOrgReaderKey>[0],
   organizationId: Id<"organizations">,
   memberUserKey?: string,
 ) {
-  const key = await resolveMemberUserKey(ctx, memberUserKey);
-  if (!key) throw new Error("Not authenticated");
-  await assertOrgPermission(ctx, organizationId, key, "files.view");
-  return key;
+  return requireOrgReaderKey(
+    ctx,
+    organizationId,
+    memberUserKey,
+    "organizationPipelineStages.requireMemberKey",
+  );
 }
 
 async function requireStageArchitect(
-  ctx: Parameters<typeof resolveMemberUserKey>[0],
+  ctx: Parameters<typeof requireOrgSettingsAdminKey>[0],
   organizationId: Id<"organizations">,
   memberUserKey?: string,
 ) {
-  const key = await requireMemberKey(ctx, organizationId, memberUserKey);
-  await assertOrgPermission(ctx, organizationId, key, "settings.manage");
-  return key;
+  if (await isSuperAdmin(ctx, memberUserKey)) {
+    return requireMemberKey(ctx, organizationId, memberUserKey);
+  }
+  return requireOrgSettingsAdminKey(
+    ctx,
+    organizationId,
+    memberUserKey,
+    "organizationPipelineStages.requireStageArchitect",
+  );
 }
 
 /** List org stages + sub-stages (read-only). Does not seed — call `ensureSeeded` once. */

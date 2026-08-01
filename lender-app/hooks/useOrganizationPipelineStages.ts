@@ -6,6 +6,8 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useActorUserKey } from "@/lib/useActorUserKey";
+import { MASTER_PLATFORM_ORGANIZATION_ID } from "@/lib/invariants/masterOrganizationFallback";
+import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
 
 export type PipelineStageDisplay = {
   stage: Doc<"organizationPipelineStages">;
@@ -67,6 +69,7 @@ export function buildPipelineStageIndex(
 }
 
 export function useOrganizationPipelineStages() {
+  const orgQueryReady = useConvexOrgQueryReady();
   const { activeOrganizationId, can } = useOrgPermissions();
   const memberUserKey = useActorUserKey();
   const ensureSeeded = useMutation(api.organizationPipelineStages.ensureSeeded);
@@ -74,8 +77,11 @@ export function useOrganizationPipelineStages() {
 
   const bundle = useQuery(
     api.organizationPipelineStages.listForOrganization,
-    activeOrganizationId
-      ? { organizationId: activeOrganizationId, memberUserKey }
+    orgQueryReady && memberUserKey.trim()
+      ? {
+          organizationId: activeOrganizationId ?? MASTER_PLATFORM_ORGANIZATION_ID,
+          memberUserKey,
+        }
       : "skip",
   );
 

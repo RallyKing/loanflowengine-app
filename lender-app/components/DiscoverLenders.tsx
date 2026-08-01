@@ -39,14 +39,11 @@ import { cn } from "@/lib/cn";
 import { useLiveConnection } from "@/lib/useLiveConnection";
 import { LiveDataPausedNotice } from "@/components/LiveDataPausedNotice";
 import { SettingsLink } from "@/components/SettingsLink";
+import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 import {
   CollapsibleCard,
   CollapsibleSection,
 } from "@/components/CollapsibleSection";
-import {
-  discoveryRecentRunsArgs,
-  emptyQueryArgs,
-} from "@/lib/convexQueryArgs";
 
 const SUGGESTIONS: Array<{ label: string; query: string }> = [
   {
@@ -109,18 +106,26 @@ export function DiscoverLenders() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Status>("pending");
 
-  const provider = useQuery(api.discovery.providerStatus, emptyQueryArgs);
+  const orgScope = useOrgConvexQueryArgs();
+
+  const provider = useQuery(
+    api.discovery.providerStatus,
+    orgScope ?? "skip",
+  );
   const listCandidatesQueryArgs = useMemo(
-    () => ({ status: tab, limit: 200 as const }),
-    [tab]
+    () =>
+      orgScope
+        ? ({ ...orgScope, status: tab, limit: 200 as const })
+        : null,
+    [orgScope, tab],
   );
   const candidates = useQuery(
     api.discovery.listCandidates,
-    listCandidatesQueryArgs
+    listCandidatesQueryArgs ?? "skip",
   );
   const recentRuns = useQuery(
     api.discovery.recentRuns,
-    discoveryRecentRunsArgs
+    orgScope ? { ...orgScope, limit: 8 } : "skip",
   );
 
   const runDiscovery = useAction(api.discovery.runDiscovery);
@@ -143,11 +148,15 @@ export function DiscoverLenders() {
   async function runSearch(e?: React.FormEvent) {
     e?.preventDefault();
     if (!query.trim()) return;
+    if (!orgScope) {
+      setError("Sign in and select a workspace to run discovery.");
+      return;
+    }
     setRunning(true);
     setError(null);
     setLastResult(null);
     try {
-      const result = await runDiscovery({ query, maxResults });
+      const result = await runDiscovery({ ...orgScope, query, maxResults });
       setLastResult(result);
       setTab("pending");
       setSelected(new Set());
@@ -173,8 +182,8 @@ export function DiscoverLenders() {
   }
 
   async function bulkAccept() {
-    if (selected.size === 0) return;
-    await acceptMany({ ids: Array.from(selected) });
+    if (selected.size === 0 || !orgScope) return;
+    await acceptMany({ ...orgScope, ids: Array.from(selected) });
     setSelected(new Set());
   }
 
@@ -462,7 +471,7 @@ npx convex env set OPENAI_API_KEY sk-...
             <Button
               size="sm"
               variant="outline"
-              onClick={() => clearDismissed({})}
+              onClick={() => orgScope && clearDismissed(orgScope)}
               disabled={!canUseHub}
               title={actionTitle(
                 "Permanently remove dismissed items from the discovery queue"
@@ -493,9 +502,9 @@ npx convex env set OPENAI_API_KEY sk-...
               tab={tab}
               selected={selected.has(c._id)}
               onToggleSelected={() => toggleSelected(c._id)}
-              onAccept={() => accept({ id: c._id })}
-              onDismiss={() => dismiss({ id: c._id })}
-              onDelete={() => deleteCandidate({ id: c._id })}
+              onAccept={() => orgScope && accept({ ...orgScope, id: c._id })}
+              onDismiss={() => orgScope && dismiss({ ...orgScope, id: c._id })}
+              onDelete={() => orgScope && deleteCandidate({ ...orgScope, id: c._id })}
               canUseHub={canUseHub}
               actionTitle={actionTitle}
             />
@@ -566,6 +575,7 @@ function CandidateCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(candidate);
+  const orgScope = useOrgConvexQueryArgs();
   const updateCandidate = useMutation(api.discovery.updateCandidate);
 
   // Re-sync when a newer candidate doc comes in from the server
@@ -574,7 +584,9 @@ function CandidateCard({
   }
 
   async function save() {
+    if (!orgScope) return;
     await updateCandidate({
+      ...orgScope,
       id: candidate._id,
       patch: {
         company: draft.company,

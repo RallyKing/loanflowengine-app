@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import {
   buildBorrowerContactLookups,
+  borrowerPanelRowKey,
   isCoBorrowerFileLink,
   isPrimaryBorrowerFileLink,
   matchContactByNormalizedEmail,
@@ -16,8 +17,9 @@ import {
 } from "@/lib/contacts/borrowerIdentityFromDeal";
 import { resolvePrimaryBorrowerContactId } from "@/lib/library/documentVaultHydration";
 import type { SectionProps } from "@/components/intake/IntakeEditor";
-import { DealPartyIdentityChip } from "@/modules/pipeline/components/deal/DealPartyIdentityChip";
 import { DealPartyInstancePanel } from "@/modules/pipeline/components/deal/DealPartyInstancePanel";
+import { EntityBorrowerLinkedSection } from "@/modules/pipeline/components/deal/EntityBorrowerLinkedSection";
+import { BusinessEntityForm } from "@/modules/pipeline/components/deal/BusinessEntityForm";
 import { RegistryPartyLinker } from "@/modules/pipeline/components/deal/RegistryPartyLinker";
 
 export type DealBorrowersPanelProps = SectionProps & {
@@ -38,6 +40,11 @@ export function DealBorrowersPanel({
 }: DealBorrowersPanelProps) {
   const [adding, setAdding] = useState(false);
   const [relinkIndex, setRelinkIndex] = useState<number | null>(null);
+  const [unlinkingEntity, setUnlinkingEntity] = useState(false);
+
+  const unbindEntity = useMutation(
+    api.entityCanonicalization.unbindEntityBorrowerFromFile,
+  );
 
   const contacts = useQuery(
     api.contacts.list,
@@ -101,16 +108,41 @@ export function DealBorrowersPanel({
     if (relinkIndex === index) setRelinkIndex(null);
   };
 
+  const removeEntityBorrower = async () => {
+    if (!fileId || !memberUserKey || unlinkingEntity) return;
+    setUnlinkingEntity(true);
+    try {
+      await unbindEntity({
+        fileId,
+        clientId: entityClient?._id,
+        memberUserKey,
+      });
+    } finally {
+      setUnlinkingEntity(false);
+    }
+  };
+
+  const entityBusinessLegalName = (
+    draft.business as { legalName?: string } | undefined
+  )?.legalName?.trim();
+  const showInlineEntityForm =
+    !entityClient && Boolean(entityBusinessLegalName);
+
   return (
     <div className="space-y-2" data-testid="deal-borrowers-panel">
       {entityClient ? (
-        <DealPartyIdentityChip
-          displayName={entityClient.displayName}
-          roleLabel="Entity borrower"
-          entityId={entityClient._id}
-          entityMode
-          onChangeLink={canLink ? () => setAdding(true) : undefined}
+        <EntityBorrowerLinkedSection
+          entityClient={entityClient}
+          draft={draft}
+          update={update}
+          canLink={canLink}
+          onChangeLink={() => setAdding(true)}
+          onRemoveLink={() => {
+            void removeEntityBorrower();
+          }}
         />
+      ) : showInlineEntityForm ? (
+        <BusinessEntityForm draft={draft} update={update} />
       ) : null}
 
       {borrowers.length === 0 && !entityClient && !adding ? (
@@ -133,7 +165,7 @@ export function DealBorrowersPanel({
           />
         ) : (
           <DealPartyInstancePanel
-            key={index}
+            key={borrowerPanelRowKey(row, index)}
             partyKind="borrower"
             index={index}
             row={row}
@@ -155,7 +187,7 @@ export function DealBorrowersPanel({
           fileId={fileId!}
           organizationId={organizationId!}
           memberUserKey={memberUserKey!}
-          hasPrimaryBorrower={borrowers.length > 0}
+          hasPrimaryBorrower={borrowers.length > 0 || Boolean(entityClient)}
           onLinked={() => setAdding(false)}
           onCancel={() => setAdding(false)}
         />

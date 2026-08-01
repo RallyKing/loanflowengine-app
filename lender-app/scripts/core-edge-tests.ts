@@ -38,6 +38,11 @@ import {
 } from "../lib/intake/weightedInterestBlend";
 import { mergeIntakeDraftWithServer } from "../lib/share/mergeIntakeDraftWithServer";
 import { embeddedDealPayloadIsSubstantive } from "../lib/file/embeddedDealPresence";
+import {
+  buildVaultDocumentZipPath,
+  sanitizeZipPathSegment,
+} from "../lib/library/vaultZipPaths";
+import JSZip from "jszip";
 import { isDealBackedPipelineRow } from "../lib/pipeline/dealBackedRow";
 import {
   buildDealCommitRow,
@@ -1321,5 +1326,39 @@ test("applyPipelineFileExpandUxToExpanded: first block and action signals", () =
   assert.equal(firstOnly.tasks, true);
   assert.equal(firstOnly.fileDetails, undefined);
 });
+
+passed += 1;
+console.log("vault zip path hierarchy");
+{
+  type Folder = {
+    _id: string;
+    name: string;
+    parentFolderId?: string;
+  };
+  const folders: Folder[] = [
+    { _id: "f1", name: "Tax Returns" },
+    { _id: "f2", name: "2024", parentFolderId: "f1" },
+    { _id: "f3", name: "W-2s", parentFolderId: "f2" },
+  ];
+  const path = buildVaultDocumentZipPath(
+    folders as Parameters<typeof buildVaultDocumentZipPath>[0],
+    "f3" as Parameters<typeof buildVaultDocumentZipPath>[1],
+    "john-w2.pdf",
+  );
+  assert.equal(path, "Tax Returns/2024/W-2s/john-w2.pdf");
+  assert.equal(sanitizeZipPathSegment('bad/name'), "bad_name");
+
+  const zip = new JSZip();
+  zip.file("Tax Returns/2024/doc-a.pdf", "a");
+  zip.file("Tax Returns/2024/doc-b.pdf", "b");
+  zip.file("General/loi.pdf", "c");
+  const names = Object.keys(zip.files).filter((k) => !k.endsWith("/"));
+  assert.equal(names.includes("Tax Returns/2024/doc-a.pdf"), true);
+  assert.equal(names.includes("General/loi.pdf"), true);
+  assert.equal(
+    names.filter((n) => n.startsWith("Tax Returns/2024/")).length,
+    2,
+  );
+}
 
 console.log(`\ncore-edge-tests: ${passed} cases passed.\n`);

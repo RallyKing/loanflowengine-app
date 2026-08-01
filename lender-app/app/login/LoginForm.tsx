@@ -56,7 +56,7 @@ export function LoginForm({
         setSubmitting(false);
         return;
       }
-      window.location.href = next || "/";
+      window.location.href = next || "/tasks";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error.");
       setSubmitting(false);

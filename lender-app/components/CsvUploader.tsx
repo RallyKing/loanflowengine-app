@@ -19,6 +19,7 @@ import { parseLenderCsv, dedupeKey } from "@/lib/csv";
 import { FIELD_META, LENDER_FIELDS, type Lender } from "@/lib/schema";
 import { cn } from "@/lib/cn";
 import { useLiveConnection } from "@/lib/useLiveConnection";
+import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 import { LiveDataPausedNotice } from "@/components/LiveDataPausedNotice";
 import { SettingsLink } from "@/components/SettingsLink";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
@@ -43,6 +44,7 @@ export function CsvUploader() {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bulkUpsert = useMutation(api.lenders.bulkUpsert);
+  const orgScope = useOrgConvexQueryArgs();
   const { canUseHub, browserOnline, actionTitle } = useLiveConnection();
 
   const handleFiles = useCallback(async (files: FileList | null) => {
@@ -81,7 +83,7 @@ export function CsvUploader() {
   }, []);
 
   async function upload() {
-    if (status.kind !== "parsed") return;
+    if (status.kind !== "parsed" || !orgScope) return;
     const records = status.records;
     const fileName = status.fileName;
     setStatus({ kind: "uploading", total: records.length, done: 0 });
@@ -90,7 +92,7 @@ export function CsvUploader() {
     try {
       for (let i = 0; i < records.length; i += CHUNK_SIZE) {
         const chunk = records.slice(i, i + CHUNK_SIZE);
-        const result = await bulkUpsert({ records: chunk });
+        const result = await bulkUpsert({ ...orgScope, records: chunk });
         inserted += result.inserted;
         updated += result.updated;
         setStatus({

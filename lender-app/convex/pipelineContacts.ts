@@ -31,6 +31,7 @@ import {
   borrowerFileLinkRole,
   borrowerRowHasIdentity,
   borrowerRowToContactIdentityPatch,
+  borrowerRowIdentityFromContact,
   buildBorrowerContactLookups,
   isCoBorrowerFileLink,
   isPrimaryBorrowerFileLink,
@@ -42,6 +43,7 @@ import {
   buildBorrowerContactLookups as buildGuarantorContactLookups,
   guarantorRowHasIdentity,
   guarantorRowToContactIdentityPatch,
+  guarantorRowIdentityFromContact,
   matchGuarantorContact,
   personNameFromGuarantorRow,
 } from "../lib/contacts/guarantorIdentityFromDeal";
@@ -852,7 +854,6 @@ export const pullContactFinancialProfileToDeal = mutation({
     }
 
     const deal = await resolveDealBaseForPipelinePatch(ctx, p);
-    const piiFields = contactPiiToDealStringFields(contact);
     const dealReo = activeReo.map((row) =>
       reoProfileShapeToDealRow(reoRowToProfileShape(row, row.sortOrder)),
     );
@@ -870,8 +871,7 @@ export const pullContactFinancialProfileToDeal = mutation({
           : {};
       borrowers[args.slotIndex] = {
         ...current,
-        contactId: args.contactId,
-        ...piiFields,
+        ...borrowerRowIdentityFromContact(contact),
       };
       const mergedDeal = mergePatchIntoDeal(deal, {
         borrowers,
@@ -915,7 +915,8 @@ export const pullContactFinancialProfileToDeal = mutation({
           : {};
       guarantors[args.slotIndex] = {
         ...current,
-        ...piiFields,
+        contactId: args.contactId,
+        ...guarantorRowIdentityFromContact(contact),
       };
       const mergedDeal = mergePatchIntoDeal(deal, {
         guarantors,

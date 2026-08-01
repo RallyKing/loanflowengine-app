@@ -4,15 +4,18 @@
  * Usage:
  *   npx tsx scripts/add-lender-cli.mts '{"company":"Acme","email":"x@y.com"}'
  *
- * This is a fallback for the Convex MCP `run` tool. The primary path for
- * prompt-driven additions is:
- *   user-convex MCP → run → functionName="lenders:upsert"
+ * Uses `lenders:operatorUpsert` (DATA_MIGRATION_ADMIN_SECRET on Convex) or
+ * authenticated `lenders:upsert` when org scope is in .env.local.
  */
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  loadOperatorOrgScope,
+  loadOperatorSecret,
+} from "./lib/operatorConvexIdentity.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "..");
@@ -41,7 +44,7 @@ async function main() {
   if (!raw) {
     console.error(
       "Usage: npx tsx scripts/add-lender-cli.mts '<json>'\n" +
-        "Pass a JSON object with at least { \"company\": \"...\" }."
+        "Pass a JSON object with at least { \"company\": \"...\" }.",
     );
     process.exit(2);
   }
@@ -57,7 +60,22 @@ async function main() {
     process.exit(4);
   }
   const client = new ConvexHttpClient(url);
-  const result = await client.mutation(api.lenders.upsert, payload);
+  try {
+    const secret = loadOperatorSecret();
+    const result = await client.mutation(api.lenders.operatorUpsert, {
+      operatorSecret: secret,
+      ...payload,
+    });
+    console.log(JSON.stringify(result));
+    return;
+  } catch {
+    /* fall through to session-scoped upsert */
+  }
+  const scope = loadOperatorOrgScope();
+  const result = await client.mutation(api.lenders.upsert, {
+    ...scope,
+    ...payload,
+  });
   console.log(JSON.stringify(result));
 }
 

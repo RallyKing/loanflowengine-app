@@ -89,12 +89,14 @@
     "migration:verify": "tsx scripts/migration-cli.ts verify",
     "migration:purge-dry-run": "tsx scripts/migration-cli.ts purge-dry-run",
     "migration:purge-execute": "tsx scripts/migration-cli.ts purge-execute",
-    "migration:planJoshua": "tsx scripts/plan-joshua-account-migration.ts"
+    "migration:planJoshua": "tsx scripts/plan-joshua-account-migration.ts",
+    "bind:ghost-link": "tsx scripts/bindTargetFileLinks.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.13.24",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
@@ -103,6 +105,7 @@
     "clsx": "^2.1.1",
     "convex": "^1.17.0",
     "exceljs": "^4.4.0",
+    "jose": "^6.2.3",
     "jszip": "^3.10.1",
     "lucide-react": "^0.460.0",
     "next": "15.5.15",

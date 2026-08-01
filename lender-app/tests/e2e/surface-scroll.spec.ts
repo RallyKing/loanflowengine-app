@@ -169,7 +169,7 @@ describeOrSkip("Surface scroll — key workspaces (Convex)", () => {
     await assertMainScrollRespondsToWheel(page);
   });
 
-  test("contacts: main scroll; at most one tall nested list scroller", async ({
+  test("contacts: workspace scroll; delegated scrollport on list route", async ({
     page,
   }) => {
     await page.goto("/contacts", { waitUntil: "domcontentloaded" });
@@ -178,13 +178,23 @@ describeOrSkip("Surface scroll — key workspaces (Convex)", () => {
     ).toBeVisible({ timeout: 30_000 });
     await dismissMobileNavIfOpen(page);
     await assertBodyLockedVertical(page);
+
+    const workspaceScroll = page.getByTestId("contacts-workspace-scroll");
+    await expect(workspaceScroll).toBeVisible();
+
+    const grew = await workspaceScroll.evaluate((el) => {
+      const probe = document.createElement("div");
+      probe.style.cssText = "height:1600px;width:1px";
+      el.appendChild(probe);
+      return el.scrollHeight - el.clientHeight > 120;
+    });
+    expect(grew, "contacts workspace scroll should be scrollable").toBeTruthy();
+
     const nested = await countLargeNestedVerticalScrollports(page);
     expect(
       nested,
-      "contacts split layout may use one tall list scroller inside <main>",
+      "contacts workspace should not stack multiple full-height scrollports in <main>",
     ).toBeLessThanOrEqual(1);
-
-    await assertMainScrollRespondsToWheel(page);
   });
 
   test("lenders: workspace, main scroll, no competing full-height scrollport", async ({

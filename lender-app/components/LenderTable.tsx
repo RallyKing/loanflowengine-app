@@ -291,10 +291,11 @@ export function LenderTable({
       )
     )
       return;
+    if (!orgScope) return;
     setNormalizing(true);
     setNormalizeMsg(null);
     try {
-      const res = await normalizeAll(emptyQueryArgs);
+      const res = await normalizeAll({ ...orgScope });
       setNormalizeMsg(
         `Examined ${res.examined.toLocaleString()} · Updated ${res.changed.toLocaleString()}`
       );

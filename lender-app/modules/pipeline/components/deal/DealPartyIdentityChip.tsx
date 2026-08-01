@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, ExternalLink, RefreshCw, UserCircle2 } from "lucide-react";
+import { Building2, ExternalLink, RefreshCw, UserCircle2, X } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import { cn } from "@/lib/cn";
 import { hubInitials } from "@/components/contacts/hub/hubDetailStyles";
@@ -16,6 +16,7 @@ export type DealPartyIdentityChipProps = {
   entityId?: Id<"clients"> | null;
   entityMode?: boolean;
   onChangeLink?: () => void;
+  onRemoveLink?: () => void;
   className?: string;
 };
 
@@ -27,6 +28,7 @@ export function DealPartyIdentityChip({
   entityId,
   entityMode,
   onChangeLink,
+  onRemoveLink,
   className,
 }: DealPartyIdentityChipProps) {
   const name = displayName.trim() || "Unlinked";
@@ -79,18 +81,35 @@ export function DealPartyIdentityChip({
           <UserCircle2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         ) : null}
       </div>
-      {onChangeLink ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-8 w-full justify-start gap-1.5 px-1.5 text-xs"
-          onClick={onChangeLink}
-          data-testid="deal-party-change-link"
-        >
-          <RefreshCw className="h-3 w-3" aria-hidden />
-          Change link
-        </Button>
+      {onChangeLink || onRemoveLink ? (
+        <div className="flex flex-col gap-1">
+          {onChangeLink ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8 w-full justify-start gap-1.5 px-1.5 text-xs"
+              onClick={onChangeLink}
+              data-testid="deal-party-change-link"
+            >
+              <RefreshCw className="h-3 w-3" aria-hidden />
+              Change link
+            </Button>
+          ) : null}
+          {onRemoveLink ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8 w-full justify-start gap-1.5 px-1.5 text-xs text-muted-foreground hover:text-destructive"
+              onClick={onRemoveLink}
+              data-testid="deal-party-remove-link"
+            >
+              <X className="h-3 w-3" aria-hidden />
+              Remove link
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

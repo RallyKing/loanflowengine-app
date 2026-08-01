@@ -6,6 +6,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -23,6 +24,10 @@ import {
   parseDealInfoLayoutFromUnknown,
   type DealInfoLayoutV1,
 } from "@/lib/file/dealInfoTabLayout";
+import {
+  parseDealInfoCommandCenterLayoutFromUnknown,
+  type DealInfoCommandCenterLayoutV1,
+} from "@/lib/file/dealInfoCommandCenterLayout";
 import {
   parseClientPortalTabLayoutFromUnknown,
   type ClientPortalTabLayoutV1,
@@ -103,6 +108,9 @@ export type DealWorkspaceEditorState = {
   update: DealWorkspaceUpdater;
   /** Optimistic draft patch without queueing patchDeal (Tab 2 dual-write). */
   updateDraftOnly: DealWorkspaceUpdater;
+  /** Prevent Convex sheet subscription from overwriting in-flight dual-write keys. */
+  blockServerMergeForKeys: (keys: (keyof Sheet)[]) => void;
+  unblockServerMergeForKeys: (keys: (keyof Sheet)[]) => void;
   patchDealWorkspaceLayout: (
     action: SetStateAction<DealWorkspaceLayoutV1>,
   ) => void;
@@ -113,6 +121,9 @@ export type DealWorkspaceEditorState = {
     action: SetStateAction<DealWorkspaceTab3LayoutV1>,
   ) => void;
   patchDealInfoTabLayout: (action: SetStateAction<DealInfoLayoutV1>) => void;
+  patchDealInfoCommandCenterLayout: (
+    action: SetStateAction<DealInfoCommandCenterLayoutV1>,
+  ) => void;
   patchOverviewTabLayout: (
     action: SetStateAction<OverviewTabLayoutV1>,
   ) => void;
@@ -180,6 +191,7 @@ export function useDealWorkspaceEditorState(
   const flushInFlightRef = useRef(false);
   const flushPendingRef = useRef(false);
   const flushingKeysRef = useRef<Set<string>>(new Set());
+  const mergeBlockKeysRef = useRef<Set<string>>(new Set());
   const isSyncingFromBackend = useRef(false);
   const syncLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSyncedSheetRef = useRef<Sheet | null>(null);
@@ -330,6 +342,7 @@ export function useDealWorkspaceEditorState(
         sheet,
         pendingPatchRef.current,
         flushingKeysRef.current,
+        mergeBlockKeysRef.current,
       );
       if (
         dealSheetDeepEqual(
@@ -359,6 +372,18 @@ export function useDealWorkspaceEditorState(
 
   function updateDraftOnly<K extends keyof Sheet>(key: K, value: Sheet[K]) {
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  function blockServerMergeForKeys(keys: (keyof Sheet)[]) {
+    for (const key of keys) {
+      mergeBlockKeysRef.current.add(key as string);
+    }
+  }
+
+  function unblockServerMergeForKeys(keys: (keyof Sheet)[]) {
+    for (const key of keys) {
+      mergeBlockKeysRef.current.delete(key as string);
+    }
   }
 
   function patchDealWorkspaceLayout(
@@ -395,6 +420,16 @@ export function useDealWorkspaceEditorState(
     patchLayoutField(
       "dealInfoTabLayout",
       (raw) => parseDealInfoLayoutFromUnknown(raw),
+      action,
+    );
+  }
+
+  function patchDealInfoCommandCenterLayout(
+    action: SetStateAction<DealInfoCommandCenterLayoutV1>,
+  ) {
+    patchLayoutField(
+      "dealInfoCommandCenterLayout",
+      (raw) => parseDealInfoCommandCenterLayoutFromUnknown(raw),
       action,
     );
   }
@@ -508,10 +543,13 @@ export function useDealWorkspaceEditorState(
     draft,
     update,
     updateDraftOnly,
+    blockServerMergeForKeys,
+    unblockServerMergeForKeys,
     patchDealWorkspaceLayout,
     patchDealAnalysisLayout,
     patchDealWorkspaceTab3Layout,
     patchDealInfoTabLayout,
+    patchDealInfoCommandCenterLayout,
     patchOverviewTabLayout,
     patchClientPortalTabLayout,
     flush,
@@ -537,6 +575,62 @@ export function DealWorkspaceEditorProvider({
   children: ReactNode;
 }) {
   const value = useDealWorkspaceEditorState(fileId);
+  return (
+    <DealWorkspaceEditorContext.Provider value={value}>
+      {children}
+    </DealWorkspaceEditorContext.Provider>
+  );
+}
+
+/**
+ * Local-only deal editor for client portal — no authenticated Convex queries.
+ * Mutations stay in memory until the portal block submit mutation runs.
+ */
+export function DealWorkspaceEditorStaticProvider({
+  fileId,
+  draft,
+  update,
+  children,
+}: {
+  fileId: Id<"pipeline">;
+  draft: Sheet | null;
+  update: DealWorkspaceUpdater;
+  children: ReactNode;
+}) {
+  const value = useMemo((): DealWorkspaceEditorState => {
+    const noop = async () => {};
+    return {
+      fileId,
+      dealBundle: draft ? { pipeline: { _id: fileId } as Doc<"pipeline">, sheet: draft } : null,
+      sheet: draft,
+      shareIntakeId: undefined,
+      draft,
+      update,
+      updateDraftOnly: update,
+      blockServerMergeForKeys: () => {},
+      unblockServerMergeForKeys: () => {},
+      patchDealWorkspaceLayout: () => {},
+      patchDealAnalysisLayout: () => {},
+      patchDealWorkspaceTab3Layout: () => {},
+      patchDealInfoTabLayout: () => {},
+      patchDealInfoCommandCenterLayout: () => {},
+      patchOverviewTabLayout: () => {},
+      patchClientPortalTabLayout: () => {},
+      flush: noop,
+      isDirty: false,
+      isUpdating: false,
+      saving: false,
+      savedAt: null,
+      dealInitStatus: "idle",
+      setDealInitStatus: () => {},
+      dealInitAttemptedForFile: { current: String(fileId) },
+      initDealDataIfMissing: (async () => {}) as unknown as DealWorkspaceEditorState["initDealDataIfMissing"],
+      preferencesAccountId: undefined,
+      pipelineHasEmbeddedDealData: Boolean(draft),
+      needsDealBootstrap: false,
+    };
+  }, [fileId, draft, update]);
+
   return (
     <DealWorkspaceEditorContext.Provider value={value}>
       {children}

@@ -78,11 +78,11 @@ export function UserNotificationsBell({
     if (ready) {
       q.unread = {
         query: api.notifications.unreadCountForUser,
-        args: { userKey: k },
+        args: { userKey: k, memberUserKey: k },
       };
       q.items = {
         query: api.notifications.listUnreadForUser,
-        args: { userKey: k, limit: 25 },
+        args: { userKey: k, memberUserKey: k, limit: 25 },
       };
     }
     if (ready && activeOrganizationId) {
@@ -144,7 +144,7 @@ export function UserNotificationsBell({
   const count = unread ?? 0;
 
   const openRow = async (row: Doc<"userNotifications">) => {
-    await markRead({ id: row._id });
+    await markRead({ id: row._id, memberUserKey: k });
     if (row.taskId) {
       if (onOpenTask) onOpenTask(row.taskId);
       else router.push(`/tasks?task=${row.taskId}`);
@@ -202,7 +202,7 @@ export function UserNotificationsBell({
                 variant="ghost"
                 size="sm"
                 className="h-7 text-xs"
-                onClick={() => void markAllRead({ userKey: k })}
+                onClick={() => void markAllRead({ userKey: k, memberUserKey: k })}
               >
                 Mark all read
               </Button>

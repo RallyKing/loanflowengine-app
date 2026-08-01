@@ -3,8 +3,8 @@ import { cn } from "@/lib/cn";
 /** Shared executive hub typography and surfaces (DLC tokens). */
 export const hubDetailStyles = {
   shell: "flex min-h-0 flex-1 flex-col gap-4 p-3 md:p-4",
-  commandCenterPage: "flex min-h-0 flex-1 flex-col",
-  commandCenterShell: "mx-auto flex w-full max-w-5xl min-h-0 flex-1 flex-col gap-4 p-3 md:p-5",
+  commandCenterPage: "flex w-full flex-col overflow-visible",
+  commandCenterShell: "mx-auto flex w-full max-w-5xl flex-col gap-4 overflow-visible p-3 md:p-5",
   grid: "flex w-full flex-col gap-4",
   identityZone: "w-full min-w-0 space-y-4",
   operationsZone: "w-full min-w-0",
@@ -28,9 +28,9 @@ export const hubDetailStyles = {
         ? "bg-background text-foreground shadow-dlc-1 ring-1 ring-border/60"
         : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
     ),
-  tabPanel: "mt-4 min-h-0 transition-opacity duration-dlc-short ease-dlc-standard",
+  tabPanel: "mt-4 min-h-0 overflow-visible transition-opacity duration-dlc-short ease-dlc-standard",
   tabPanelScrollable:
-    "mt-4 max-h-[min(85dvh,720px)] min-h-0 touch-scroll-y overflow-y-auto overscroll-contain transition-opacity duration-dlc-short ease-dlc-standard",
+    "mt-4 min-h-0 overflow-visible transition-opacity duration-dlc-short ease-dlc-standard",
   opsCard:
     "dlc-surface-card rounded-dlc-lg border border-gray-100 p-4 shadow-dlc-1 dark:border-gray-800",
   avatar:

@@ -182,6 +182,8 @@ import {
 import { patchPreviewRowInList } from "@/lib/offline/previewRowPatch";
 import { isPatchDealConflictResult } from "@/lib/pipeline/patchDealResult";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
+import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
+import { useActorUserKey } from "@/lib/useActorUserKey";
 import {
   loadHubFilterSnapshot,
   loadHubMobileDisplay,
@@ -380,10 +382,11 @@ export function PipelinePageClient() {
   }, [projectionMode]);
 
   const { settings, update: updateUserSettings } = useUserSettings();
-  const { preferences, accountId } = useUserPreferences();
+  const { preferences } = useUserPreferences();
   const { activeOrganizationId } = useOrgPermissions();
+  const orgQueryReady = useConvexOrgQueryReady();
+  const memberUserKey = useActorUserKey().trim() || undefined;
   const stageIndex = useOrganizationPipelineStages();
-  const preferencesAccountId = accountId.trim() || undefined;
   const globalUiIndicator = useMemo(
     () => parseUiDisplayColors(preferences.displaySettings).indicatorColor ?? null,
     [preferences.displaySettings],
@@ -452,29 +455,30 @@ export function PipelinePageClient() {
     [settings.pipelineStageStyles, globalUiIndicator],
   );
   const listPreviewArgs = useMemo(() => {
-    if (!activeOrganizationId || !preferencesAccountId) return "skip" as const;
+    if (!orgQueryReady || !activeOrganizationId || !memberUserKey) return "skip" as const;
     return {
       includeArchived: showArchived,
       includeSnoozed: showSnoozed,
       organizationId: activeOrganizationId,
-      memberUserKey: preferencesAccountId,
+      memberUserKey,
     };
   }, [
+    orgQueryReady,
     showArchived,
     showSnoozed,
     activeOrganizationId,
-    preferencesAccountId,
+    memberUserKey,
   ]);
   const rows = useQuery(api.pipeline.listTablePreview, listPreviewArgs);
   const referralPartnerListArgs = useMemo(() => {
-    if (!activeOrganizationId || !preferencesAccountId) return "skip" as const;
+    if (!orgQueryReady || !activeOrganizationId || !memberUserKey) return "skip" as const;
     return {
       organizationId: activeOrganizationId,
-      memberUserKey: preferencesAccountId,
+      memberUserKey,
       contactRoleIdFilter: DEFAULT_CONTACT_ROLE_IDS.referralPartner,
       strictCanonicalRoleMatch: true,
     };
-  }, [activeOrganizationId, preferencesAccountId]);
+  }, [orgQueryReady, activeOrganizationId, memberUserKey]);
   const referralPartnerContacts = useQuery(
     api.contacts.list,
     referralPartnerListArgs,
@@ -552,7 +556,7 @@ export function PipelinePageClient() {
       const expectedUpdatedAt = row?.updatedAt;
       const payload = {
         ...args,
-        ...(preferencesAccountId ? { preferencesAccountId } : {}),
+        ...(memberUserKey ? { memberUserKey } : {}),
         ...(expectedUpdatedAt !== undefined
           ? { expectedUpdatedAt }
           : {}),
@@ -569,7 +573,7 @@ export function PipelinePageClient() {
         patchPreviewRowInList(prev ?? dataRef.current, args.id, args),
       );
     },
-    [canUseHub, offline, patchPipelineMut, preferencesAccountId],
+    [canUseHub, offline, patchPipelineMut, memberUserKey],
   );
   const runPatchDeal = useCallback(
     async (args: Parameters<typeof patchDealMut>[0]) => {
@@ -577,7 +581,7 @@ export function PipelinePageClient() {
       const expectedUpdatedAt = row?.updatedAt;
       const payload = {
         ...args,
-        ...(preferencesAccountId ? { preferencesAccountId } : {}),
+        ...(memberUserKey ? { memberUserKey } : {}),
         ...(expectedUpdatedAt !== undefined
           ? { expectedUpdatedAt }
           : {}),
@@ -597,7 +601,7 @@ export function PipelinePageClient() {
         args: { ...(payload as Record<string, unknown>) },
       });
     },
-    [canUseHub, offline, patchDealMut, preferencesAccountId],
+    [canUseHub, offline, patchDealMut, memberUserKey],
   );
   const runSetClientMomentum = useCallback(
     async (fileId: Id<"pipeline">, clientMomentum: number | null) => {
@@ -606,7 +610,7 @@ export function PipelinePageClient() {
       const payload = {
         id: fileId,
         clientMomentum,
-        ...(preferencesAccountId ? { preferencesAccountId } : {}),
+        ...(memberUserKey ? { memberUserKey } : {}),
         ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}),
       } as Parameters<typeof setClientMomentumMut>[0];
       if (canUseHub) {
@@ -624,7 +628,7 @@ export function PipelinePageClient() {
         }),
       );
     },
-    [canUseHub, offline, preferencesAccountId, setClientMomentumMut],
+    [canUseHub, offline, memberUserKey, setClientMomentumMut],
   );
   const archivePipeline = useMutation(api.pipeline.archive);
   const unarchivePipeline = useMutation(api.pipeline.unarchive);
@@ -1232,7 +1236,7 @@ export function PipelinePageClient() {
         [...bulkIds].map((id) =>
           archivePipeline({
             id,
-            ...(preferencesAccountId ? { preferencesAccountId } : {}),
+            ...(memberUserKey ? { memberUserKey } : {}),
           }),
         ),
       );
@@ -1246,7 +1250,7 @@ export function PipelinePageClient() {
     } finally {
       setBulkBusy(false);
     }
-  }, [bulkIds, archivePipeline, preferencesAccountId]);
+  }, [bulkIds, archivePipeline, memberUserKey]);
 
   const runBulkUnarchive = useCallback(async () => {
     if (bulkIds.size === 0) return;
@@ -1256,7 +1260,7 @@ export function PipelinePageClient() {
         [...bulkIds].map((id) =>
           unarchivePipeline({
             id,
-            ...(preferencesAccountId ? { preferencesAccountId } : {}),
+            ...(memberUserKey ? { memberUserKey } : {}),
           }),
         ),
       );
@@ -1270,7 +1274,7 @@ export function PipelinePageClient() {
     } finally {
       setBulkBusy(false);
     }
-  }, [bulkIds, unarchivePipeline, preferencesAccountId]);
+  }, [bulkIds, unarchivePipeline, memberUserKey]);
 
   const runBulkDelete = useCallback(async () => {
     if (bulkIds.size === 0) return;
@@ -1292,7 +1296,7 @@ export function PipelinePageClient() {
       for (const id of ids) {
         await removePipeline({
           id,
-          ...(preferencesAccountId ? { preferencesAccountId } : {}),
+          ...(memberUserKey ? { memberUserKey } : {}),
         });
       }
       setBulkIds(new Set());
@@ -1304,7 +1308,7 @@ export function PipelinePageClient() {
     } finally {
       setBulkBusy(false);
     }
-  }, [bulkIds, removePipeline, preferencesAccountId, confirm]);
+  }, [bulkIds, removePipeline, memberUserKey, confirm]);
 
   const totalLoan = useMemo(
     () => filtered.reduce((sum, r) => sum + (r.fundingAmount || 0), 0),
@@ -2563,7 +2567,7 @@ export function PipelinePageClient() {
                     onSetClientMomentum={runSetClientMomentum}
                     hubFocusFileId={hubFocusFileId}
                     organizationId={activeOrganizationId ?? undefined}
-                    memberUserKey={preferencesAccountId}
+                    memberUserKey={memberUserKey}
                     onAddProject={onAddProjectFromClient}
                     onAddLoanFile={onAddLoanFromProject}
                     onFileDuplicated={selectFile}

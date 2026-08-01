@@ -10,19 +10,19 @@ export const premiumWorkspaceCanvasClass = cn(
   "-mx-1 rounded-dlc-md px-2.5 py-2 sm:px-3 sm:py-2.5",
 );
 
-/** Pure white card shell with sharper border and premium shadow lift on hover. */
+/** Pure white card shell with crisp border and premium shadow lift on hover. */
 export const premiumCardClassName =
-  "bg-white dark:bg-slate-800 rounded-dlc-md border border-gray-100 dark:border-gray-800 shadow-sm hover:shadow-md transition-shadow duration-dlc-standard ease-dlc-standard";
+  "bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow duration-dlc-standard ease-dlc-standard";
 
 /** Header/body divider inside premium cards. */
 export const premiumCardDividerClass =
   "border-gray-100 dark:border-gray-800";
 
 export const premiumCardHeaderPaddingClass =
-  "px-4 py-2 sm:px-5 sm:py-2.5";
+  "px-5 py-2.5 sm:px-6 sm:py-3";
 
 export const premiumCardBodyPaddingClass =
-  "px-4 py-3 sm:px-5 sm:py-3.5";
+  "px-5 py-4 sm:px-6 sm:py-5";
 
 /** Vertical rhythm between cards on a premium canvas (16px). */
 export const premiumSectionStackClass = cn(

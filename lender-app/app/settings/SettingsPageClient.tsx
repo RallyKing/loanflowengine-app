@@ -70,6 +70,7 @@ import { OrganizationBillingPanel } from "@/components/OrganizationBillingPanel"
 import { CustomDomainsSettingsPanel } from "@/components/CustomDomainsSettingsPanel";
 import { GettingStartedSettingsPanel } from "@/components/GettingStartedSettingsPanel";
 import { HelpSupportSettingsPanel } from "@/components/HelpSupportSettingsPanel";
+import { WebhookSettingsWorkspace } from "@/components/WebhookSettingsWorkspace";
 import { ProductKnowledgeAdminPanel } from "@/components/settings/ProductKnowledgeAdminPanel";
 import { SystemAdminSettingsPanel } from "@/components/system-admin/SystemAdminSettingsPanel";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
@@ -1533,6 +1534,14 @@ export function SettingsPageClient() {
                 </div>
               </div>
             )}
+          </SettingsSection>
+
+          <SettingsSection
+            id="webhooks"
+            title="Webhooks"
+            description="Register HTTPS endpoints for background SaaS event delivery. Use Send Test Ping to verify connectivity without blocking the UI."
+          >
+            <WebhookSettingsWorkspace />
           </SettingsSection>
         </div>
       </div>

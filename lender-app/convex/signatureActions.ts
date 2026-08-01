@@ -4,6 +4,8 @@ import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 
+type SendSigner = { name: string; email: string; orderIndex: number };
+
 export const deliverEnvelope = internalAction({
   args: { envelopeId: v.id("signatureEnvelopes") },
   handler: async (ctx, { envelopeId }) => {
@@ -62,14 +64,14 @@ export const deliverEnvelope = internalAction({
     if (payload.message) {
       fd.append("message", payload.message);
     }
-    payload.signers.forEach((s, i) => {
+    payload.signers.forEach((s: SendSigner, i: number) => {
       fd.append(`signers[${i}][email_address]`, s.email);
       fd.append(`signers[${i}][name]`, s.name);
     });
     if (payload.signingMode === "sequential") {
       fd.append(
         "signing_order",
-        JSON.stringify(payload.signers.map((s) => [s.email])),
+        JSON.stringify(payload.signers.map((s: SendSigner) => [s.email])),
       );
     }
 

@@ -22,6 +22,7 @@ export const SETTINGS_SECTION_IDS = [
   "performance",
   "data",
   "notifications",
+  "webhooks",
 ] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
@@ -155,6 +156,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     shortLabel: "Alerts",
     description: "In-app alerts, optional email, and @mention / deadline behavior.",
   },
+  {
+    id: "webhooks",
+    label: "Webhooks",
+    shortLabel: "Webhooks",
+    description:
+      "Register HTTPS endpoints for SaaS event routing (test ping, links, intake).",
+  },
 ] as const;
 
 /** Deep link into Settings, e.g. `/settings#workflow` */
@@ -222,7 +230,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategoryMeta[] = [
     label: "Integrations & portals",
     description:
       "Notifications, connectivity, data behavior, and device performance.",
-    sectionIds: ["notifications", "data", "performance"],
+    sectionIds: ["notifications", "webhooks", "data", "performance"],
   },
   {
     id: "systemAdministration",

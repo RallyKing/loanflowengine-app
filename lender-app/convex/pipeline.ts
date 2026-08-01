@@ -121,11 +121,21 @@ import { refreshPipelineGlobalSearchText } from "./globalSearchSync";
 import {
   detachLenderFromFile,
   findFileLenderEdge,
+  removeFileLenderEdge,
   resyncFileTeamEdgesFromPipeline,
   syncFileLenderEdgesFromPipeline,
 } from "./indexedGraphEdgeSync";
 import { deletePipelineGraph } from "./graphCleanup";
 import { appendPctFeeRecomputeForLoanChange } from "./pipelineFeeRecompute";
+import {
+  assignLenderBoardRole,
+  buildPipelineLenderBoardFields,
+  buildPipelineLenderRoleFields,
+  isLenderOnFileBoard,
+  removeLenderFromBoard,
+  resolvePipelineLenderBoard,
+  resolvePipelineLenderRoles,
+} from "./pipelineLenderRoles";
 
 function scheduleOrgPipelineWebhook(
   ctx: MutationCtx,
@@ -176,7 +186,21 @@ export const getDetail = query({
     const p = await ctx.db.get(id);
     if (!p) return null;
     await assertCanReadPipelineRow(ctx, p, memberUserKey);
+    const board = resolvePipelineLenderBoard(p);
     const resolved: Array<Doc<"lenders">> = [];
+    const primaryLender = board.primaryLenderId
+      ? await ctx.db.get(board.primaryLenderId)
+      : null;
+    const secondaryLenders: Array<Doc<"lenders">> = [];
+    for (const lid of board.secondaryLenderIds) {
+      const d = await ctx.db.get(lid);
+      if (d) secondaryLenders.push(d);
+    }
+    const consideringLenders: Array<Doc<"lenders">> = [];
+    for (const lid of board.consideringLenderIds) {
+      const d = await ctx.db.get(lid);
+      if (d) consideringLenders.push(d);
+    }
     for (const lid of p.lenders) {
       const d = await ctx.db.get(lid);
       if (d) resolved.push(d);
@@ -194,6 +218,15 @@ export const getDetail = query({
     return {
       pipeline: p,
       lenders: resolved,
+      primaryLenderId: board.primaryLenderId,
+      primaryLender: primaryLender ?? undefined,
+      secondaryLenderIds: board.secondaryLenderIds,
+      secondaryLenders,
+      consideringLenderIds: board.consideringLenderIds,
+      consideringLenders,
+      /** @deprecated Use `secondaryLenders`. */
+      supportingLenderIds: board.secondaryLenderIds,
+      supportingLenders: secondaryLenders,
       canMutateFile: viewerAccess.canMutate,
       viewerAccess,
       ownership,
@@ -457,11 +490,10 @@ export const listLight = query({
     const filtered = includeArchived
       ? rows
       : rows.filter((r) => r.archivedAt == null);
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
-    const scoped = god ? filtered : filterPipelineByOrgScope(filtered, organizationId);
+    const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
     const visible = await filterPipelineRowsForMember(
       ctx,
-      scoped,
+      orgScoped,
       organizationId,
       memberUserKey,
     );
@@ -736,11 +768,10 @@ export const listTablePreview = query({
       }
       return true;
     });
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
-    const scoped = god ? filtered : filterPipelineByOrgScope(filtered, organizationId);
+    const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
     const visible = await filterPipelineRowsForMember(
       ctx,
-      scoped,
+      orgScoped,
       organizationId,
       memberUserKey,
     );
@@ -2825,6 +2856,397 @@ export const attachLender = mutation({
 });
 
 /**
+ * Attach multiple lenders in one atomic patch — dedupes against existing
+ * `row.lenders` and skips ids already on the file.
+ */
+export const attachMultipleLenders = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    lenderIds: v.array(v.id("lenders")),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, { fileId, lenderIds, preferencesAccountId }) => {
+    console.log("[attachMultipleLenders] received", {
+      fileId,
+      lenderIds,
+      count: lenderIds.length,
+      preferencesAccountId: preferencesAccountId ?? null,
+    });
+    const row = await ctx.db.get(fileId);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+
+    const uniqueIncoming = [...new Set(lenderIds)];
+    if (uniqueIncoming.length === 0) {
+      return { id: fileId, lenders: row.lenders, attachedCount: 0 };
+    }
+
+    const existing = new Set(row.lenders);
+    const toAdd: Id<"lenders">[] = [];
+    const lenderDocs: Doc<"lenders">[] = [];
+
+    for (const lenderId of uniqueIncoming) {
+      if (existing.has(lenderId)) continue;
+      const lender = await ctx.db.get(lenderId);
+      if (!lender) throw new Error(`Lender not found: ${lenderId}`);
+      assertLenderAttachableToPipeline(lender, row);
+      toAdd.push(lenderId);
+      lenderDocs.push(lender);
+    }
+
+    if (toAdd.length === 0) {
+      return { id: fileId, lenders: row.lenders, attachedCount: 0 };
+    }
+
+    const lenders = [...row.lenders, ...toAdd];
+    const now = Date.now();
+    const lendersPre = {
+      lenders: row.lenders,
+      selectedLenderId: row.selectedLenderId,
+      selectedLenderSentAt: row.selectedLenderSentAt,
+    };
+
+    await ctx.db.patch(fileId, {
+      lenders,
+      createdAt: row.createdAt,
+      updatedAt: now,
+    });
+
+    const afterAttach = (await ctx.db.get(fileId))!;
+    await syncFileLenderEdgesFromPipeline(
+      ctx,
+      afterAttach,
+      preferencesAccountId,
+    );
+
+    const lendersPost = {
+      lenders: afterAttach.lenders,
+      selectedLenderId: afterAttach.selectedLenderId,
+      selectedLenderSentAt: afterAttach.selectedLenderSentAt,
+    };
+    const lendersUndoOk = undoJsonPairWithinLimit(lendersPre, lendersPost);
+
+    const summary =
+      toAdd.length === 1
+        ? lenderDocs[0]?.company
+          ? `Attached ${lenderDocs[0].company}`
+          : "Lender attached"
+        : `Attached ${toAdd.length} lenders`;
+
+    await appendPipelineFileActivity(ctx, {
+      fileId,
+      at: now,
+      kind: "lender_attach",
+      summary: clampActivitySummary(summary),
+      ...(lendersUndoOk
+        ? {
+            undoSpec: {
+              v: 1 as const,
+              kind: "lenders_state" as const,
+              pre: cloneJson(lendersPre),
+            },
+            expectPost: cloneJson(lendersPost),
+          }
+        : {}),
+    });
+
+    const after = await ctx.db.get(fileId);
+    if (after) {
+      for (const lenderId of toAdd) {
+        await runPipelineBlockAutomations({
+          ctx,
+          fileId,
+          existing: after,
+          now,
+          event: {
+            type: "lender_attached",
+            lenderId: String(lenderId),
+          },
+        });
+        await runUserSimpleWorkflows({
+          ctx,
+          accountId: preferencesAccountId,
+          fileId,
+          event: { type: "lender_attached", lenderId: String(lenderId) },
+          now,
+        });
+      }
+    }
+
+    return { id: fileId, lenders, attachedCount: toAdd.length };
+  },
+});
+
+/** Add a lender to the file shortlist (`consideringLenderIds`). */
+export const addLenderToConsideration = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    lenderId: v.id("lenders"),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, { fileId, lenderId, preferencesAccountId }) => {
+    const row = await ctx.db.get(fileId);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    const lender = await ctx.db.get(lenderId);
+    if (!lender) throw new Error("Lender not found");
+    assertLenderAttachableToPipeline(lender, row);
+
+    const board = resolvePipelineLenderBoard(row);
+    if (isLenderOnFileBoard(board, lenderId)) {
+      return {
+        id: fileId,
+        ...buildPipelineLenderBoardFields(
+          board.primaryLenderId,
+          board.secondaryLenderIds,
+          board.consideringLenderIds,
+        ),
+      };
+    }
+
+    const fields = assignLenderBoardRole(board, lenderId, "considering");
+    const now = Date.now();
+    await ctx.db.patch(fileId, {
+      ...fields,
+      createdAt: row.createdAt,
+      updatedAt: now,
+    });
+    const after = (await ctx.db.get(fileId))!;
+    await syncFileLenderEdgesFromPipeline(ctx, after, preferencesAccountId);
+    await runPipelineBlockAutomations({
+      ctx,
+      fileId,
+      existing: after,
+      now,
+      event: { type: "lender_attached", lenderId: String(lenderId) },
+    });
+    return { id: fileId, ...fields };
+  },
+});
+
+const lenderBoardRoleArg = v.union(
+  v.literal("primary"),
+  v.literal("secondary"),
+  v.literal("considering"),
+);
+
+/** Assign a lender on the file to primary, secondary, or considering. */
+export const setLenderBoardRole = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    lenderId: v.id("lenders"),
+    role: lenderBoardRoleArg,
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, { fileId, lenderId, role, preferencesAccountId }) => {
+    const row = await ctx.db.get(fileId);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    const lender = await ctx.db.get(lenderId);
+    if (!lender) throw new Error("Lender not found");
+    assertLenderAttachableToPipeline(lender, row);
+
+    const board = resolvePipelineLenderBoard(row);
+    const fields = assignLenderBoardRole(board, lenderId, role);
+
+    const now = Date.now();
+    await ctx.db.patch(fileId, {
+      ...fields,
+      createdAt: row.createdAt,
+      updatedAt: now,
+      ...(fields.primaryLenderId !== row.selectedLenderId &&
+      row.selectedLenderSentAt != null &&
+      fields.primaryLenderId !== lenderId
+        ? { selectedLenderSentAt: undefined }
+        : {}),
+    });
+    const after = (await ctx.db.get(fileId))!;
+    await syncFileLenderEdgesFromPipeline(ctx, after, preferencesAccountId);
+    if (!isLenderOnFileBoard(board, lenderId)) {
+      await runPipelineBlockAutomations({
+        ctx,
+        fileId,
+        existing: after,
+        now,
+        event: { type: "lender_attached", lenderId: String(lenderId) },
+      });
+    }
+    return { id: fileId, ...fields };
+  },
+});
+
+/** Soft-remove a lender from the file — does not mark them rejected/declined. */
+export const removeLenderFromFile = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    lenderId: v.id("lenders"),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, { fileId, lenderId, preferencesAccountId }) => {
+    const row = await ctx.db.get(fileId);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+
+    const board = resolvePipelineLenderBoard(row);
+    if (!isLenderOnFileBoard(board, lenderId)) {
+      return {
+        id: fileId,
+        ...buildPipelineLenderBoardFields(
+          board.primaryLenderId,
+          board.secondaryLenderIds,
+          board.consideringLenderIds,
+        ),
+      };
+    }
+
+    const fields = removeLenderFromBoard(board, lenderId);
+    const now = Date.now();
+    await ctx.db.patch(fileId, {
+      ...fields,
+      createdAt: row.createdAt,
+      updatedAt: now,
+      ...(board.primaryLenderId === lenderId ? { selectedLenderSentAt: undefined } : {}),
+    });
+    const after = (await ctx.db.get(fileId))!;
+    await syncFileLenderEdgesFromPipeline(ctx, after, preferencesAccountId);
+    await removeFileLenderEdge(ctx, fileId, lenderId);
+    return { id: fileId, ...fields };
+  },
+});
+
+/** @deprecated Use `setLenderBoardRole` with role `"primary"`. */
+export const setPrimaryLender = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    lenderId: v.union(v.id("lenders"), v.null()),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, { fileId, lenderId, preferencesAccountId }) => {
+    const row = await ctx.db.get(fileId);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    const board = resolvePipelineLenderBoard(row);
+
+    let fields;
+    if (lenderId === null) {
+      if (!board.primaryLenderId) {
+        fields = buildPipelineLenderBoardFields(
+          undefined,
+          board.secondaryLenderIds,
+          board.consideringLenderIds,
+        );
+      } else {
+        const prevPrimary = board.primaryLenderId;
+        fields = buildPipelineLenderBoardFields(
+          undefined,
+          board.secondaryLenderIds,
+          [
+            prevPrimary,
+            ...board.consideringLenderIds.filter((id) => id !== prevPrimary),
+          ],
+        );
+      }
+    } else {
+      fields = assignLenderBoardRole(board, lenderId, "primary");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(fileId, {
+      ...fields,
+      createdAt: row.createdAt,
+      updatedAt: now,
+      ...(lenderId === null && board.primaryLenderId === row.selectedLenderId
+        ? { selectedLenderSentAt: undefined }
+        : {}),
+    });
+    const after = (await ctx.db.get(fileId))!;
+    await syncFileLenderEdgesFromPipeline(ctx, after, preferencesAccountId);
+    if (lenderId) {
+      await runPipelineBlockAutomations({
+        ctx,
+        fileId,
+        existing: after,
+        now,
+        event: { type: "lender_attached", lenderId: String(lenderId) },
+      });
+    }
+    return { id: fileId, ...fields };
+  },
+});
+
+/** @deprecated Use `setLenderBoardRole` with role `"secondary"`. */
+export const addSupportingLender = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    lenderId: v.id("lenders"),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, { fileId, lenderId, preferencesAccountId }) => {
+    const row = await ctx.db.get(fileId);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    const lender = await ctx.db.get(lenderId);
+    if (!lender) throw new Error("Lender not found");
+    assertLenderAttachableToPipeline(lender, row);
+
+    const board = resolvePipelineLenderBoard(row);
+    const fields = assignLenderBoardRole(board, lenderId, "secondary");
+    const now = Date.now();
+    await ctx.db.patch(fileId, {
+      ...fields,
+      createdAt: row.createdAt,
+      updatedAt: now,
+    });
+    const after = (await ctx.db.get(fileId))!;
+    await syncFileLenderEdgesFromPipeline(ctx, after, preferencesAccountId);
+    await runPipelineBlockAutomations({
+      ctx,
+      fileId,
+      existing: after,
+      now,
+      event: { type: "lender_attached", lenderId: String(lenderId) },
+    });
+    return { id: fileId, ...fields };
+  },
+});
+
+/** @deprecated Use `removeLenderFromFile`. */
+export const removeSupportingLender = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    lenderId: v.id("lenders"),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, { fileId, lenderId, preferencesAccountId }) => {
+    const row = await ctx.db.get(fileId);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    const board = resolvePipelineLenderBoard(row);
+    if (!board.secondaryLenderIds.includes(lenderId)) {
+      return {
+        id: fileId,
+        ...buildPipelineLenderBoardFields(
+          board.primaryLenderId,
+          board.secondaryLenderIds,
+          board.consideringLenderIds,
+        ),
+      };
+    }
+    const fields = removeLenderFromBoard(board, lenderId);
+    const now = Date.now();
+    await ctx.db.patch(fileId, {
+      ...fields,
+      createdAt: row.createdAt,
+      updatedAt: now,
+    });
+    const after = (await ctx.db.get(fileId))!;
+    await syncFileLenderEdgesFromPipeline(ctx, after, preferencesAccountId);
+    await removeFileLenderEdge(ctx, fileId, lenderId);
+    return { id: fileId, ...fields };
+  },
+});
+
+/**
  * Remove a lender from the `lenders` list on a pipeline file. No-op if the
  * lender is not currently linked. If the detached lender was the chosen
  * lender (`selectedLenderId`), the selection is cleared so the file never
@@ -3250,8 +3672,11 @@ export const resetFileDrawerLayoutToTemplate = mutation({
 });
 
 export const migrateLegacyStatuses = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { memberUserKey: v.string() },
+  handler: async (ctx, { memberUserKey }) => {
+    const { sessionKeyIsGlobalAdmin } = await import("./organizationAccess");
+    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
+    if (!god) throw new Error("Unauthorized");
     const rows = await ctx.db.query("pipeline").collect();
     let migrated = 0;
     for (const r of rows) {

@@ -264,7 +264,7 @@ export function CollapsibleBlock({
                 id={headingId}
                 className={cn(
                   "truncate text-xs font-semibold uppercase tracking-wider",
-                  danger ? "text-destructive" : "text-foreground",
+                  danger ? "text-destructive" : "text-gray-900",
                   titleClassName,
                 )}
               >
@@ -286,7 +286,7 @@ export function CollapsibleBlock({
               <span className="hidden sm:inline-flex">{statusBadge}</span>
               {!open ? (
                 <span
-                  className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline"
+                  className="hidden min-w-0 truncate text-xs text-gray-500 sm:inline"
                   data-testid={id ? `${id}-summary` : undefined}
                 >
                   {summary}

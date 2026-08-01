@@ -45,6 +45,7 @@ import { cn } from "@/lib/cn";
 import { LiveDataPausedNotice } from "@/components/LiveDataPausedNotice";
 import { SettingsLink } from "@/components/SettingsLink";
 import { useLiveConnection } from "@/lib/useLiveConnection";
+import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 interface FormState {
@@ -180,15 +181,19 @@ export function ScenarioSearch() {
     "idle" | "ok" | "err"
   >("idle");
   const { canUseHub, browserOnline } = useLiveConnection();
+  const orgScope = useOrgConvexQueryArgs();
 
   const scenarioArgs = useMemo(
-    () => (submitted ? formToScenario(submitted) : null),
-    [submitted]
+    () =>
+      submitted && orgScope
+        ? { ...formToScenario(submitted), ...orgScope }
+        : null,
+    [submitted, orgScope],
   );
 
   const data = useQuery(
     api.scenario.matchScenario,
-    scenarioArgs && hasAnyCriteria(scenarioArgs) ? scenarioArgs : "skip"
+    scenarioArgs && hasAnyCriteria(scenarioArgs) ? scenarioArgs : "skip",
   ) as
     | {
         totalConsidered: number;

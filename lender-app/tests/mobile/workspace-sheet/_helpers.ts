@@ -52,7 +52,7 @@ export async function openAnyPipelineFileWorkspace(
   if (await isPipelineHubDegraded(page).isVisible().catch(() => false)) {
     testInfo.skip(
       true,
-      "Pipeline hub unavailable (Convex/org scope). Set a valid org or fix organizationPipelineStages.",
+      "Pipeline hub unavailable (Convex/org scope). Retry when Convex is healthy.",
     );
     return;
   }

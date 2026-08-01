@@ -20,7 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useConvex } from "convex/react";
 import { Button } from "@/components/ui/Button";
 import { OverlayShell } from "@/components/ui/OverlayShell";
@@ -39,6 +39,8 @@ import {
 } from "@/lib/library/pdfCompiler";
 import { uploadFileToVault, type VaultUploadMutations } from "@/lib/library/uploadFileToVault";
 import { pdfBytesToFile } from "@/lib/library/pdfManipulation";
+import { compileVaultPackageZip } from "@/lib/library/compileVaultPackageZip";
+import { buildVaultDocumentZipPath } from "@/lib/library/vaultZipPaths";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 import {
   BookOpen,
@@ -55,6 +57,13 @@ import {
 const COMPILED_PACKAGES_FOLDER = "Compiled Packages";
 const ROOT_KEY = "__root__";
 
+export type CompilerFileTask = Pick<
+  Doc<"documentVaultFileTasks">,
+  "_id" | "title" | "status" | "isArchived"
+>;
+
+export type CompilerOutputFormat = "pdf" | "zip";
+
 export type DealBibleCompilerDocument = {
   _id: Id<"libraryDocuments">;
   title: string;
@@ -62,6 +71,7 @@ export type DealBibleCompilerDocument = {
   latestFileName?: string;
   latestContentType?: string;
   folderId?: Id<"documentFolders">;
+  fileTaskId?: Id<"documentVaultFileTasks">;
   linkScope: string;
   latestVersionNumber: number;
 };
@@ -71,15 +81,19 @@ export type DealBibleStagingItem = {
   documentId: Id<"libraryDocuments">;
   versionId: Id<"libraryDocumentVersions">;
   title: string;
+  folderId?: Id<"documentFolders">;
+  fileName: string;
 };
 
 export type DealBibleCompilerModalProps = {
   open: boolean;
   onClose: () => void;
   pipelineFileId: Id<"pipeline">;
+  organizationId?: Id<"organizations">;
   memberUserKey?: string;
   packageLabel: string;
   folders: DocumentFolderRow[] | undefined;
+  fileTasks?: CompilerFileTask[];
   documents: DealBibleCompilerDocument[];
   vaultUploadMutations: VaultUploadMutations;
   onError: (message: string) => void;
@@ -277,15 +291,40 @@ export function DealBibleCompilerModal({
   open,
   onClose,
   pipelineFileId,
+  organizationId,
   memberUserKey,
   packageLabel,
   folders,
+  fileTasks,
   documents,
   vaultUploadMutations,
   onError,
 }: DealBibleCompilerModalProps) {
   const convex = useConvex();
   const createFolder = useMutation(api.documentFolders.createFolder);
+  const recordPackageCompiled = useMutation(api.webhooks.recordBrokerDealPackageCompiled);
+
+  const notifyPackageCompiled = useCallback(
+    (documentCount: number) => {
+      if (!organizationId) return;
+      void recordPackageCompiled({
+        organizationId,
+        pipelineFileId,
+        packageLabel,
+        documentCount,
+        memberUserKey,
+      }).catch(() => {
+        /* webhook fan-out must not block compile UX */
+      });
+    },
+    [
+      memberUserKey,
+      organizationId,
+      packageLabel,
+      pipelineFileId,
+      recordPackageCompiled,
+    ],
+  );
 
   const [staging, setStaging] = useState<DealBibleStagingItem[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(
@@ -298,6 +337,9 @@ export function DealBibleCompilerModal({
     null,
   );
   const [compiledBytes, setCompiledBytes] = useState<Uint8Array | null>(null);
+  const [compiledZipBlob, setCompiledZipBlob] = useState<Blob | null>(null);
+  const [outputFormat, setOutputFormat] =
+    useState<CompilerOutputFormat>("pdf");
 
   const compilableDocs = useMemo(
     () =>
@@ -344,15 +386,19 @@ export function DealBibleCompilerModal({
           documentId: doc._id,
           versionId: doc.latestVersionId!,
           title: doc.title,
+          folderId: doc.folderId,
+          fileName: doc.latestFileName ?? doc.title,
         },
       ];
     });
     setCompiledBytes(null);
+    setCompiledZipBlob(null);
   }, []);
 
   const removeDocFromStaging = useCallback((documentId: Id<"libraryDocuments">) => {
     setStaging((prev) => prev.filter((p) => p.documentId !== documentId));
     setCompiledBytes(null);
+    setCompiledZipBlob(null);
   }, []);
 
   const onToggleDocument = useCallback(
@@ -379,6 +425,8 @@ export function DealBibleCompilerModal({
               documentId: doc._id,
               versionId: doc.latestVersionId,
               title: doc.title,
+              folderId: doc.folderId,
+              fileName: doc.latestFileName ?? doc.title,
             });
           }
           return next;
@@ -390,8 +438,37 @@ export function DealBibleCompilerModal({
         );
       }
       setCompiledBytes(null);
+      setCompiledZipBlob(null);
     },
     [docsByFolder, folders],
+  );
+
+  const activeFileTasks = useMemo(
+    () => (fileTasks ?? []).filter((t) => !t.isArchived),
+    [fileTasks],
+  );
+
+  const docsForTask = useCallback(
+    (taskId: Id<"documentVaultFileTasks">) =>
+      compilableDocs.filter((d) => d.fileTaskId === taskId),
+    [compilableDocs],
+  );
+
+  const onToggleFileTask = useCallback(
+    (taskId: Id<"documentVaultFileTasks">, checked: boolean) => {
+      const docs = docsForTask(taskId);
+      if (checked) {
+        for (const doc of docs) addDocToStaging(doc);
+      } else {
+        const removeIds = new Set(docs.map((d) => String(d._id)));
+        setStaging((prev) =>
+          prev.filter((p) => !removeIds.has(String(p.documentId))),
+        );
+        setCompiledBytes(null);
+        setCompiledZipBlob(null);
+      }
+    },
+    [addDocToStaging, docsForTask],
   );
 
   const sensors = useSensors(
@@ -411,6 +488,46 @@ export function DealBibleCompilerModal({
       return arrayMove(prev, oldIndex, newIndex);
     });
     setCompiledBytes(null);
+    setCompiledZipBlob(null);
+  };
+
+  const runCompileZip = async (): Promise<Blob> => {
+    if (!memberUserKey || staging.length === 0) {
+      throw new Error("Add documents to the package first.");
+    }
+    setCompiling(true);
+    setCompiledZipBlob(null);
+    try {
+      const items = [];
+      for (const row of staging) {
+        const urlResult = await convex.query(api.libraryDocuments.getVersionUrl, {
+          documentId: row.documentId,
+          versionId: row.versionId,
+          memberUserKey,
+        });
+        if (urlResult.status !== "ok" || !urlResult.url) {
+          throw new Error(`Could not load ${row.title}`);
+        }
+        const zipPath = buildVaultDocumentZipPath(
+          folders ?? [],
+          row.folderId,
+          row.fileName,
+        );
+        items.push({
+          documentId: row.documentId,
+          versionId: row.versionId,
+          fileName: row.fileName,
+          url: urlResult.url,
+          zipPath,
+        });
+      }
+      const blob = await compileVaultPackageZip(items);
+      setCompiledZipBlob(blob);
+      notifyPackageCompiled(staging.length);
+      return blob;
+    } finally {
+      setCompiling(false);
+    }
   };
 
   const runCompile = async (): Promise<Uint8Array> => {
@@ -449,6 +566,7 @@ export function DealBibleCompilerModal({
         onProgress: setProgress,
       });
       setCompiledBytes(bytes);
+      notifyPackageCompiled(staging.length);
       return bytes;
     } finally {
       setCompiling(false);
@@ -456,6 +574,12 @@ export function DealBibleCompilerModal({
   };
 
   const handleCompile = () => {
+    if (outputFormat === "zip") {
+      void runCompileZip().catch((e) =>
+        onError(e instanceof Error ? e.message : String(e)),
+      );
+      return;
+    }
     void runCompile().catch((e) =>
       onError(e instanceof Error ? e.message : String(e)),
     );
@@ -463,6 +587,20 @@ export function DealBibleCompilerModal({
 
   const handleDownload = async () => {
     try {
+      if (outputFormat === "zip") {
+        const blob = compiledZipBlob ?? (await runCompileZip());
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = href;
+        a.download = `${packageLabel.replace(/[^\w.-]+/g, "_")}-package.zip`;
+        a.click();
+        URL.revokeObjectURL(href);
+        showOperationalToast({
+          title: "ZIP download started",
+          variant: "success",
+        });
+        return;
+      }
       const bytes = compiledBytes ?? (await runCompile());
       downloadDealBiblePdf(bytes, dealBibleFileName(packageLabel));
       showOperationalToast({
@@ -491,19 +629,34 @@ export function DealBibleCompilerModal({
     if (!memberUserKey) return;
     setSaving(true);
     try {
-      const bytes = compiledBytes ?? (await runCompile());
       const folderId = await resolveCompiledPackagesFolder();
-      const fileName = dealBibleFileName(packageLabel);
-      const file = pdfBytesToFile(bytes, fileName);
-      const title = `Deal Bible — ${new Date().toLocaleDateString()}`;
-      await uploadFileToVault({
-        file,
-        proof: { kind: "pipeline", pipelineFileId },
-        memberUserKey,
-        title,
-        folderId,
-        mutations: vaultUploadMutations,
-      });
+      if (outputFormat === "zip") {
+        const blob = compiledZipBlob ?? (await runCompileZip());
+        const fileName = `${packageLabel.replace(/[^\w.-]+/g, "_")}-package.zip`;
+        const file = new File([blob], fileName, { type: "application/zip" });
+        const title = `Deal Package ZIP — ${new Date().toLocaleDateString()}`;
+        await uploadFileToVault({
+          file,
+          proof: { kind: "pipeline", pipelineFileId },
+          memberUserKey,
+          title,
+          folderId,
+          mutations: vaultUploadMutations,
+        });
+      } else {
+        const bytes = compiledBytes ?? (await runCompile());
+        const fileName = dealBibleFileName(packageLabel);
+        const file = pdfBytesToFile(bytes, fileName);
+        const title = `Deal Bible — ${new Date().toLocaleDateString()}`;
+        await uploadFileToVault({
+          file,
+          proof: { kind: "pipeline", pipelineFileId },
+          memberUserKey,
+          title,
+          folderId,
+          mutations: vaultUploadMutations,
+        });
+      }
       showOperationalToast({
         title: "Saved to vault",
         description: `Placed in ${COMPILED_PACKAGES_FOLDER}`,
@@ -550,10 +703,27 @@ export function DealBibleCompilerModal({
               Compile Deal Package
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Select sources, reorder the staging list, then build a unified PDF
-              with cover page and table of contents.
+              Select tasks, folders, and files. Build a merged PDF or a ZIP that
+              preserves nested folder paths.
             </p>
           </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span>Output</span>
+              <select
+                className="h-8 rounded-dlc-sm border border-border/70 bg-background px-2 text-xs"
+                value={outputFormat}
+                onChange={(e) => {
+                  setOutputFormat(e.target.value as CompilerOutputFormat);
+                  setCompiledBytes(null);
+                  setCompiledZipBlob(null);
+                }}
+                data-testid="deal-compiler-output-format"
+              >
+                <option value="pdf">Merged PDF</option>
+                <option value="zip">ZIP (folder tree)</option>
+              </select>
+            </label>
           <Button
             type="button"
             variant="ghost"
@@ -564,6 +734,7 @@ export function DealBibleCompilerModal({
           >
             <X className="h-4 w-4" />
           </Button>
+          </div>
         </header>
 
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 md:grid-cols-2 md:divide-x md:divide-border/60">
@@ -574,6 +745,39 @@ export function DealBibleCompilerModal({
             <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Source
             </h3>
+            {activeFileTasks.length > 0 ? (
+              <div className="mb-2 rounded-dlc-md border border-border/50 bg-dlc-surface-high/30 p-2">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  File tasks
+                </p>
+                <ul className="space-y-1">
+                  {activeFileTasks.map((task) => {
+                    const taskDocs = docsForTask(task._id);
+                    const allChecked =
+                      taskDocs.length > 0 &&
+                      taskDocs.every((d) => stagingDocIds.has(String(d._id)));
+                    return (
+                      <li key={task._id}>
+                        <label className="flex cursor-pointer items-center gap-1.5 py-0.5 text-xs">
+                          <OperationalCheckbox
+                            checked={allChecked}
+                            disabled={taskDocs.length === 0}
+                            onChange={(e) =>
+                              onToggleFileTask(task._id, e.target.checked)
+                            }
+                            aria-label={`Select task ${task.title}`}
+                          />
+                          <span className="truncate font-medium">{task.title}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            ({taskDocs.length})
+                          </span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-dlc-md border border-border/60 bg-dlc-surface-high/40 p-2">
               {folders === undefined ? (
                 <div className="space-y-2 p-2">
@@ -708,7 +912,7 @@ export function DealBibleCompilerModal({
                 {progress.message ?? progress.phase} ({progress.current}/
                 {progress.total})
               </span>
-            ) : compiledBytes ? (
+            ) : compiledBytes || compiledZipBlob ? (
               <span className="text-emerald-600 dark:text-emerald-400">
                 Package ready
               </span>
@@ -730,6 +934,8 @@ export function DealBibleCompilerModal({
                   <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
                   Compiling…
                 </>
+              ) : outputFormat === "zip" ? (
+                "Compile ZIP"
               ) : (
                 "Compile PDF"
               )}
@@ -742,7 +948,7 @@ export function DealBibleCompilerModal({
               onClick={() => void handleDownload()}
               data-testid="deal-bible-download"
             >
-              Download PDF
+              {outputFormat === "zip" ? "Download ZIP" : "Download PDF"}
             </Button>
             <Button
               type="button"

@@ -8,6 +8,7 @@ import {
   mutation,
   query,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -50,7 +51,34 @@ import {
   purgeLenderRelationsBeforeDelete,
   repointMergedLenderId,
 } from "./graphCleanup";
-import { assertOrgScopeArgs, sessionKeyIsGlobalAdmin } from "./organizationAccess";
+import { assertOrgScopeArgs, resolveMemberUserKey } from "./organizationAccess";
+import { callerHasUnrestrictedOrgDataAccess } from "./viewerOrgAccess";
+import { assertOrgPermission } from "./organizationRbac";
+
+async function assertLenderMutationAuth(
+  ctx: MutationCtx | QueryCtx,
+  organizationId: Id<"organizations">,
+  memberUserKey: string | undefined,
+  permission: "lenders.edit" | "lenders.manage" = "lenders.edit",
+): Promise<void> {
+  await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
+  const key = await resolveMemberUserKey(ctx, memberUserKey);
+  await assertOrgPermission(ctx, organizationId, key, permission);
+}
+
+async function assertCanTouchLender(
+  ctx: MutationCtx,
+  row: Doc<"lenders">,
+  organizationId: Id<"organizations">,
+  memberUserKey: string | undefined,
+  permission: "lenders.edit" | "lenders.manage" = "lenders.edit",
+): Promise<void> {
+  await assertLenderMutationAuth(ctx, organizationId, memberUserKey, permission);
+  const god = await callerHasUnrestrictedOrgDataAccess(ctx, memberUserKey);
+  if (!god && row.organizationId && row.organizationId !== organizationId) {
+    throw new Error("Lender belongs to a different organization.");
+  }
+}
 
 function lenderVisibleInOrg(
   row: Doc<"lenders">,
@@ -816,7 +844,7 @@ export const list = query({
   handler: async (ctx, args) => {
     const { organizationId, memberUserKey, limit } = args;
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
+    const god = await callerHasUnrestrictedOrgDataAccess(ctx, memberUserKey);
     /** Default / max batch for browse (Convex payload limits — keep in sync with LenderTable + export). */
     const cap = Math.min(limit ?? 10_000, 10_000);
     const f = listArgsToFilterBundle(args);
@@ -892,7 +920,7 @@ export const listBrowsePaginated = query({
   handler: async (ctx, args) => {
     const { paginationOpts, organizationId, memberUserKey, limit: _l, ...listArgs } = args;
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
+    const god = await callerHasUnrestrictedOrgDataAccess(ctx, memberUserKey);
     const f = listArgsToFilterBundle(listArgs);
     if (needsFullScan(f)) {
       throw new Error(
@@ -948,7 +976,7 @@ export const get = query({
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
     const row = await ctx.db.get(id);
     if (!row) return null;
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
+    const god = await callerHasUnrestrictedOrgDataAccess(ctx, memberUserKey);
     if (!god && !lenderVisibleInOrg(row, organizationId)) return null;
     return row;
   },
@@ -961,7 +989,7 @@ export const stats = query({
   },
   handler: async (ctx, args) => {
     await assertOrgScopeArgs(ctx, args.organizationId, args.memberUserKey);
-    const god = await sessionKeyIsGlobalAdmin(ctx, args.memberUserKey);
+    const god = await callerHasUnrestrictedOrgDataAccess(ctx, args.memberUserKey);
     const rows = (await ctx.db.query("lenders").collect()).filter((r) =>
       god || lenderVisibleInOrg(r, args.organizationId),
     );
@@ -1028,8 +1056,13 @@ export async function insertDemoWorkspaceLender(
  * `run` tool to add lenders from a chat prompt.
  */
 export const upsert = mutation({
-  args: lenderInput,
-  handler: async (ctx, args) => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    ...lenderInput,
+  },
+  handler: async (ctx, { organizationId, memberUserKey, ...args }) => {
+    await assertLenderMutationAuth(ctx, organizationId, memberUserKey, "lenders.edit");
     if (!args.company || !args.company.trim()) {
       throw new Error("Company is required");
     }
@@ -1092,10 +1125,16 @@ export const upsert = mutation({
 });
 
 export const update = mutation({
-  args: { id: v.id("lenders"), ...lenderInput },
-  handler: async (ctx, { id, ...rest }) => {
+  args: {
+    id: v.id("lenders"),
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    ...lenderInput,
+  },
+  handler: async (ctx, { id, organizationId, memberUserKey, ...rest }) => {
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error("Lender not found");
+    await assertCanTouchLender(ctx, existing, organizationId, memberUserKey, "lenders.edit");
     const now = Date.now();
     const doc = buildDoc(rest as Record<string, unknown>, now);
     const before = existing;
@@ -1121,10 +1160,16 @@ export const update = mutation({
 
 /** Update only `notes` + search text (e.g. profile notes from the drawer). */
 export const setNotes = mutation({
-  args: { id: v.id("lenders"), notes: v.string() },
-  handler: async (ctx, { id, notes: notesRaw }) => {
+  args: {
+    id: v.id("lenders"),
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    notes: v.string(),
+  },
+  handler: async (ctx, { id, organizationId, memberUserKey, notes: notesRaw }) => {
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error("Lender not found");
+    await assertCanTouchLender(ctx, existing, organizationId, memberUserKey, "lenders.edit");
     const before = existing;
     const now = Date.now();
     const trimmed = notesRaw.trim();
@@ -1149,10 +1194,15 @@ export const setNotes = mutation({
 });
 
 export const remove = mutation({
-  args: { id: v.id("lenders") },
-  handler: async (ctx, { id }) => {
+  args: {
+    id: v.id("lenders"),
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+  },
+  handler: async (ctx, { id, organizationId, memberUserKey }) => {
     const before = await ctx.db.get(id);
     if (!before) return { ok: false as const };
+    await assertCanTouchLender(ctx, before, organizationId, memberUserKey, "lenders.manage");
     await appendLenderFeed(
       ctx,
       before,
@@ -1176,8 +1226,10 @@ export const mergeLenders = mutation({
   args: {
     keepId: v.id("lenders"),
     removeId: v.id("lenders"),
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
   },
-  handler: async (ctx, { keepId, removeId }) => {
+  handler: async (ctx, { keepId, removeId, organizationId, memberUserKey }) => {
     if (keepId === removeId) {
       throw new Error("Cannot merge a lender with itself");
     }
@@ -1185,6 +1237,8 @@ export const mergeLenders = mutation({
     const remove = await ctx.db.get(removeId);
     if (!keep) throw new Error("Lender to keep was not found");
     if (!remove) throw new Error("Lender to remove was not found");
+    await assertCanTouchLender(ctx, keep, organizationId, memberUserKey, "lenders.manage");
+    await assertCanTouchLender(ctx, remove, organizationId, memberUserKey, "lenders.manage");
     const now = Date.now();
 
     const repointCandRows = await ctx.db
@@ -1231,12 +1285,15 @@ export const mergeLenders = mutation({
 export const rate = mutation({
   args: {
     id: v.id("lenders"),
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
     rating: v.number(),
     ratingNotes: v.optional(v.string()),
   },
-  handler: async (ctx, { id, rating, ratingNotes }) => {
+  handler: async (ctx, { id, organizationId, memberUserKey, rating, ratingNotes }) => {
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error("Lender not found");
+    await assertCanTouchLender(ctx, existing, organizationId, memberUserKey, "lenders.edit");
     const clamped = clampRating(rating) ?? 0;
     const before = existing;
     const nextNotes =
@@ -1273,9 +1330,12 @@ export const rate = mutation({
  */
 export const bulkUpsert = mutation({
   args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
     records: v.array(v.object(lenderInput)),
   },
-  handler: async (ctx, { records }) => {
+  handler: async (ctx, { organizationId, memberUserKey, records }) => {
+    await assertLenderMutationAuth(ctx, organizationId, memberUserKey, "lenders.manage");
     let inserted = 0;
     let updated = 0;
     const now = Date.now();
@@ -1323,8 +1383,13 @@ export const bulkUpsert = mutation({
 });
 
 export const wipeAll = mutation({
-  args: { confirm: v.literal("YES-DELETE-EVERYTHING") },
-  handler: async (ctx) => {
+  args: {
+    confirm: v.literal("YES-DELETE-EVERYTHING"),
+    memberUserKey: v.string(),
+  },
+  handler: async (ctx, { memberUserKey }) => {
+    const god = await callerHasUnrestrictedOrgDataAccess(ctx, memberUserKey);
+    if (!god) throw new Error("Unauthorized");
     const st = await getLenderStatsSingleton(ctx);
     if (st) await ctx.db.delete(st._id);
     const fileRows = await deleteAllLenderAttachments(ctx);
@@ -1344,8 +1409,13 @@ export const wipeAll = mutation({
  * so very large databases don't timeout.
  */
 export const normalizeAll = mutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { organizationId, memberUserKey, limit }) => {
+    await assertLenderMutationAuth(ctx, organizationId, memberUserKey, "lenders.manage");
     const all = await ctx.db.query("lenders").collect();
     const cap = Math.min(limit ?? all.length, all.length);
     let changed = 0;
@@ -1449,5 +1519,92 @@ export const rebuildLenderSearchText = mutation({
       isDone,
       continueCursor: isDone ? null : continueCursor,
     };
+  },
+});
+
+/**
+ * Operator/CLI upsert — gated by DATA_MIGRATION_ADMIN_SECRET on the Convex deployment.
+ * Uses APP_AUTH_ORGANIZATION_ID + APP_AUTH_USER_KEY from Convex env (not client args).
+ */
+export const operatorUpsert = mutation({
+  args: {
+    operatorSecret: v.string(),
+    ...lenderInput,
+  },
+  handler: async (ctx, { operatorSecret, ...args }) => {
+    const expected =
+      process.env.DATA_MIGRATION_ADMIN_SECRET?.trim() ||
+      process.env.ORG_INTEGRITY_ADMIN_SECRET?.trim();
+    if (!expected || operatorSecret.trim() !== expected) {
+      throw new Error("Unauthorized");
+    }
+    const organizationId = process.env.APP_AUTH_ORGANIZATION_ID?.trim() as
+      | Id<"organizations">
+      | undefined;
+    const memberUserKey = process.env.APP_AUTH_USER_KEY?.trim();
+    if (!organizationId || !memberUserKey) {
+      throw new Error(
+        "APP_AUTH_ORGANIZATION_ID and APP_AUTH_USER_KEY must be set on Convex for operator upsert.",
+      );
+    }
+    await assertLenderMutationAuth(ctx, organizationId, memberUserKey, "lenders.edit");
+    if (!args.company || !args.company.trim()) {
+      throw new Error("Company is required");
+    }
+    const now = Date.now();
+    const doc = buildDoc(args as Record<string, unknown>, now);
+
+    let existing: Doc<"lenders"> | null = null;
+    if (doc.emailKey) {
+      existing = await ctx.db
+        .query("lenders")
+        .withIndex("by_company_email", (q) =>
+          q.eq("companyKey", doc.companyKey).eq("emailKey", doc.emailKey),
+        )
+        .first();
+    }
+    if (!existing && doc.contactKey) {
+      existing = await ctx.db
+        .query("lenders")
+        .withIndex("by_company_contact", (q) =>
+          q.eq("companyKey", doc.companyKey).eq("contactKey", doc.contactKey),
+        )
+        .first();
+    }
+
+    if (existing) {
+      const before = existing;
+      const patch: Partial<typeof doc> = {
+        ...doc,
+        createdAt: existing.createdAt,
+        updatedAt: now,
+        enrichedAt: existing.enrichedAt ?? 0,
+      };
+      await ctx.db.patch(existing._id, patch);
+      const after = await ctx.db.get(existing._id);
+      if (after) {
+        await applyLenderWrite(ctx, before, after);
+        await appendLenderFeed(
+          ctx,
+          after,
+          "lender_updated",
+          `Updated lender “${after.company.trim() || "Lender"}”`,
+        );
+      }
+      return { action: "updated" as const, id: existing._id };
+    }
+
+    const id = await ctx.db.insert("lenders", doc);
+    const inserted = await ctx.db.get(id);
+    if (inserted) {
+      await applyLenderWrite(ctx, null, inserted);
+      await appendLenderFeed(
+        ctx,
+        inserted,
+        "lender_created",
+        `Added lender “${inserted.company.trim() || "Lender"}”`,
+      );
+    }
+    return { action: "inserted" as const, id };
   },
 });

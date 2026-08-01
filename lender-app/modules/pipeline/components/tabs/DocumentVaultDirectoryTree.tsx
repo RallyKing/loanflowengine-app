@@ -11,11 +11,7 @@ import {
 } from "react";
 import { useMutation } from "convex/react";
 import { useDroppable } from "@dnd-kit/core";
-import {
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
+import { useSortable } from "@dnd-kit/sortable";
 import {
   Check,
   ChevronDown,
@@ -27,9 +23,15 @@ import {
   FolderOpen,
   FolderPlus,
   GripVertical,
+  Link2,
   MoreVertical,
   Pencil,
+  Plus,
+  Archive,
+  ArchiveRestore,
+  Layers,
   Trash2,
+  Upload,
   UserPlus,
   X,
 } from "lucide-react";
@@ -41,12 +43,20 @@ import { vaultFolderSortableId } from "@/lib/library/documentVaultDnD";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
+import { OverlayShell } from "@/components/ui/OverlayShell";
 import { cn } from "@/lib/cn";
 import {
   buildFolderTree,
   type DocumentFolderRow,
   type FolderTreeNode,
 } from "@/lib/library/documentVaultFolders";
+import {
+  countFileTaskItems,
+  countFolderItems,
+  formatFolderItemBadge,
+  formatTaskItemBadge,
+  type VaultTreeDocumentRef,
+} from "@/lib/library/vaultItemCounts";
 import { useDocumentVaultState } from "@/lib/library/documentVaultState";
 import { vaultFolderDropId } from "@/lib/library/documentVaultDnD";
 import {
@@ -55,6 +65,19 @@ import {
 } from "@/lib/library/documentVaultOsFileDrop";
 import { FolderNameDialog } from "@/components/pipeline/tabs/DocumentVaultFolderDialogs";
 import { DocumentVaultExplorerFileRow } from "@/components/library/DocumentVaultExplorerFileRow";
+import { VaultRegistryAssignMicroAction } from "@/components/library/VaultRegistryAssignMicroAction";
+import {
+  FileTaskContainer,
+  type DocumentVaultFileTaskRow,
+} from "@/components/library/FileTaskContainer";
+import { FileTaskRejectModal } from "@/components/library/FileTaskRejectModal";
+import { FileTaskConfigModal } from "@/components/library/FileTaskConfigModal";
+import { FileTaskExecutionModal } from "@/components/library/FileTaskExecutionModal";
+import { FileTaskInlineBlockList } from "@/components/library/FileTaskInlineBlockList";
+import {
+  assignedBlockIdsOrdered,
+  resolveTaskType,
+} from "@/lib/documentVaultTaskTypes";
 import type { LibraryDocumentListRow } from "@/components/library/LibraryDocumentsList";
 import type { LibraryDocumentsProof } from "@/components/LibraryDocumentsPanel";
 
@@ -62,6 +85,7 @@ export type VaultTreeDocument = {
   _id: Id<"libraryDocuments">;
   title: string;
   folderId?: Id<"documentFolders">;
+  fileTaskId?: Id<"documentVaultFileTasks">;
 };
 
 export type DocumentVaultExplorerFileHandlers = {
@@ -118,7 +142,22 @@ export type DocumentVaultDirectoryTreeProps = {
   ) => void;
   className?: string;
   folderDragVisual?: FolderDragVisualState;
+  /** Folders to expand while dragging (auto-expand on hover). */
+  autoExpandFolderIds?: Id<"documentFolders">[];
   optimisticSiblingOrder?: Record<string, Id<"documentFolders">[]>;
+  /** File Task requirement containers. */
+  fileTasks?: DocumentVaultFileTaskRow[];
+  optimisticFileTaskOrder?: Id<"documentVaultFileTasks">[];
+  onAddFileTasks?: () => void;
+  onOsFilesDroppedToTask?: (
+    files: File[],
+    fileTaskId: Id<"documentVaultFileTasks">,
+  ) => void;
+  organizationId?: Id<"organizations">;
+  onApplyTemplates?: () => void;
+  archivedFileTasks?: DocumentVaultFileTaskRow[];
+  showArchived?: boolean;
+  onToggleShowArchived?: () => void;
 };
 
 type EditingType = "root" | "folder" | "document";
@@ -132,6 +171,15 @@ type EditingState = {
 };
 
 const ROOT_KEY = "__root__";
+const FOLDER_DEPTH_PX = 16;
+
+function treeIndentPx(depth: number, compact = false): number {
+  return depth * FOLDER_DEPTH_PX + (compact ? 8 : 12);
+}
+
+function taskRootKey(fileTaskId: Id<"documentVaultFileTasks">): string {
+  return `task:${fileTaskId}`;
+}
 const ROW_H = "h-8";
 
 type TreeDoc = VaultTreeDocument | LibraryDocumentListRow;
@@ -222,6 +270,16 @@ function FolderDropZone({
     [onOsFilesDrop, osFileDropEnabled],
   );
 
+  useEffect(() => {
+    const resetOsDrag = () => setOsDragOver(false);
+    window.addEventListener("dragend", resetOsDrag);
+    window.addEventListener("drop", resetOsDrag);
+    return () => {
+      window.removeEventListener("dragend", resetOsDrag);
+      window.removeEventListener("drop", resetOsDrag);
+    };
+  }, []);
+
   return (
     <div
       ref={setNodeRef}
@@ -236,13 +294,13 @@ function FolderDropZone({
           "rounded-dlc-sm border-2 border-dashed border-emerald-600 bg-emerald-50/50 dark:bg-emerald-950/30",
         enabled &&
           !osDragOver &&
-          (isNestTarget || isOver) &&
-          "border border-blue-400/80 bg-blue-50 font-medium text-foreground ring-2 ring-inset ring-blue-400/40 dark:bg-blue-950/40",
+          isNestTarget &&
+          "border-2 border-blue-500/90 bg-blue-100/90 font-medium text-foreground ring-2 ring-inset ring-blue-500/50 dark:bg-blue-950/55",
         enabled &&
           !osDragOver &&
-          isOver &&
+          (isOver || isNestTarget) &&
           !isNestTarget &&
-          "bg-primary/15 ring-2 ring-inset ring-primary/40",
+          "border border-primary/50 bg-primary/15 ring-2 ring-inset ring-primary/40",
       )}
       data-testid={
         folderId == null
@@ -413,6 +471,7 @@ function collectFolderIds(folders: DocumentFolderRow[]): Set<string> {
 function DocumentTreeRow({
   doc,
   depth,
+  density = "default",
   isSelected,
   canMutate,
   isEditing,
@@ -424,9 +483,12 @@ function DocumentTreeRow({
   onSelect,
   fileRowHandlers,
   row,
+  organizationId,
+  memberUserKey,
 }: {
   doc: VaultTreeDocument;
   depth: number;
+  density?: "default" | "compact";
   isSelected: boolean;
   canMutate: boolean;
   isEditing: boolean;
@@ -438,6 +500,8 @@ function DocumentTreeRow({
   onSelect: () => void;
   fileRowHandlers?: DocumentVaultExplorerFileHandlers;
   row?: LibraryDocumentListRow;
+  organizationId?: Id<"organizations">;
+  memberUserKey?: string;
 }) {
   if (fileRowHandlers && row) {
     const handlers = fileRowHandlers;
@@ -448,6 +512,7 @@ function DocumentTreeRow({
       <DocumentVaultExplorerFileRow
         row={row}
         depth={depth}
+        density={density}
         isSelected={isSelected}
         isHighlighted={handlers.highlightDocumentId === row._id}
         canMutate={canMutate}
@@ -499,31 +564,34 @@ function DocumentTreeRow({
             ? () => handlers.onToggleClientVisibility!(row)
             : undefined
         }
+        organizationId={organizationId}
+        memberUserKey={memberUserKey}
       />
     );
   }
 
   return (
-    <li>
+    <li className="min-w-0">
       <div
         className={cn(
-          "group/doc flex min-w-0 items-center gap-0.5 rounded-dlc-sm pr-1",
-          ROW_H,
+          "group/doc flex min-w-0 items-center gap-0.5 border-b border-border/40 pr-1",
+          density === "compact" ? "min-h-7" : ROW_H,
           isSelected && "bg-primary/10 text-primary",
         )}
-        style={{ paddingLeft: `${depth * 12 + 28}px` }}
+        style={{ paddingLeft: `${treeIndentPx(depth, density === "compact")}px` }}
       >
         <button
           type="button"
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs",
+            "flex min-w-0 flex-1 items-center gap-1 text-left",
+            density === "compact" ? "text-[11px]" : "text-xs",
             isSelected ? "font-semibold" : "font-medium text-foreground",
           )}
           data-testid={`document-vault-tree-document-${doc._id}`}
           onClick={onSelect}
         >
           <FileText
-            className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+            className="h-3 w-3 shrink-0 text-muted-foreground"
             aria-hidden
           />
           {isEditing ? (
@@ -540,14 +608,15 @@ function DocumentTreeRow({
         {canMutate && !isEditing ? (
           <button
             type="button"
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-dlc-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted/60 group-hover/doc:opacity-100"
+            className="inline-flex items-center gap-0.5 px-1 text-[10px] font-medium text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/doc:opacity-100"
             aria-label={`Rename ${doc.title}`}
             onClick={(e) => {
               e.stopPropagation();
               onStartEdit();
             }}
           >
-            <Pencil className="h-3 w-3" aria-hidden />
+            <Pencil className="h-2.5 w-2.5" aria-hidden />
+            Edit
           </button>
         ) : null}
       </div>
@@ -568,9 +637,34 @@ function FolderInsertLine({ show }: { show: boolean }) {
   );
 }
 
+function VaultItemCountBadge({
+  label,
+  icon,
+  compact = false,
+}: {
+  label: string;
+  icon: "folder" | "document";
+  compact?: boolean;
+}) {
+  const Icon = icon === "folder" ? Folder : FileText;
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted/50 px-1.5 py-0.5 font-medium text-muted-foreground",
+        compact ? "text-[9px]" : "text-[10px]",
+      )}
+      data-testid="vault-item-count-badge"
+    >
+      <Icon className="h-2.5 w-2.5" aria-hidden />
+      {label}
+    </span>
+  );
+}
+
 function TreeNode({
   node,
   depth,
+  compact = false,
   currentFolderId,
   selectedDocumentId,
   expandedIds,
@@ -588,12 +682,17 @@ function TreeNode({
   fileRowHandlers,
   rowById,
   onDeleteFolder,
+  onNewSubfolder,
   folderDragVisual,
   osFileDropEnabled,
   onOsFilesDropped,
+  organizationId,
+  memberUserKey,
+  folderCountById,
 }: {
   node: FolderTreeNode;
   depth: number;
+  compact?: boolean;
   currentFolderId: Id<"documentFolders"> | null;
   selectedDocumentId: Id<"libraryDocuments"> | null;
   expandedIds: Set<string>;
@@ -611,14 +710,19 @@ function TreeNode({
   onCommitEdit: () => void;
   onCancelEdit: () => void;
   onDeleteFolder: (folderId: Id<"documentFolders">, name: string) => void;
+  onNewSubfolder?: (folderId: Id<"documentFolders">) => void;
   folderDragVisual?: FolderDragVisualState;
   osFileDropEnabled?: boolean;
   onOsFilesDropped?: (
     files: File[],
     parentFolderId: Id<"documentFolders"> | null,
   ) => void;
+  organizationId?: Id<"organizations">;
+  memberUserKey?: string;
+  folderCountById?: Map<string, string>;
 }) {
   const id = node.folder._id;
+  const folderItemBadge = folderCountById?.get(String(id));
   const sortableId = vaultFolderSortableId(id);
   const isEditing =
     editing?.type === "folder" && editing.folderId === id;
@@ -626,6 +730,7 @@ function TreeNode({
     attributes,
     listeners,
     setNodeRef,
+    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -640,9 +745,6 @@ function TreeNode({
 
   const folderDocs = docsByFolderKey.get(String(id)) ?? [];
   const isSelected = currentFolderId === id;
-  const hasChildren = node.children.length > 0;
-  const hasDocs = folderDocs.length > 0;
-  const hasExpandable = hasChildren || hasDocs;
   const isExpanded = expandedIds.has(String(id));
   const isNestTarget =
     folderDragVisual?.mode === "nest" &&
@@ -650,9 +752,6 @@ function TreeNode({
   const showInsertLine =
     folderDragVisual?.mode === "insert" &&
     folderDragVisual.insertBeforeFolderId === id;
-  const childSortableIds = node.children.map((c) =>
-    vaultFolderSortableId(c.folder._id),
-  );
 
   return (
     <li ref={setNodeRef} style={sortableStyle} className={cn(isDragging && "opacity-60")}>
@@ -664,41 +763,60 @@ function TreeNode({
         osFileDropEnabled={osFileDropEnabled}
         onOsFilesDrop={(files) => onOsFilesDropped?.(files, id)}
         className={cn(
-          "group/folder flex min-w-0 items-center gap-0.5 rounded-dlc-sm pr-1",
-          ROW_H,
+          "group/folder flex min-w-0 items-center gap-0.5 pr-1",
+          compact ? "min-h-7 border-b border-border/40" : cn("rounded-dlc-sm", ROW_H),
           isSelected && "bg-primary/10 text-primary",
         )}
-        style={{ paddingLeft: `${depth * 12 + 4}px` }}
+        style={{ paddingLeft: `${treeIndentPx(depth, compact)}px` }}
       >
-        {hasExpandable ? (
+        {canMutate && !isEditing ? (
           <button
+            ref={setActivatorNodeRef}
             type="button"
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-dlc-sm text-muted-foreground hover:bg-muted/60"
-            aria-label={isExpanded ? "Collapse folder" : "Expand folder"}
-            onClick={() => onToggleExpand(id)}
-          >
-            {isExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+            className={cn(
+              "inline-flex h-6 w-4 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground/60 hover:text-foreground active:cursor-grabbing",
+              !compact && "opacity-70 hover:opacity-100",
+              isDragging && "opacity-100",
             )}
+            style={{ touchAction: "none" }}
+            aria-label={`Drag folder ${node.folder.name}`}
+            data-testid={`document-vault-folder-drag-${id}`}
+            {...listeners}
+            {...attributes}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <GripVertical className="h-3 w-3" aria-hidden />
           </button>
         ) : (
-          <span className="inline-block h-6 w-6 shrink-0" aria-hidden />
+          <span className="inline-block h-6 w-4 shrink-0" aria-hidden />
         )}
+
+        <button
+          type="button"
+          className="inline-flex h-5 w-4 shrink-0 items-center justify-center rounded-dlc-sm text-muted-foreground hover:bg-muted/60"
+          aria-label={isExpanded ? "Collapse folder" : "Expand folder"}
+          onClick={() => onToggleExpand(id)}
+        >
+          {isExpanded ? (
+            <ChevronDown className="h-3 w-3" aria-hidden />
+          ) : (
+            <ChevronRight className="h-3 w-3" aria-hidden />
+          )}
+        </button>
         <button
           type="button"
           className={cn(
-            "relative z-[1] flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs",
+            "relative z-[1] flex min-w-0 flex-1 items-center gap-1 text-left",
+            compact ? "text-[11px]" : "text-xs",
             isSelected ? "font-semibold" : "font-medium text-foreground",
           )}
           data-testid={`document-vault-tree-folder-${id}`}
           onClick={() => onSelectFolder(id)}
         >
           {isSelected ? (
-            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
+            <FolderOpen className="h-3 w-3 shrink-0 text-amber-600" aria-hidden />
           ) : (
-            <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
+            <Folder className="h-3 w-3 shrink-0 text-amber-500" aria-hidden />
           )}
           {isEditing ? (
             <FolderInlineRenameInput
@@ -742,27 +860,46 @@ function TreeNode({
               {node.folder.name}
             </span>
           )}
+          {folderItemBadge ? (
+            <VaultItemCountBadge label={folderItemBadge} icon="folder" compact={compact} />
+          ) : null}
         </button>
         {canMutate && !isEditing ? (
           <>
+            {onNewSubfolder ? (
+              <button
+                type="button"
+                className={cn(
+                  "inline-flex shrink-0 items-center justify-center rounded-dlc-sm text-muted-foreground transition-opacity hover:bg-muted/60 hover:text-foreground",
+                  compact
+                    ? "h-6 w-6 opacity-0 group-hover/folder:opacity-100"
+                    : "h-6 w-6 opacity-0 group-hover/folder:opacity-100",
+                )}
+                aria-label={`New subfolder in ${node.folder.name}`}
+                data-testid={`document-vault-folder-new-subfolder-${id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNewSubfolder(id);
+                }}
+              >
+                <Plus className="h-3 w-3" aria-hidden />
+              </button>
+            ) : null}
+            <VaultRegistryAssignMicroAction
+              organizationId={organizationId}
+              memberUserKey={memberUserKey}
+              target={{ kind: "folder", folderId: id }}
+              assignedContactId={node.folder.assignedContactId}
+              assignedClientId={node.folder.assignedClientId}
+              assignedLenderId={node.folder.assignedLenderId}
+              compact
+            />
             <button
               type="button"
               className={cn(
-                "inline-flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-dlc-sm text-muted-foreground opacity-70 transition-opacity hover:bg-muted/60 hover:opacity-100 active:cursor-grabbing",
-                isDragging && "opacity-100",
+                "ml-auto inline-flex shrink-0 items-center gap-0.5 px-1 text-[10px] font-medium text-red-600 hover:text-red-800 dark:text-red-400",
+                compact ? "opacity-100" : "h-6 w-6 justify-center rounded-dlc-sm text-muted-foreground opacity-70 hover:bg-destructive/10 hover:text-destructive hover:opacity-100",
               )}
-              style={{ touchAction: "none" }}
-              aria-label={`Drag folder ${node.folder.name}`}
-              data-testid={`document-vault-folder-drag-${id}`}
-              {...listeners}
-              {...attributes}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <GripVertical className="h-3 w-3" aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-dlc-sm p-1 text-muted-foreground opacity-70 transition-colors hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
               aria-label={`Delete folder ${node.folder.name}`}
               data-testid={`document-vault-folder-delete-btn-${id}`}
               onClick={(e) => {
@@ -771,8 +908,10 @@ function TreeNode({
                 onDeleteFolder(id, node.folder.name);
               }}
             >
-              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+              <Trash2 className={cn(compact ? "h-2.5 w-2.5" : "h-3.5 w-3.5")} aria-hidden />
+              {compact ? <span>Trash</span> : null}
             </button>
+            {!compact ? (
             <DropdownMenu
               trigger={
                 <button
@@ -810,20 +949,18 @@ function TreeNode({
                 Delete
               </DropdownMenuItem>
             </DropdownMenu>
+            ) : null}
           </>
         ) : null}
       </FolderDropZone>
       {isExpanded ? (
-        <SortableContext
-          items={childSortableIds}
-          strategy={verticalListSortingStrategy}
-        >
           <ul className="min-w-0">
             {node.children.map((child) => (
               <MemoTreeNode
                 key={child.folder._id}
                 node={child}
                 depth={depth + 1}
+                compact={compact}
                 currentFolderId={currentFolderId}
                 selectedDocumentId={selectedDocumentId}
                 expandedIds={expandedIds}
@@ -841,9 +978,13 @@ function TreeNode({
                 fileRowHandlers={fileRowHandlers}
                 rowById={rowById}
                 onDeleteFolder={onDeleteFolder}
+                onNewSubfolder={onNewSubfolder}
                 folderDragVisual={folderDragVisual}
                 osFileDropEnabled={osFileDropEnabled}
                 onOsFilesDropped={onOsFilesDropped}
+                organizationId={organizationId}
+                memberUserKey={memberUserKey}
+                folderCountById={folderCountById}
               />
             ))}
           {folderDocs.map((doc) => {
@@ -863,6 +1004,7 @@ function TreeNode({
               doc={vaultDoc}
               row={fullRow}
               depth={depth + 1}
+              density={compact ? "compact" : "default"}
               isSelected={selectedDocumentId === docId}
               canMutate={canMutate}
               isEditing={
@@ -874,6 +1016,8 @@ function TreeNode({
                   : docTitle
               }
               fileRowHandlers={fileRowHandlers}
+              organizationId={organizationId}
+              memberUserKey={memberUserKey}
               onStartEdit={() =>
                 onStartEdit({
                   id: `document:${docId}`,
@@ -890,7 +1034,6 @@ function TreeNode({
             );
           })}
           </ul>
-        </SortableContext>
       ) : null}
     </li>
   );
@@ -915,7 +1058,17 @@ export function DocumentVaultDirectoryTree({
   onOsFilesDropped,
   className,
   folderDragVisual,
+  autoExpandFolderIds,
   optimisticSiblingOrder,
+  fileTasks,
+  optimisticFileTaskOrder,
+  onAddFileTasks,
+  onOsFilesDroppedToTask,
+  organizationId,
+  onApplyTemplates,
+  archivedFileTasks,
+  showArchived = false,
+  onToggleShowArchived,
 }: DocumentVaultDirectoryTreeProps) {
   const {
     currentFolderId,
@@ -926,54 +1079,69 @@ export function DocumentVaultDirectoryTree({
   const createFolder = useMutation(api.documentFolders.createFolder);
   const renameFolder = useMutation(api.documentFolders.renameFolder);
   const patchDocumentTitle = useMutation(api.libraryDocuments.patchDocumentTitle);
+  const toggleFileTaskStatus = useMutation(api.documentVaultFileTasks.toggleStatus);
+  const toggleFileTaskRequired = useMutation(api.documentVaultFileTasks.toggleRequired);
+  const updateFileTaskTitle = useMutation(api.documentVaultFileTasks.updateTitle);
+  const toggleFileTaskPortal = useMutation(
+    api.documentVaultFileTasks.togglePortalVisible,
+  );
+  const archiveFileTask = useMutation(api.documentVaultFileTasks.archiveFileTask);
+  const restoreFileTask = useMutation(api.documentVaultFileTasks.restoreFileTask);
+  const deleteFileTask = useMutation(api.documentVaultFileTasks.deleteFileTask);
+  const acceptReview = useMutation(api.documentVaultFileTasks.acceptFileTaskReview);
+  const rejectReview = useMutation(api.documentVaultFileTasks.rejectFileTaskReview);
+  const resetForClient = useMutation(api.documentVaultFileTasks.resetFileTaskForClient);
+  const updateTaskConfig = useMutation(api.documentVaultFileTasks.updateTaskConfig);
+
+  const [archiveFileTaskTarget, setArchiveFileTaskTarget] =
+    useState<DocumentVaultFileTaskRow | null>(null);
+  const [deleteFileTaskTarget, setDeleteFileTaskTarget] =
+    useState<DocumentVaultFileTaskRow | null>(null);
+  const [rejectFileTaskTarget, setRejectFileTaskTarget] =
+    useState<DocumentVaultFileTaskRow | null>(null);
+  const [executionFileTask, setExecutionFileTask] =
+    useState<DocumentVaultFileTaskRow | null>(null);
+  const [configFileTask, setConfigFileTask] =
+    useState<DocumentVaultFileTaskRow | null>(null);
+
+  const [expandedFileTaskIds, setExpandedFileTaskIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderTaskId, setNewFolderTaskId] =
+    useState<Id<"documentVaultFileTasks"> | null>(null);
+  const [newFolderParentId, setNewFolderParentId] =
+    useState<Id<"documentFolders"> | null>(null);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: Id<"documentFolders">;
     name: string;
   } | null>(null);
-  const [navOsDragOver, setNavOsDragOver] = useState(false);
-
-  const handleNavOsDragOver = useCallback(
-    (e: React.DragEvent) => {
-      if (!osFileDropEnabled || !isOsFileDragEvent(e)) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-      setNavOsDragOver(true);
-    },
-    [osFileDropEnabled],
-  );
-
-  const handleNavOsDragLeave = useCallback(
-    (e: React.DragEvent) => {
-      if (!osFileDropEnabled || !isOsFileDragEvent(e)) return;
-      const related = e.relatedTarget as Node | null;
-      if (!e.currentTarget.contains(related)) {
-        setNavOsDragOver(false);
-      }
-    },
-    [osFileDropEnabled],
-  );
-
-  const handleNavOsDrop = useCallback(
-    (e: React.DragEvent) => {
-      if (!osFileDropEnabled || !isOsFileDragEvent(e)) return;
-      e.preventDefault();
-      setNavOsDragOver(false);
-      const files = readOsFilesFromDragEvent(e);
-      if (files.length > 0) {
-        onOsFilesDropped?.(files, null);
-      }
-    },
-    [onOsFilesDropped, osFileDropEnabled],
-  );
+  const unassignedUploadInputRef = useRef<HTMLInputElement>(null);
 
   const tree = useMemo(
-    () => buildFolderTree(folders ?? [], null, optimisticSiblingOrder),
+    () => buildFolderTree(folders ?? [], null, optimisticSiblingOrder, null),
     [folders, optimisticSiblingOrder],
   );
+
+  const orderedFileTasks = useMemo(() => {
+    const rows = fileTasks ?? [];
+    if (!optimisticFileTaskOrder?.length) return rows;
+    const byId = new Map(rows.map((t) => [String(t._id), t]));
+    const ordered: DocumentVaultFileTaskRow[] = [];
+    for (const id of optimisticFileTaskOrder) {
+      const row = byId.get(String(id));
+      if (row) ordered.push(row);
+    }
+    for (const row of rows) {
+      if (!optimisticFileTaskOrder.some((id) => id === row._id)) {
+        ordered.push(row);
+      }
+    }
+    return ordered;
+  }, [fileTasks, optimisticFileTaskOrder]);
 
   const docsByFolderKey = useMemo(() => {
     const source: TreeDoc[] =
@@ -981,9 +1149,13 @@ export function DocumentVaultDirectoryTree({
       (documents ?? []).map((d) => ({ ...d }));
     const map = new Map<string, TreeDoc[]>();
     for (const doc of source) {
-      const folderId =
-        "folderId" in doc ? doc.folderId : undefined;
-      const key = folderId ? String(folderId) : ROOT_KEY;
+      const folderId = "folderId" in doc ? doc.folderId : undefined;
+      const fileTaskId = "fileTaskId" in doc ? doc.fileTaskId : undefined;
+      const key = folderId
+        ? String(folderId)
+        : fileTaskId
+          ? taskRootKey(fileTaskId)
+          : ROOT_KEY;
       const list = map.get(key) ?? [];
       list.push(doc);
       map.set(key, list);
@@ -1010,6 +1182,56 @@ export function DocumentVaultDirectoryTree({
 
   const docsForEdit = documentRows ?? documents;
 
+  const vaultDocRefs = useMemo((): VaultTreeDocumentRef[] => {
+    const source = documentRows ?? documents ?? [];
+    const taskStatusById = new Map(
+      (fileTasks ?? []).map((t) => [String(t._id), t.status]),
+    );
+    return source.map((doc) => {
+      const fileTaskId = "fileTaskId" in doc ? doc.fileTaskId : undefined;
+      const status = fileTaskId
+        ? (taskStatusById.get(String(fileTaskId)) as VaultTreeDocumentRef["status"])
+        : undefined;
+      return {
+        _id: doc._id,
+        folderId: "folderId" in doc ? doc.folderId : undefined,
+        fileTaskId,
+        status,
+      };
+    });
+  }, [documentRows, documents, fileTasks]);
+
+  const folderCountById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!folders) return map;
+    for (const folder of folders) {
+      const summary = countFolderItems(folder._id, folders, vaultDocRefs);
+      map.set(String(folder._id), formatFolderItemBadge(summary));
+    }
+    return map;
+  }, [folders, vaultDocRefs]);
+
+  const taskCountById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const task of fileTasks ?? []) {
+      const blockCount =
+        resolveTaskType(task.taskType) === "block_assignment"
+          ? assignedBlockIdsOrdered(task).length
+          : 0;
+      const summary = countFileTaskItems(
+        task._id,
+        folders ?? [],
+        vaultDocRefs,
+        { assignedBlockCount: blockCount },
+      );
+      map.set(
+        String(task._id),
+        formatTaskItemBadge(summary, task.status, blockCount),
+      );
+    }
+    return map;
+  }, [fileTasks, folders, vaultDocRefs]);
+
   const visibleTree = useMemo(
     () => filterFolderTree(tree, vaultSearchQuery, docsByFolderKey),
     [tree, vaultSearchQuery, docsByFolderKey],
@@ -1018,7 +1240,32 @@ export function DocumentVaultDirectoryTree({
   const rootDocs = docsByFolderKey.get(ROOT_KEY) ?? [];
   const searchActive = vaultSearchQuery.trim().length > 0;
   const explorerVisible =
-    !searchActive || rootDocs.length > 0 || visibleTree.length > 0;
+    !searchActive ||
+    rootDocs.length > 0 ||
+    visibleTree.length > 0 ||
+    (orderedFileTasks?.length ?? 0) > 0;
+
+  useEffect(() => {
+    if (!fileTasks?.length) return;
+    setExpandedFileTaskIds((prev) => {
+      const next = new Set(prev);
+      for (const task of fileTasks) {
+        next.add(String(task._id));
+      }
+      return next;
+    });
+  }, [fileTasks]);
+
+  useEffect(() => {
+    if (!autoExpandFolderIds?.length) return;
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      for (const folderId of autoExpandFolderIds) {
+        next.add(String(folderId));
+      }
+      return next;
+    });
+  }, [autoExpandFolderIds]);
 
   useEffect(() => {
     if (!folders) return;
@@ -1126,6 +1373,17 @@ export function DocumentVaultDirectoryTree({
     renameFolder,
   ]);
 
+  const openNewSubfolder = useCallback(
+    (parentFolderId: Id<"documentFolders">) => {
+      const parent = folders?.find((f) => f._id === parentFolderId);
+      setNewFolderParentId(parentFolderId);
+      setNewFolderTaskId(parent?.fileTaskId ?? null);
+      setExpandedIds((prev) => new Set([...prev, String(parentFolderId)]));
+      setNewFolderOpen(true);
+    },
+    [folders],
+  );
+
   const handleCreateFolder = useCallback(
     async (name: string) => {
       if (!memberUserKey) {
@@ -1136,15 +1394,41 @@ export function DocumentVaultDirectoryTree({
         await createFolder({
           pipelineFileId,
           name,
-          parentFolderId: currentFolderId ?? undefined,
+          parentFolderId: newFolderParentId
+            ? newFolderParentId
+            : newFolderTaskId
+              ? undefined
+              : (currentFolderId ?? undefined),
+          fileTaskId: newFolderTaskId ?? undefined,
           memberUserKey,
         });
+        if (newFolderTaskId) {
+          setExpandedFileTaskIds((prev) => {
+            const next = new Set(prev);
+            next.add(String(newFolderTaskId));
+            return next;
+          });
+        }
+        if (newFolderParentId) {
+          setExpandedIds((prev) => new Set([...prev, String(newFolderParentId)]));
+        }
       } catch (e) {
         onError(e instanceof Error ? e.message : String(e));
         throw e;
+      } finally {
+        setNewFolderTaskId(null);
+        setNewFolderParentId(null);
       }
     },
-    [createFolder, currentFolderId, memberUserKey, onError, pipelineFileId],
+    [
+      createFolder,
+      currentFolderId,
+      memberUserKey,
+      newFolderParentId,
+      newFolderTaskId,
+      onError,
+      pipelineFileId,
+    ],
   );
 
   const handleDeleteFolder = useCallback(
@@ -1154,10 +1438,6 @@ export function DocumentVaultDirectoryTree({
     [],
   );
 
-  const rootSortableIds = useMemo(
-    () => visibleTree.map((n) => vaultFolderSortableId(n.folder._id)),
-    [visibleTree],
-  );
   const rootNestTarget =
     folderDragVisual?.mode === "nest" &&
     folderDragVisual.nestTargetFolderId === null;
@@ -1165,7 +1445,7 @@ export function DocumentVaultDirectoryTree({
   return (
     <div
       className={cn(
-        "dlc-surface-card flex min-h-[28rem] min-w-0 w-full flex-col shadow-dlc-2",
+        "dlc-surface-card min-w-0 w-full shadow-dlc-2",
         className,
       )}
       data-testid="document-vault-unified-explorer"
@@ -1223,12 +1503,44 @@ export function DocumentVaultDirectoryTree({
                   variant="ghost"
                   size="sm"
                   className="h-7 gap-1 px-1.5 text-[10px]"
-                  onClick={() => setNewFolderOpen(true)}
+                  onClick={() => {
+                    setNewFolderParentId(null);
+                    setNewFolderTaskId(null);
+                    setNewFolderOpen(true);
+                  }}
                   data-testid="document-vault-new-folder"
                   title="New folder"
                 >
                   <FolderPlus className="h-3 w-3" aria-hidden />
                 </Button>
+                {onAddFileTasks ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-1.5 text-[10px] font-medium"
+                    onClick={onAddFileTasks}
+                    data-testid="document-vault-add-file-tasks"
+                    title="Add file tasks"
+                  >
+                    <Plus className="h-3 w-3" aria-hidden />
+                    <span className="hidden sm:inline">Tasks</span>
+                  </Button>
+                ) : null}
+                {onApplyTemplates ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-1.5 text-[10px] font-medium"
+                    onClick={onApplyTemplates}
+                    data-testid="document-vault-apply-templates"
+                    title="Apply template"
+                  >
+                    <Layers className="h-3 w-3" aria-hidden />
+                    <span className="hidden sm:inline">Template</span>
+                  </Button>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -1236,15 +1548,7 @@ export function DocumentVaultDirectoryTree({
       </div>
 
       <nav
-        className={cn(
-          "min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5 py-1.5",
-          osFileDropEnabled &&
-            navOsDragOver &&
-            "rounded-dlc-sm bg-emerald-50/30 ring-2 ring-inset ring-emerald-600/30 dark:bg-emerald-950/20",
-        )}
-        onDragOver={handleNavOsDragOver}
-        onDragLeave={handleNavOsDragLeave}
-        onDrop={handleNavOsDrop}
+        className="min-w-0 px-1.5 pt-1.5 pb-0"
         data-testid="document-vault-explorer-scroll"
       >
         {folders === undefined ? (
@@ -1255,17 +1559,250 @@ export function DocumentVaultDirectoryTree({
         ) : (
           <ul className="min-w-0 space-y-0">
             {explorerVisible ? (
-              <li className="min-w-0">
-                <FolderDropZone
-                  folderId={null}
-                  enabled={dropEnabled}
-                  isNestTarget={rootNestTarget}
-                  osFileDropEnabled={osFileDropEnabled}
-                  onOsFilesDrop={(files) => onOsFilesDropped?.(files, null)}
-                  className="min-w-0"
-                >
-                  <ul className="min-w-0 space-y-0">
-                    {rootDocs.map((doc) => {
+              <>
+                {orderedFileTasks.length > 0 ? (
+                  <li className="min-w-0">
+                    <ul className="min-w-0 space-y-5">
+                      {orderedFileTasks.map((task) => {
+                          const taskTree = buildFolderTree(
+                            folders ?? [],
+                            null,
+                            optimisticSiblingOrder,
+                            task._id,
+                          );
+                          const taskVisibleTree = filterFolderTree(
+                            taskTree,
+                            vaultSearchQuery,
+                            docsByFolderKey,
+                          );
+                          const taskRootDocs =
+                            docsByFolderKey.get(taskRootKey(task._id)) ?? [];
+                          const taskExpanded = expandedFileTaskIds.has(
+                            String(task._id),
+                          );
+
+                          return (
+                            <FileTaskContainer
+                              key={task._id}
+                              fileTask={task}
+                              itemCountBadge={taskCountById.get(String(task._id))}
+                              canMutate={canMutate}
+                              memberUserKey={memberUserKey}
+                              expanded={taskExpanded}
+                              onToggleExpand={() =>
+                                setExpandedFileTaskIds((prev) => {
+                                  const next = new Set(prev);
+                                  const key = String(task._id);
+                                  if (next.has(key)) next.delete(key);
+                                  else next.add(key);
+                                  return next;
+                                })
+                              }
+                              dropEnabled={dropEnabled}
+                              osFileDropEnabled={osFileDropEnabled}
+                              onOsFilesDropped={(files) =>
+                                onOsFilesDroppedToTask?.(files, task._id)
+                              }
+                              onToggleStatus={async (status) => {
+                                if (!memberUserKey) return;
+                                await toggleFileTaskStatus({
+                                  fileTaskId: task._id,
+                                  status,
+                                  memberUserKey,
+                                });
+                              }}
+                              onToggleRequired={async (required) => {
+                                if (!memberUserKey) return;
+                                await toggleFileTaskRequired({
+                                  fileTaskId: task._id,
+                                  isRequired: required,
+                                  memberUserKey,
+                                });
+                              }}
+                              onUpdateTitle={async (title) => {
+                                if (!memberUserKey) return;
+                                await updateFileTaskTitle({
+                                  fileTaskId: task._id,
+                                  title,
+                                  memberUserKey,
+                                });
+                              }}
+                              onTogglePortalVisible={async (visible) => {
+                                if (!memberUserKey) return;
+                                await toggleFileTaskPortal({
+                                  fileTaskId: task._id,
+                                  isPortalVisible: visible,
+                                  memberUserKey,
+                                });
+                              }}
+                              onArchive={() => setArchiveFileTaskTarget(task)}
+                              onDelete={() => setDeleteFileTaskTarget(task)}
+                              pipelineFileId={pipelineFileId}
+                              onAcceptReview={async () => {
+                                if (!memberUserKey) return;
+                                await acceptReview({
+                                  fileTaskId: task._id,
+                                  memberUserKey,
+                                });
+                              }}
+                              onRejectReview={() => setRejectFileTaskTarget(task)}
+                              onResetForClient={async () => {
+                                if (!memberUserKey) return;
+                                await resetForClient({
+                                  fileTaskId: task._id,
+                                  memberUserKey,
+                                });
+                              }}
+                              onOpenExecution={() => setExecutionFileTask(task)}
+                              onOpenFullscreen={() => setExecutionFileTask(task)}
+                              onOpenConfig={() => setConfigFileTask(task)}
+                              onNewFolder={() => {
+                                setNewFolderParentId(null);
+                                setNewFolderTaskId(task._id);
+                                setNewFolderOpen(true);
+                              }}
+                              onLinkDocument={() => onImportFromContact?.()}
+                              organizationId={organizationId}
+                            >
+                              <ul className="min-w-0 space-y-0">
+                                <FileTaskInlineBlockList
+                                  fileTask={task}
+                                  pipelineFileId={pipelineFileId}
+                                  memberUserKey={memberUserKey}
+                                  canMutate={canMutate}
+                                  depth={1}
+                                />
+                                {taskRootDocs.map((doc) => {
+                                  const docId =
+                                    "_id" in doc
+                                      ? doc._id
+                                      : (doc as VaultTreeDocument)._id;
+                                  const docTitle =
+                                    "title" in doc
+                                      ? doc.title
+                                      : (doc as VaultTreeDocument).title;
+                                  const vaultDoc: VaultTreeDocument = {
+                                    _id: docId,
+                                    title: docTitle,
+                                    fileTaskId: task._id,
+                                  };
+                                  return (
+                                    <MemoDocumentTreeRow
+                                      key={String(docId)}
+                                      doc={vaultDoc}
+                                      row={rowById.get(String(docId))}
+                                      depth={1}
+                                      density="compact"
+                                      isSelected={selectedDocumentId === docId}
+                                      canMutate={canMutate}
+                                      fileRowHandlers={fileRowHandlers}
+                                      organizationId={organizationId}
+                                      memberUserKey={memberUserKey}
+                                      isEditing={
+                                        editing?.type === "document" &&
+                                        editing.documentId === docId
+                                      }
+                                      editValue={
+                                        editing?.type === "document" &&
+                                        editing.documentId === docId
+                                          ? editing.value
+                                          : docTitle
+                                      }
+                                      onStartEdit={() =>
+                                        setEditing({
+                                          id: `document:${docId}`,
+                                          type: "document",
+                                          value: docTitle,
+                                          documentId: docId,
+                                        })
+                                      }
+                                      onEditChange={(v) =>
+                                        setEditing((prev) =>
+                                          prev ? { ...prev, value: v } : prev,
+                                        )
+                                      }
+                                      onCommitEdit={() => void commitEdit()}
+                                      onCancelEdit={cancelEdit}
+                                      onSelect={() => selectDocument(docId)}
+                                    />
+                                  );
+                                })}
+                                {taskVisibleTree.map((node) => (
+                                  <MemoTreeNode
+                                    key={node.folder._id}
+                                    node={node}
+                                    depth={1}
+                                    compact
+                                    currentFolderId={currentFolderId}
+                                    selectedDocumentId={selectedDocumentId}
+                                    expandedIds={expandedIds}
+                                    docsByFolderKey={docsByFolderKey}
+                                    editing={editing}
+                                    canMutate={canMutate}
+                                    dropEnabled={dropEnabled}
+                                    fileRowHandlers={fileRowHandlers}
+                                    rowById={rowById}
+                                    onToggleExpand={toggleExpand}
+                                    onSelectFolder={navigateToFolder}
+                                    onSelectDocument={selectDocument}
+                                    onStartEdit={setEditing}
+                                    onEditChange={(v) =>
+                                      setEditing((prev) =>
+                                        prev ? { ...prev, value: v } : prev,
+                                      )
+                                    }
+                                    onCommitEdit={() => void commitEdit()}
+                                    onCancelEdit={cancelEdit}
+                                    onDeleteFolder={handleDeleteFolder}
+                                    onNewSubfolder={openNewSubfolder}
+                                    folderDragVisual={folderDragVisual}
+                                    osFileDropEnabled={osFileDropEnabled}
+                                    onOsFilesDropped={onOsFilesDropped}
+                                    organizationId={organizationId}
+                                    memberUserKey={memberUserKey}
+                                    folderCountById={folderCountById}
+                                  />
+                                ))}
+                              </ul>
+                            </FileTaskContainer>
+                          );
+                        })}
+                    </ul>
+                  </li>
+                ) : null}
+
+                <li className="min-w-0">
+                  {orderedFileTasks.length > 0 ? (
+                    <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Unassigned
+                    </div>
+                  ) : null}
+                  <FolderDropZone
+                    folderId={null}
+                    enabled={dropEnabled}
+                    isNestTarget={rootNestTarget}
+                    osFileDropEnabled={osFileDropEnabled}
+                    onOsFilesDrop={(files) => onOsFilesDropped?.(files, null)}
+                    className="min-w-0 rounded-dlc-sm"
+                  >
+                    {rootDocs.length === 0 &&
+                    visibleTree.length === 0 &&
+                    orderedFileTasks.length === 0 ? (
+                      <div
+                        className="px-3 py-4 text-center"
+                        data-testid="document-vault-explorer-empty"
+                      >
+                        <p className="text-xs text-muted-foreground">
+                          Drop files here, upload, or use{" "}
+                          <span className="font-medium text-foreground">
+                            + Tasks
+                          </span>{" "}
+                          to get started.
+                        </p>
+                      </div>
+                    ) : null}
+                    <ul className="min-w-0 space-y-0">
+                        {rootDocs.map((doc) => {
                       const docId =
                         "_id" in doc
                           ? doc._id
@@ -1286,9 +1823,12 @@ export function DocumentVaultDirectoryTree({
                           doc={vaultDoc}
                           row={rowById.get(String(docId))}
                           depth={0}
+                          density="compact"
                           isSelected={selectedDocumentId === docId}
                           canMutate={canMutate}
                           fileRowHandlers={fileRowHandlers}
+                          organizationId={organizationId}
+                          memberUserKey={memberUserKey}
                           isEditing={
                             editing?.type === "document" &&
                             editing.documentId === docId
@@ -1318,45 +1858,95 @@ export function DocumentVaultDirectoryTree({
                         />
                       );
                     })}
-                    <SortableContext
-                      items={rootSortableIds}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {visibleTree.map((node) => (
-                        <MemoTreeNode
-                          key={node.folder._id}
-                          node={node}
-                          depth={0}
-                          currentFolderId={currentFolderId}
-                          selectedDocumentId={selectedDocumentId}
-                          expandedIds={expandedIds}
-                          docsByFolderKey={docsByFolderKey}
-                          editing={editing}
-                          canMutate={canMutate}
-                          dropEnabled={dropEnabled}
-                          fileRowHandlers={fileRowHandlers}
-                          rowById={rowById}
-                          onToggleExpand={toggleExpand}
-                          onSelectFolder={navigateToFolder}
-                          onSelectDocument={selectDocument}
-                          onStartEdit={setEditing}
-                          onEditChange={(v) =>
-                            setEditing((prev) =>
-                              prev ? { ...prev, value: v } : prev,
-                            )
-                          }
-                          onCommitEdit={() => void commitEdit()}
-                          onCancelEdit={cancelEdit}
-                          onDeleteFolder={handleDeleteFolder}
-                          folderDragVisual={folderDragVisual}
-                          osFileDropEnabled={osFileDropEnabled}
-                          onOsFilesDropped={onOsFilesDropped}
-                        />
-                      ))}
-                    </SortableContext>
-                  </ul>
-                </FolderDropZone>
-              </li>
+                        {visibleTree.map((node) => (
+                          <MemoTreeNode
+                            key={node.folder._id}
+                            node={node}
+                            depth={0}
+                            compact
+                            currentFolderId={currentFolderId}
+                        selectedDocumentId={selectedDocumentId}
+                        expandedIds={expandedIds}
+                        docsByFolderKey={docsByFolderKey}
+                        editing={editing}
+                        canMutate={canMutate}
+                        dropEnabled={dropEnabled}
+                        fileRowHandlers={fileRowHandlers}
+                        rowById={rowById}
+                        onToggleExpand={toggleExpand}
+                        onSelectFolder={navigateToFolder}
+                        onSelectDocument={selectDocument}
+                        onStartEdit={setEditing}
+                        onEditChange={(v) =>
+                          setEditing((prev) =>
+                            prev ? { ...prev, value: v } : prev,
+                          )
+                        }
+                        onCommitEdit={() => void commitEdit()}
+                        onCancelEdit={cancelEdit}
+                        onDeleteFolder={handleDeleteFolder}
+                        onNewSubfolder={openNewSubfolder}
+                        folderDragVisual={folderDragVisual}
+                        osFileDropEnabled={osFileDropEnabled}
+                        onOsFilesDropped={onOsFilesDropped}
+                        organizationId={organizationId}
+                        memberUserKey={memberUserKey}
+                            folderCountById={folderCountById}
+                          />
+                        ))}
+                      </ul>
+                      {canMutate ? (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/30 px-3 pt-1.5 pb-2">
+                          <input
+                            ref={unassignedUploadInputRef}
+                            type="file"
+                            className="sr-only"
+                            multiple
+                            onChange={(e) => {
+                              const files = e.target.files
+                                ? Array.from(e.target.files)
+                                : [];
+                              e.target.value = "";
+                              if (files.length > 0) {
+                                onOsFilesDropped?.(files, null);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-0.5 rounded-dlc-sm px-1 py-0.5 text-[10px] font-medium text-sky-700 hover:text-sky-900 dark:text-sky-400"
+                            onClick={() => unassignedUploadInputRef.current?.click()}
+                          >
+                            <Upload className="h-3 w-3 shrink-0" aria-hidden />
+                            Upload
+                          </button>
+                          {onImportFromContact ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-0.5 rounded-dlc-sm px-1 py-0.5 text-[10px] font-medium text-amber-700 hover:text-amber-900 dark:text-amber-400"
+                              onClick={onImportFromContact}
+                            >
+                              <Link2 className="h-3 w-3 shrink-0" aria-hidden />
+                              Link Document
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-0.5 rounded-dlc-sm px-1 py-0.5 text-[10px] font-medium text-sky-700 hover:text-sky-900 dark:text-sky-400"
+                            onClick={() => {
+                              setNewFolderParentId(null);
+                              setNewFolderTaskId(null);
+                              setNewFolderOpen(true);
+                            }}
+                          >
+                            <FolderPlus className="h-3 w-3 shrink-0" aria-hidden />
+                            New Folder
+                          </button>
+                        </div>
+                      ) : null}
+                    </FolderDropZone>
+                  </li>
+              </>
             ) : (
               <li className="px-2 py-3 text-xs text-muted-foreground">
                 No folders or files match your search.
@@ -1366,11 +1956,71 @@ export function DocumentVaultDirectoryTree({
         )}
       </nav>
 
+      {onToggleShowArchived ? (
+        <div className="border-t border-border/40 px-3 py-1.5">
+          <button
+            type="button"
+            className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
+            onClick={onToggleShowArchived}
+            data-testid="document-vault-show-archived-tasks"
+          >
+            {showArchived ? "Hide archived tasks" : "Show archived tasks"}
+            {archivedFileTasks && archivedFileTasks.length > 0
+              ? ` (${archivedFileTasks.length})`
+              : ""}
+          </button>
+          {showArchived && archivedFileTasks && archivedFileTasks.length > 0 ? (
+            <ul className="mt-2 space-y-1">
+              {archivedFileTasks.map((task) => (
+                <li
+                  key={task._id}
+                  className="flex items-center justify-between rounded-dlc-sm border border-border/50 bg-muted/20 px-2 py-1.5"
+                >
+                  <span className="truncate text-xs text-muted-foreground">
+                    {task.title}
+                  </span>
+                  {canMutate && memberUserKey ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 px-1.5 text-[10px]"
+                      onClick={() => {
+                        void restoreFileTask({
+                          fileTaskId: task._id,
+                          memberUserKey,
+                        });
+                      }}
+                    >
+                      <ArchiveRestore className="h-3 w-3" aria-hidden />
+                      Restore
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
       <FolderNameDialog
         open={newFolderOpen}
-        title="New folder"
+        title={
+          newFolderParentId
+            ? `New folder in ${
+                folders?.find((f) => f._id === newFolderParentId)?.name ??
+                "folder"
+              }`
+            : newFolderTaskId
+              ? "New folder in file task"
+              : "New folder"
+        }
         confirmLabel="Create folder"
-        onClose={() => setNewFolderOpen(false)}
+        onClose={() => {
+          setNewFolderOpen(false);
+          setNewFolderTaskId(null);
+          setNewFolderParentId(null);
+        }}
         onSubmit={handleCreateFolder}
       />
 
@@ -1389,6 +2039,198 @@ export function DocumentVaultDirectoryTree({
             }
           }}
           onError={onError}
+        />
+      ) : null}
+
+      {archiveFileTaskTarget ? (
+        <OverlayShell
+          open
+          onClose={() => setArchiveFileTaskTarget(null)}
+          aria-label="Archive file task"
+          panelClassName="w-full max-w-md p-5"
+        >
+          <h3 className="text-sm font-semibold text-foreground">
+            Archive file task?
+          </h3>
+          <p className="mt-2 text-xs text-muted-foreground">
+            &ldquo;{archiveFileTaskTarget.title}&rdquo; will be hidden from the
+            active vault and client portal. Contents stay assigned. You can
+            restore it later.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setArchiveFileTaskTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void (async () => {
+                  if (!memberUserKey) return;
+                  try {
+                    await archiveFileTask({
+                      fileTaskId: archiveFileTaskTarget._id,
+                      memberUserKey,
+                    });
+                  } catch (e) {
+                    onError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setArchiveFileTaskTarget(null);
+                  }
+                })();
+              }}
+            >
+              <Archive className="h-3.5 w-3.5" aria-hidden />
+              Archive
+            </Button>
+          </div>
+        </OverlayShell>
+      ) : null}
+
+      {deleteFileTaskTarget ? (
+        <OverlayShell
+          open
+          onClose={() => setDeleteFileTaskTarget(null)}
+          aria-label="Delete file task"
+          panelClassName="w-full max-w-md p-5"
+        >
+          <h3 className="text-sm font-semibold text-destructive">
+            Permanently delete file task?
+          </h3>
+          <p className="mt-2 text-xs text-muted-foreground">
+            &ldquo;{deleteFileTaskTarget.title}&rdquo; and all linked documents
+            will be permanently removed. Storage files will be deleted. This
+            cannot be undone.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setDeleteFileTaskTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              className="bg-destructive hover:bg-destructive/90"
+              onClick={() => {
+                void (async () => {
+                  if (!memberUserKey) return;
+                  try {
+                    await deleteFileTask({
+                      fileTaskId: deleteFileTaskTarget._id,
+                      strategy: "delete_contents",
+                      memberUserKey,
+                    });
+                  } catch (e) {
+                    onError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setDeleteFileTaskTarget(null);
+                  }
+                })();
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+              Delete forever
+            </Button>
+          </div>
+        </OverlayShell>
+      ) : null}
+
+      {rejectFileTaskTarget ? (
+        <FileTaskRejectModal
+          open
+          taskTitle={rejectFileTaskTarget.title}
+          onClose={() => setRejectFileTaskTarget(null)}
+          onConfirm={async (note) => {
+            if (!memberUserKey) return;
+            await rejectReview({
+              fileTaskId: rejectFileTaskTarget._id,
+              rejectionNote: note,
+              memberUserKey,
+            });
+          }}
+        />
+      ) : null}
+
+      {executionFileTask ? (
+        <FileTaskExecutionModal
+          open
+          onClose={() => setExecutionFileTask(null)}
+          fileTask={executionFileTask}
+          pipelineFileId={pipelineFileId}
+          memberUserKey={memberUserKey}
+          canMutate={canMutate}
+          onAcceptReview={
+            canMutate && memberUserKey
+              ? async () => {
+                  await acceptReview({
+                    fileTaskId: executionFileTask._id,
+                    memberUserKey,
+                  });
+                }
+              : undefined
+          }
+          onRejectReview={
+            canMutate
+              ? () => setRejectFileTaskTarget(executionFileTask)
+              : undefined
+          }
+          onResetForClient={
+            canMutate && memberUserKey
+              ? async () => {
+                  await resetForClient({
+                    fileTaskId: executionFileTask._id,
+                    memberUserKey,
+                  });
+                }
+              : undefined
+          }
+          onEdit={
+            canMutate
+              ? () => {
+                  setConfigFileTask(executionFileTask);
+                  setExecutionFileTask(null);
+                }
+              : undefined
+          }
+        />
+      ) : null}
+
+      {configFileTask && memberUserKey ? (
+        <FileTaskConfigModal
+          open
+          mode="edit"
+          initialTask={configFileTask}
+          pipelineFileId={pipelineFileId}
+          memberUserKey={memberUserKey}
+          onClose={() => setConfigFileTask(null)}
+          onSubmit={async (payload) => {
+            await updateTaskConfig({
+              fileTaskId: configFileTask._id,
+              title: payload.title,
+              description: payload.description,
+              taskType: payload.taskType,
+              clientInstructionText: payload.clientInstructionText,
+              instructionUrl: payload.instructionUrl,
+              assignedBlockEntries: payload.assignedBlockEntries,
+              isRequired: payload.isRequired,
+              isPortalVisible: payload.isPortalVisible,
+              dueDate: payload.dueDate ?? null,
+              priority: payload.priority ?? null,
+              memberUserKey,
+            });
+            setConfigFileTask(null);
+          }}
         />
       ) : null}
     </div>

@@ -19,6 +19,10 @@ import {
   isGrantUsable,
   resolvePortalGrantContactId,
 } from "./clientPortalShared";
+import {
+  loadLinkByGrantId,
+  registerPortalGrantLink,
+} from "./clientPortalLinks";
 import { libraryDocumentCategoryV } from "./contactStickyData/validators";
 
 const memberKeyArg = {
@@ -244,6 +248,26 @@ export const inviteClient = mutation({
         permissionLabel:
           permission === "view" ? "View only" : "View and upload documents",
       });
+    }
+
+    const existingLink = await loadLinkByGrantId(ctx, grantId);
+    if (!existingLink) {
+      const grant = await ctx.db.get(grantId);
+      if (grant) {
+        await registerPortalGrantLink(ctx, {
+          pipelineFileId,
+          organizationId: pipeline.organizationId,
+          grantId,
+          emailKey,
+          title: label?.trim()
+            ? `Portal grant: ${label.trim()}`
+            : `Portal grant: ${emailKey}`,
+          targetName: emailKey,
+          expiresAt: grantExp ?? now + 10 * 365 * 24 * 60 * 60 * 1000,
+          createdByUserKey: inviter,
+          createdAt: grant.createdAt,
+        });
+      }
     }
 
     return {

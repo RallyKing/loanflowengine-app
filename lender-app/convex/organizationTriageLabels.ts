@@ -3,7 +3,10 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOrgPermission } from "./organizationRbac";
 import { assertOrganizationId } from "./organizationValidators";
-import { resolveMemberUserKey } from "./organizationAccess";
+import {
+  isSuperAdmin,
+  requireOrgReaderKey,
+} from "./authUtils";
 import { readTaskColorPresetsForOrg } from "./organizationSettings";
 import { isTaskColorPresetId } from "../lib/taskColorPresets";
 import { normalizeTriageLabelHex } from "../lib/triageLabelColor";
@@ -19,10 +22,12 @@ async function requireOrgReader(
   memberUserKey?: string,
 ) {
   await assertOrganizationId(ctx, organizationId);
-  const key = await resolveMemberUserKey(ctx, memberUserKey);
-  if (!key) throw new Error("Not authenticated");
-  await assertOrgPermission(ctx, organizationId, key, "files.view");
-  return key;
+  return requireOrgReaderKey(
+    ctx,
+    organizationId,
+    memberUserKey,
+    "organizationTriageLabels.requireOrgReader",
+  );
 }
 
 /** Settings admins or file editors may manage triage labels inline (Phase 24.2B). */
@@ -31,6 +36,9 @@ async function requireOrgTriageLabelEditor(
   organizationId: Id<"organizations">,
   memberUserKey?: string,
 ) {
+  if (await isSuperAdmin(ctx, memberUserKey)) {
+    return requireOrgReader(ctx, organizationId, memberUserKey);
+  }
   const key = await requireOrgReader(ctx, organizationId, memberUserKey);
   try {
     await assertOrgPermission(ctx, organizationId, key, "settings.manage");

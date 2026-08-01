@@ -485,7 +485,11 @@ function TaskDrawerLoaded({
 
   useEffect(() => {
     if (!actorUserKey) return;
-    void markTaskNotifsRead({ userKey: actorUserKey, taskId });
+    void markTaskNotifsRead({
+      userKey: actorUserKey,
+      memberUserKey: actorUserKey,
+      taskId,
+    });
   }, [taskId, actorUserKey, markTaskNotifsRead]);
 
   const consumeEscape = useCallback(() => {

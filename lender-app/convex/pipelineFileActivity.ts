@@ -44,7 +44,13 @@ export type PipelineFileActivityInsert = {
     | "share_grant"
     | "share_revoke"
     | "share_update"
-    | "client_momentum";
+    | "client_momentum"
+    | "vault_client_upload"
+    | "vault_broker_review"
+    | "lender_delivery_accessed"
+    | "lender_document_previewed"
+    | "lender_folder_expanded"
+    | "lender_package_exported";
   keys?: string[];
   summary?: string;
   contactId?: Id<"contacts">;

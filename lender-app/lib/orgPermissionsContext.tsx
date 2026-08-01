@@ -28,8 +28,15 @@ import { hasOrgPermission, type OrgPermission } from "@/lib/orgRbac";
 import { installOrgRbacDebugWindowApi } from "@/lib/orgRbacRuntimeSnapshot";
 import { getOrCreateClientTraceId } from "@/lib/observability/clientTraceId";
 import { useActorUserKey } from "@/lib/useActorUserKey";
+import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
 import { useViewer } from "@/lib/sessionContext";
 import { reconcileActiveOrgWithSession } from "@/lib/invariants/authRecovery";
+import { reconcileActiveOrganizationWithMemberships } from "@/lib/invariants/reconcileActiveOrganizationWithMemberships";
+import {
+  MASTER_PLATFORM_MEMBERSHIP_FALLBACK,
+  MASTER_PLATFORM_ORGANIZATION_ID,
+  resolveMasterOrganizationFallback,
+} from "@/lib/invariants/masterOrganizationFallback";
 import type { FunctionReturnType } from "convex/server";
 import { appendPriorityDebugClientLog, debugAgentLogPostUrl } from "@/lib/debugClientLog";
 
@@ -75,9 +82,32 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
   const viewer = useViewer();
   const viewerOrgId = viewer?.organizationId ?? null;
   const prevUserKeyRef = useRef<string | undefined>(viewer?.userKey);
+  const actorTrimmed = actorKey.trim();
+  const orgQueryReady = useConvexOrgQueryReady();
+  const membershipQueries = useMemo((): RequestForQueries => {
+    if (!actorTrimmed || !orgQueryReady) return {};
+    return {
+      memberships: {
+        query: api.organizations.listMyMemberships,
+        args: { userKey: actorTrimmed },
+      },
+    };
+  }, [actorTrimmed, orgQueryReady]);
+  const membershipQueryResults = useQueries(membershipQueries);
+  const membershipRowsRaw = actorTrimmed
+    ? membershipQueryResults.memberships
+    : undefined;
+  const membershipQueryFailed = membershipRowsRaw instanceof Error;
+  const membershipRows = membershipQueryFailed
+    ? MASTER_PLATFORM_MEMBERSHIP_FALLBACK
+    : membershipRowsRaw;
   const [activeOrganizationId, setActiveOrganizationId] = useState<
     Id<"organizations"> | null
-  >(() => parseOrganizationId(viewerOrgId ?? null));
+  >(
+    () =>
+      parseOrganizationId(viewerOrgId ?? null) ??
+      MASTER_PLATFORM_ORGANIZATION_ID,
+  );
 
   useEffect(() => {
     if (viewer?.impersonation?.targetOrganizationId) {
@@ -92,6 +122,29 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
       viewerOrgId ? { organizationId: viewerOrgId } : null,
     );
   }, [viewerOrgId, viewer?.impersonation?.targetOrganizationId]);
+
+  useEffect(() => {
+    if (!actorTrimmed) return;
+    if (membershipQueryFailed) {
+      const fallback = resolveMasterOrganizationFallback(viewerOrgId);
+      setStoredActiveOrganizationId(fallback);
+      setActiveOrganizationId((prev) => (prev === fallback ? prev : fallback));
+      return;
+    }
+    if (membershipRows === undefined) return;
+    const next = reconcileActiveOrganizationWithMemberships({
+      memberships: membershipRows,
+      sessionOrganizationId: viewerOrgId,
+      isGlobalAdmin: viewer?.isGlobalAdmin === true,
+    });
+    setActiveOrganizationId((prev) => (prev === next ? prev : next));
+  }, [
+    actorTrimmed,
+    membershipRows,
+    membershipQueryFailed,
+    viewerOrgId,
+    viewer?.isGlobalAdmin,
+  ]);
 
   /**
    * Middleware may set `lender_host_org` when the request host is not the canonical
@@ -130,7 +183,7 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
       if (stored) return stored;
       const viewerParsed = parseOrganizationId(viewerOrgId ?? null);
       if (viewerParsed) return viewerParsed;
-      return null;
+      return MASTER_PLATFORM_ORGANIZATION_ID;
     };
     const resolved = resolve();
     setActiveOrganizationId((prev) => (prev === resolved ? prev : resolved));
@@ -157,13 +210,14 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
       auth?.state === "expired" ||
       auth?.state === "revoked" ||
       auth?.state === "unauthenticated";
-    if (!activeOrganizationId || !trimmed || sessionBroken) return "skip" as const;
+    if (!trimmed || sessionBroken || !orgQueryReady) return "skip" as const;
+    const orgId = activeOrganizationId ?? MASTER_PLATFORM_ORGANIZATION_ID;
     return {
-      organizationId: activeOrganizationId,
+      organizationId: orgId,
       userKey: trimmed,
       clientTraceId: getOrCreateClientTraceId() || undefined,
     };
-  }, [activeOrganizationId, actorKey, auth?.state]);
+  }, [activeOrganizationId, actorKey, auth?.state, orgQueryReady]);
 
   const effectivePermissionsQueries = useMemo((): RequestForQueries => {
     if (effectiveQueryArgs === "skip") return {};
@@ -208,7 +262,9 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
   /** Convex `useQuery` throws on server errors; `useQueries` returns `Error` so the shell can degrade gracefully. */
   const effective: EffectivePermissions | undefined | null =
     effectiveRaw instanceof Error
-      ? null
+      ? effectiveRaw.message === "Unauthorized"
+        ? undefined
+        : null
       : effectiveRaw === undefined
         ? undefined
         : effectiveRaw;
@@ -286,7 +342,8 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
 
   const can = useCallback(
     (permission: OrgPermission): boolean => {
-      if (!activeOrganizationId) return false;
+      const orgId = activeOrganizationId ?? MASTER_PLATFORM_ORGANIZATION_ID;
+      if (!orgId) return false;
       /** Session-backed GodMode: full product access unless impersonating (tenant view). */
       if (viewer?.isGlobalAdmin === true && !viewer?.impersonation) return true;
       const perms = effective?.permissions;
@@ -337,14 +394,16 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
           console.warn("[debug-agent-log] fetch failed", e);
         }
       }
-      fetch("http://127.0.0.1:7412/ingest/32d854df-a7db-4c6f-bb28-ee2545e32c91", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "f25461",
-        },
-        body,
-      }).catch(() => {});
+      if (process.env.NODE_ENV === "development") {
+        fetch("http://127.0.0.1:7412/ingest/32d854df-a7db-4c6f-bb28-ee2545e32c91", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "f25461",
+          },
+          body,
+        }).catch(() => {});
+      }
     })();
     // #endregion
   }, [effective, effectiveDataKey, effectiveQueryArgs]);

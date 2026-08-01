@@ -18,6 +18,11 @@ import {
   safeUserKeyHint,
 } from "./orgPermissionTelemetry";
 import { assertOrgMember, resolveMemberUserKey } from "./organizationAccess";
+import {
+  callerIsPlatformGodMode,
+  jwtIdentityIsPlatformGodMode,
+  platformGodModeMembershipFastPath,
+} from "./auth/platformGodMode";
 import { resolveOrganizationContext } from "./organizationContext";
 import { seedDefaultOrgPipelineStages } from "./organizationPipelineStagesHelpers";
 import {
@@ -705,17 +710,26 @@ export const effectivePermissions = query({
         productRoleLabel: roleLabel,
       };
     } catch (err) {
-      try {
-        orgPermissionFail(
-          "organizations.effectivePermissions",
-          {
-            organizationId: String(organizationId),
-            argUserKey: safeUserKeyHint(userKey),
-          },
-          err,
-        );
-      } catch {
-        /* never block returning null if telemetry throws */
+      const msg = err instanceof Error ? err.message : String(err);
+      /** Expected during JWT bootstrap — not an integrity failure. */
+      if (msg !== "Unauthorized") {
+        try {
+          orgPermissionFail(
+            "organizations.effectivePermissions",
+            {
+              organizationId: String(organizationId),
+              argUserKey: safeUserKeyHint(userKey),
+            },
+            err,
+          );
+        } catch {
+          /* never block returning null if telemetry throws */
+        }
+      } else {
+        orgPermissionTrace("effectivePermissions.unauthorized", {
+          organizationId: String(organizationId),
+          argUserKey: safeUserKeyHint(userKey),
+        });
       }
       /** Fail closed for UI: avoids Convex client `useQuery` throwing on execution errors. */
       return null;
@@ -731,9 +745,24 @@ export const get = query({
   handler: async (ctx, { organizationId, memberUserKey }) => {
     const org = await ctx.db.get(organizationId);
     if (!org) return null;
-    const key = await resolveMemberUserKey(ctx, memberUserKey);
-    await assertOrgMember(ctx, organizationId, key);
-    return org;
+    try {
+      const key = await resolveMemberUserKey(ctx, memberUserKey);
+      if (await callerIsPlatformGodMode(ctx, key)) {
+        return org;
+      }
+      await assertOrgMember(ctx, organizationId, key);
+      return org;
+    } catch (err) {
+      const identity = await ctx.auth.getUserIdentity();
+      console.warn("[organizations.get] denied", {
+        organizationId: String(organizationId),
+        argUserKey: memberUserKey?.trim() || null,
+        jwtSubject: identity?.subject?.trim() || null,
+        jwtIssuer: identity?.issuer?.trim() || null,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   },
 });
 
@@ -799,37 +828,59 @@ export type MembershipRow = {
 export const listMyMemberships = query({
   args: { userKey: v.string() },
   handler: async (ctx, { userKey }) => {
-    const key = userKey.trim();
-    if (!key) return [] as MembershipRow[];
-
-    const links = await ctx.db
-      .query("organizationMembers")
-      .withIndex("by_user_org", (q) => q.eq("userKey", key))
-      .collect();
-
-    const out: MembershipRow[] = [];
-    for (const m of links) {
-      const org = await ctx.db.get(m.organizationId);
-      if (!org) continue;
-      let productRoleKey: string | undefined;
-      let productRoleLabel: string | undefined;
-      if (m.assignedRoleId) {
-        const rd = await ctx.db.get(m.assignedRoleId);
-        if (rd) {
-          productRoleKey = rd.key;
-          productRoleLabel = rd.label;
-        }
-      }
-      out.push({
-        organizationId: m.organizationId,
-        role: m.role,
-        organizationName: org.name,
-        organizationSlug: org.slug,
-        productRoleKey,
-        productRoleLabel,
-      });
+    const identity = await ctx.auth.getUserIdentity();
+    if (jwtIdentityIsPlatformGodMode(identity)) {
+      return platformGodModeMembershipFastPath() as MembershipRow[];
     }
-    return out;
+    if (await callerIsPlatformGodMode(ctx, userKey)) {
+      return platformGodModeMembershipFastPath() as MembershipRow[];
+    }
+
+    try {
+      const key = await resolveMemberUserKey(ctx, userKey);
+      if (!key) return [] as MembershipRow[];
+
+      const links = await ctx.db
+        .query("organizationMembers")
+        .withIndex("by_user_org", (q) => q.eq("userKey", key))
+        .collect();
+
+      const out: MembershipRow[] = [];
+      for (const m of links) {
+        const org = await ctx.db.get(m.organizationId);
+        if (!org) continue;
+        let productRoleKey: string | undefined;
+        let productRoleLabel: string | undefined;
+        if (m.assignedRoleId) {
+          const rd = await ctx.db.get(m.assignedRoleId);
+          if (rd) {
+            productRoleKey = rd.key;
+            productRoleLabel = rd.label;
+          }
+        }
+        out.push({
+          organizationId: m.organizationId,
+          role: m.role,
+          organizationName: org.name,
+          organizationSlug: org.slug,
+          productRoleKey,
+          productRoleLabel,
+        });
+      }
+      return out;
+    } catch (err) {
+      if (jwtIdentityIsPlatformGodMode(identity)) {
+        return platformGodModeMembershipFastPath() as MembershipRow[];
+      }
+      if (await callerIsPlatformGodMode(ctx, userKey)) {
+        return platformGodModeMembershipFastPath() as MembershipRow[];
+      }
+      console.warn("[organizations.listMyMemberships] failed", {
+        argUserKey: userKey?.trim() || null,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      return [] as MembershipRow[];
+    }
   },
 });
 
@@ -913,6 +964,31 @@ export const validateActiveScope = query({
   },
   handler: async (ctx, args) => {
     try {
+      const identity = await ctx.auth.getUserIdentity();
+      if (jwtIdentityIsPlatformGodMode(identity)) {
+        const org = await ctx.db.get(args.organizationId);
+        if (!org) {
+          return {
+            ok: false as const,
+            code: "ORG_NOT_FOUND" as const,
+            reason: "Organization not found.",
+          };
+        }
+        return { ok: true as const };
+      }
+
+      const key = await resolveMemberUserKey(ctx, args.memberUserKey);
+      if (await callerIsPlatformGodMode(ctx, key)) {
+        const org = await ctx.db.get(args.organizationId);
+        if (!org) {
+          return {
+            ok: false as const,
+            code: "ORG_NOT_FOUND" as const,
+            reason: "Organization not found.",
+          };
+        }
+        return { ok: true as const };
+      }
       await resolveOrganizationContext(
         ctx,
         args.organizationId,
@@ -920,6 +996,15 @@ export const validateActiveScope = query({
       );
       return { ok: true as const };
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      /** JWT not attached yet — expected client race; do not emit ORG_INTEGRITY_FAIL. */
+      if (msg === "Unauthorized") {
+        return {
+          ok: false as const,
+          code: "AUTH_PENDING" as const,
+          reason: msg,
+        };
+      }
       orgIntegrityFail("validateActiveScope", {
         organizationId: String(args.organizationId),
       }, e);

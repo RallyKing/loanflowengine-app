@@ -133,6 +133,7 @@ export const DEAL_INFO_BUSINESS_DEBT_LABEL = "Schedule of Business Debt";
 /** Stable anchors inside the Document Vault tab panel (Tab 4). */
 export const DOCUMENTS_TAB_SECTION_IDS = {
   vault: "pipeline-documents-vault",
+  auditTrail: "pipeline-documents-vault-audit",
 } as const;
 
 /** Stable anchors inside the Portals tab panel (Tab 5). */

@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode, useLayoutEffect, useMemo } from "react";
-import { ConvexProvider, ConvexReactClient } from "convex/react";
+import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import { createConvexBrowserLogger } from "@/lib/convexBrowserLogger";
 import {
   readConvexVerboseFlag,
@@ -16,6 +16,7 @@ import { OfflineSyncProvider } from "@/lib/offline/OfflineSyncContext";
 import { purgeLegacyAuthBrowserStorageIfNeeded } from "@/lib/storage/purgeLegacyAuthBrowserStorage";
 import { ConvexConfigMissing } from "./ConvexConfigMissing";
 import { CustomDomainOrgBootstrap } from "@/components/CustomDomainOrgBootstrap";
+import { useConvexWorkspaceAuth } from "@/lib/useConvexWorkspaceAuth";
 
 function ConvexClientReady({
   url,
@@ -58,13 +59,13 @@ function ConvexClientReady({
   }
 
   return (
-    <ConvexProvider client={client}>
+    <ConvexProviderWithAuth client={client} useAuth={useConvexWorkspaceAuth}>
       <LiveConnectionProvider>
         <OfflineSyncProvider>
           <CustomDomainOrgBootstrap>{children}</CustomDomainOrgBootstrap>
         </OfflineSyncProvider>
       </LiveConnectionProvider>
-    </ConvexProvider>
+    </ConvexProviderWithAuth>
   );
 }
 
@@ -72,9 +73,7 @@ function ConvexClientReady({
  * Wraps the app with Convex. Missing or invalid `NEXT_PUBLIC_CONVEX_URL`
  * renders a styled configuration screen instead of throwing.
  *
- * Auth is handled at the Next.js layer via the cookie session in
- * `middleware.ts` + `lib/sessionAuth.ts` — Convex itself runs without an
- * auth provider in this single-user deployment.
+ * Auth: native cookie session bridged to Convex via RS256 JWT (`useConvexWorkspaceAuth`).
  */
 export function ConvexClientProvider({ children }: { children: ReactNode }) {
   const parsed = parseConvexPublicUrl(process.env.NEXT_PUBLIC_CONVEX_URL);

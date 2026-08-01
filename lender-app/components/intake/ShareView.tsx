@@ -107,7 +107,7 @@ function ShareViewLoaded({
     const incoming = data.intake;
     const pendingKeys = new Set(Object.keys(pendingRef.current));
     setDraft((prev) =>
-      mergeIntakeDraftWithServer(prev, incoming, pendingKeys),
+      mergeIntakeDraftWithServer(prev, incoming as Sheet, pendingKeys) as Sheet | null,
     );
   }, [data]);
 

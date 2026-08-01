@@ -119,7 +119,11 @@ export function RegistryWorkspaceClient() {
             clientId: item._id as Id<"clients">,
           });
         } else {
-          await removeLender({ id: item._id as Id<"lenders"> });
+          await removeLender({
+            id: item._id as Id<"lenders">,
+            organizationId: activeOrganizationId,
+            memberUserKey: memberKey,
+          });
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

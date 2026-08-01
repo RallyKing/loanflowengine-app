@@ -246,6 +246,7 @@ export function tasksBlockMeta(
 export function documentVaultBlockMeta(
   count: number | undefined,
   lastUploadedAt: number | undefined,
+  pendingReviewCount?: number,
 ): CollapsibleBlockMeta {
   if (count === undefined) {
     return { status: "Loading", summary: "Scanning vault…" };
@@ -257,11 +258,22 @@ export function documentVaultBlockMeta(
           day: "numeric",
         })
       : "—";
+  const needsReview = (pendingReviewCount ?? 0) > 0;
   return {
-    status: count > 0 ? "Active" : "Empty",
-    badgeVariant: count > 0 ? "default" : "secondary",
-    indicatorCount: count > 0 ? count : undefined,
-    summary: `Last upload: ${last}`,
+    status: needsReview
+      ? "Needs review"
+      : count > 0
+        ? "Active"
+        : "Empty",
+    badgeVariant: needsReview ? "destructive" : count > 0 ? "default" : "secondary",
+    indicatorCount: needsReview
+      ? pendingReviewCount
+      : count > 0
+        ? count
+        : undefined,
+    summary: needsReview
+      ? `${pendingReviewCount} task${pendingReviewCount === 1 ? "" : "s"} awaiting broker review`
+      : `Last upload: ${last}`,
   };
 }
 

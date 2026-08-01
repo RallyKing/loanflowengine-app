@@ -48,33 +48,33 @@ export function appendPriorityDebugClientLog(
       timestamp:
         typeof payload.timestamp === "number" ? payload.timestamp : Date.now(),
     });
-    void fetch(
-      "http://127.0.0.1:7412/ingest/32d854df-a7db-4c6f-bb28-ee2545e32c91",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "f25461",
+    if (process.env.NODE_ENV === "development") {
+      void fetch(
+        "http://127.0.0.1:7412/ingest/32d854df-a7db-4c6f-bb28-ee2545e32c91",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "f25461",
+          },
+          body,
         },
+      ).catch(() => {});
+      void fetch(debugAgentLogPostUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body,
-      },
-    ).catch(() => {});
-    void fetch(debugAgentLogPostUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      keepalive: true,
-    })
-      .then((r) => {
-        if (process.env.NODE_ENV === "development" && !r.ok) {
-          console.warn("[debug-agent-log] POST failed", r.status, r.statusText);
-        }
+        keepalive: true,
       })
-      .catch((e) => {
-        if (process.env.NODE_ENV === "development") {
+        .then((r) => {
+          if (!r.ok) {
+            console.warn("[debug-agent-log] POST failed", r.status, r.statusText);
+          }
+        })
+        .catch((e) => {
           console.warn("[debug-agent-log] POST error", e);
-        }
-      });
+        });
+    }
   } catch {
     /* ignore */
   }

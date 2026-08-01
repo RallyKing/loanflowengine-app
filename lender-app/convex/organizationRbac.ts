@@ -23,6 +23,10 @@ import {
   tryGetAuthUserByPermissionKey,
 } from "./auth/globalAdmin";
 import {
+  callerIsPlatformGodMode,
+  jwtIdentityIsPlatformGodMode,
+} from "./auth/platformGodMode";
+import {
   getActiveImpersonationForInitiatorKey,
   isMutationCtx,
   resolveTenantAdminPermissionStrings,
@@ -106,6 +110,9 @@ const SALES_PERMISSIONS: OrgPermission[] = sanitizePermissionList([
   "files.view",
   "contacts.view",
   "contacts.manage",
+  "tasks.view",
+  "tasks.edit",
+  "communications.view",
   "communications.edit",
   "lenders.view",
   "reporting.view",
@@ -168,6 +175,20 @@ export async function resolveEffectivePermissionStrings(
       mode: activeImp.mode,
     });
     return resolveTenantAdminPermissionStrings(ctx, organizationId);
+  }
+
+  const identity = await ctx.auth.getUserIdentity();
+  if (
+    jwtIdentityIsPlatformGodMode(identity) ||
+    (await callerIsPlatformGodMode(ctx, key))
+  ) {
+    const org = await ctx.db.get(organizationId);
+    if (!org) return null;
+    orgPermissionTrace("resolveEffective.platformGodModeBypass", {
+      organizationId: String(organizationId),
+      userKey: safeUserKeyHint(key),
+    });
+    return await applyOrgPermissionDenies(ctx, organizationId, [...EVERYTHING]);
   }
 
   const authUserBypass = await tryGetAuthUserByPermissionKey(ctx, key);
@@ -328,7 +349,10 @@ export async function assertOrgPermission(
   }
 
   const godUser = await tryGetAuthUserByPermissionKey(ctx, key);
-  if (authUserHasGlobalAdminElevation(godUser) && !activeImp) {
+  if (
+    (await callerIsPlatformGodMode(ctx, key)) ||
+    (authUserHasGlobalAdminElevation(godUser) && !activeImp)
+  ) {
     return;
   }
 
@@ -383,7 +407,10 @@ export async function assertAnyOrgPermission(
   }
 
   const godUser = await tryGetAuthUserByPermissionKey(ctx, key);
-  if (authUserHasGlobalAdminElevation(godUser) && !activeImp) {
+  if (
+    (await callerIsPlatformGodMode(ctx, key)) ||
+    (authUserHasGlobalAdminElevation(godUser) && !activeImp)
+  ) {
     return;
   }
 

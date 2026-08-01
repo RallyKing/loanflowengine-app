@@ -46,12 +46,14 @@ export function mergeServerSheetIntoDraft<T extends Record<string, unknown>>(
   sheet: T,
   dirty: Partial<T>,
   flushing: Set<string>,
+  mergeBlocked: Set<string> = new Set(),
 ): T {
   const next = { ...prev } as T;
   let changed = false;
   for (const key of Object.keys(sheet) as (keyof T)[]) {
     if (Object.prototype.hasOwnProperty.call(dirty, key)) continue;
     if (flushing.has(key as string)) continue;
+    if (mergeBlocked.has(key as string)) continue;
     const incoming = sheet[key];
     if (!sheetFieldValueEqual(prev[key], incoming)) {
       (next as Record<string, unknown>)[key as string] = incoming;

@@ -1,9 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { assertOrgPermission } from "./organizationRbac";
 import { assertOrganizationId } from "./organizationValidators";
-import { resolveMemberUserKey } from "./organizationAccess";
+import {
+  requireOrgReaderKey,
+  requireOrgSettingsAdminKey,
+} from "./authUtils";
 import {
   DEFAULT_TASK_COLOR_PRESETS,
   assertExactlyEightTaskColorPresets,
@@ -49,10 +51,12 @@ async function requireOrgReader(
   memberUserKey?: string,
 ) {
   await assertOrganizationId(ctx, organizationId);
-  const key = await resolveMemberUserKey(ctx, memberUserKey);
-  if (!key) throw new Error("Not authenticated");
-  await assertOrgPermission(ctx, organizationId, key, "files.view");
-  return key;
+  return requireOrgReaderKey(
+    ctx,
+    organizationId,
+    memberUserKey,
+    "organizationSettings.requireOrgReader",
+  );
 }
 
 async function requireOrgSettingsAdmin(
@@ -60,9 +64,13 @@ async function requireOrgSettingsAdmin(
   organizationId: Id<"organizations">,
   memberUserKey?: string,
 ) {
-  const key = await requireOrgReader(ctx, organizationId, memberUserKey);
-  await assertOrgPermission(ctx, organizationId, key, "settings.manage");
-  return key;
+  await assertOrganizationId(ctx, organizationId);
+  return requireOrgSettingsAdminKey(
+    ctx,
+    organizationId,
+    memberUserKey,
+    "organizationSettings.requireOrgSettingsAdmin",
+  );
 }
 
 export async function readTaskSnoozeDefaultsForOrg(

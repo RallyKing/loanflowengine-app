@@ -119,12 +119,16 @@ async function main() {
 
   const client = new ConvexHttpClient(url);
 
+  const { loadOperatorOrgScope } = await import("./lib/operatorConvexIdentity.js");
+  const scope = loadOperatorOrgScope();
+
   const CHUNK = 100;
   let inserted = 0;
   let updated = 0;
   for (let i = 0; i < records.length; i += CHUNK) {
     const chunk = records.slice(i, i + CHUNK);
     const result = (await client.mutation(api.lenders.bulkUpsert as never, {
+      ...scope,
       records: chunk,
     })) as { inserted: number; updated: number; total: number };
     inserted += result.inserted;

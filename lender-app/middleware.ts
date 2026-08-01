@@ -10,6 +10,8 @@ import {
 } from "@/lib/middlewareHostMapping";
 import { LENDER_HOST_ORG_COOKIE } from "@/lib/hostOrgCookie";
 import { SESSION_COOKIE_NAME, verifySession } from "@/lib/sessionAuth";
+import { parseCompanySlugPortalPath } from "@/lib/clientPortalUrl";
+import { fetchPortalLinkRoute } from "@/lib/middlewarePortalRouting";
 
 /**
  * Routes that must NOT require authentication. Everything else under the
@@ -23,6 +25,8 @@ const PUBLIC_PREFIXES = [
   "/forgot-password",
   "/reset-password",
   "/session-expired",
+  "/terms",
+  "/privacy",
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/signup",
@@ -43,14 +47,23 @@ const PUBLIC_PREFIXES = [
   "/system/health",
   /** Minimal metrics text for scrapers (no secrets). */
   "/api/observability/metrics",
-  /** Local NDJSON debug ingest (opt-in via env; see app/api/debug-agent-log). */
-  "/api/debug-agent-log",
+  /** Local NDJSON debug ingest (dev only; route handler rejects prod). */
   /** Client portal (external users; auth is portal-specific, not workspace cookie). */
   "/portal",
   /** Intake share links must work without workspace session. */
   "/share",
   /** Stage 2 — public intake form gateway (tokenized apply links). */
   "/apply",
+  /** File Task direct-upload gateway (tokenized, no CRM chrome). */
+  "/upload",
+  /** Multi-task client portal bundle links. */
+  "/client-portal",
+  /** Secure lender delivery gateway. */
+  "/lender-delivery",
+  /** Optional passcode / OTP verification gateway for portal links. */
+  "/public",
+  /** JWKS for Convex customJwt verification — must be fetchable without a session. */
+  "/.well-known",
 ];
 /**
  * Auth-only pages: signed-in users hitting these get bounced to the app so
@@ -64,6 +77,7 @@ const AUTH_PAGE_PREFIXES = [
 ];
 
 function isPublic(pathname: string): boolean {
+  if (pathname === "/") return true;
   return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
@@ -91,9 +105,17 @@ function withObservability(
   res: NextResponse,
   requestId: string,
   correlationId: string,
+  pathname: string,
 ): NextResponse {
   res.headers.set(HEADER_REQUEST_ID, requestId);
   res.headers.set(HEADER_CORRELATION_ID, correlationId);
+  if (
+    pathname === "/api/convex/token" ||
+    pathname.startsWith("/api/auth/")
+  ) {
+    res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.headers.set("Pragma", "no-cache");
+  }
   return res;
 }
 
@@ -127,6 +149,42 @@ export default async function middleware(req: NextRequest) {
     hostOrgId = await fetchConvexOrgIdForHostname(hostname);
   }
 
+  if (pathname === "/.well-known/jwks.json" || pathname.startsWith("/.well-known/")) {
+    return withObservability(
+      applyHostOrgCookie(
+        nextWithRequestObservability(req, requestId, correlationId),
+        hostOrgId,
+      ),
+      requestId,
+      correlationId,
+      pathname,
+    );
+  }
+
+  const companyPortal = parseCompanySlugPortalPath(pathname);
+  if (companyPortal) {
+    const route = await fetchPortalLinkRoute(companyPortal.token);
+    const rewriteUrl = req.nextUrl.clone();
+    if (route?.linkType === "lender") {
+      rewriteUrl.pathname = `/lender-delivery/${encodeURIComponent(companyPortal.token)}`;
+      rewriteUrl.searchParams.delete("companySlug");
+    } else {
+      rewriteUrl.pathname = `/client-portal/${encodeURIComponent(companyPortal.token)}`;
+      rewriteUrl.searchParams.set("companySlug", companyPortal.companySlug);
+    }
+    trace.debug("auth.middleware", {
+      outcome: "company_portal_rewrite",
+      companySlug: companyPortal.companySlug,
+      linkType: route?.linkType ?? "client",
+    });
+    return withObservability(
+      applyHostOrgCookie(NextResponse.rewrite(rewriteUrl), hostOrgId),
+      requestId,
+      correlationId,
+      pathname,
+    );
+  }
+
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   const session = await verifySession(token);
 
@@ -135,11 +193,12 @@ export default async function middleware(req: NextRequest) {
   if (session && isAuthPage(pathname)) {
     return withObservability(
       applyHostOrgCookie(
-        NextResponse.redirect(new URL("/", req.url)),
+        NextResponse.redirect(new URL("/tasks", req.url)),
         hostOrgId,
       ),
       requestId,
       correlationId,
+      pathname,
     );
   }
 
@@ -156,6 +215,7 @@ export default async function middleware(req: NextRequest) {
       ),
       requestId,
       correlationId,
+      pathname,
     );
   }
 
@@ -173,6 +233,7 @@ export default async function middleware(req: NextRequest) {
       applyHostOrgCookie(NextResponse.redirect(loginUrl), hostOrgId),
       requestId,
       correlationId,
+      pathname,
     );
   }
 
@@ -190,6 +251,7 @@ export default async function middleware(req: NextRequest) {
     ),
     requestId,
     correlationId,
+    pathname,
   );
 }
 export const config = {

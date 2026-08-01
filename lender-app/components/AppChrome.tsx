@@ -163,7 +163,7 @@ function AppChromeBody({
   const masterpageState = pipelineStaticChrome ? "expanded" : mobileMasterpageState;
   /** Convex file route: workspace sheet owns scroll; `<main>` is a fixed flex shell only. */
   const isPipelineFileWorkspace = isPipelineWideShellRoute(pathname);
-  /** Global registry: `[data-registry-workspace-scroll]` owns vertical scroll. */
+  /** Contacts workspace: `[data-contacts-workspace-scroll]` owns vertical scroll. */
   const isRegistryWorkspace = resolveRegistryRoute(pathname);
   const isDelegatedWorkspaceScroll =
     isPipelineFileWorkspace || isRegistryWorkspace;
@@ -582,7 +582,10 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isClientPortal =
     (pathname?.startsWith("/portal") ?? false) ||
-    (pathname?.startsWith("/apply") ?? false);
+    (pathname?.startsWith("/apply") ?? false) ||
+    (pathname?.startsWith("/upload") ?? false) ||
+    (pathname?.startsWith("/client-portal") ?? false) ||
+    (pathname?.startsWith("/lender-delivery") ?? false);
   // `accountId` is a per-browser preferences key (NOT user identity). Gate the
   // notifications bell on a signed-in viewer `userKey` from the session.
   const { accountId } = useUserPreferences();

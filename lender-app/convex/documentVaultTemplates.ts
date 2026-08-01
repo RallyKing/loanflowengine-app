@@ -1,12 +1,11 @@
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import {
-  assertOrgMember,
-  resolveMemberUserKey,
-} from "./organizationAccess";
-import { assertOrgPermission } from "./organizationRbac";
 import { assertOrganizationId } from "./organizationValidators";
+import {
+  requireOrgReaderKey,
+  requireOrgMemberKey,
+} from "./authUtils";
 
 const memberUserKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -20,11 +19,12 @@ async function requireOrgReader(
   memberUserKey?: string,
 ) {
   await assertOrganizationId(ctx, organizationId);
-  const key = await resolveMemberUserKey(ctx, memberUserKey);
-  if (!key) throw new Error("Not authenticated");
-  await assertOrgMember(ctx, organizationId, key);
-  await assertOrgPermission(ctx, organizationId, key, "files.view");
-  return key;
+  return requireOrgReaderKey(
+    ctx,
+    organizationId,
+    memberUserKey,
+    "documentVaultTemplates.requireOrgReader",
+  );
 }
 
 async function requireOrgFileEditor(
@@ -32,9 +32,11 @@ async function requireOrgFileEditor(
   organizationId: Id<"organizations">,
   memberUserKey?: string,
 ) {
-  const key = await requireOrgReader(ctx, organizationId, memberUserKey);
-  await assertOrgPermission(ctx, organizationId, key, "files.edit");
-  return key;
+  await assertOrganizationId(ctx, organizationId);
+  return requireOrgMemberKey(ctx, organizationId, memberUserKey, {
+    permission: "files.edit",
+    stage: "documentVaultTemplates.requireOrgFileEditor",
+  });
 }
 
 export const listForOrganization = query({

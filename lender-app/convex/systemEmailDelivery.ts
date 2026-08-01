@@ -92,8 +92,8 @@ export const deliverQueuedSystemEmail = internalAction({
         channel: "email",
         providerKey: "resend",
         recipients: [
-          ...row.toAddresses.map((value) => ({ value })),
-          ...(row.ccAddresses?.map((value) => ({ value, kind: "cc" as const })) ?? []),
+          ...row.toAddresses.map((value: string) => ({ value })),
+          ...(row.ccAddresses?.map((value: string) => ({ value, kind: "cc" as const })) ?? []),
         ],
         subject: row.subject,
         bodyText: row.bodyText,

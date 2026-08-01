@@ -1,14 +1,17 @@
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   allContactEmailStrings,
   mergeScalarsIntoContactMethods,
   normalizeContactMethods,
   contactMethodsToConvexFields,
+  primaryContactEmail,
+  primaryContactPhone,
   type ContactEmailEntry,
   type ContactPhoneEntry,
 } from "@/lib/contact/contactMethods";
 import { normalizeEmailKey } from "@/lib/crmRelationship";
 import { DEFAULT_CONTACT_ROLE_IDS } from "@/lib/contact/contactRoles";
+import { contactPiiToDealStringFields } from "@/lib/contacts/contactProfileToDeal";
 
 export type DealBorrowerRow = {
   firstName?: string;
@@ -244,4 +247,36 @@ export function borrowerFileLinkRole(borrowerIndex: number): {
     role: "co-signer",
     contactRoleId: DEFAULT_CONTACT_ROLE_IDS.client,
   };
+}
+
+/** Hydrate deal borrower row identity from a linked CRM contact. */
+export function borrowerRowIdentityFromContact(
+  contact: Pick<
+    Doc<"contacts">,
+    "_id" | "name" | "fico" | "ssn" | "dob" | "email" | "phone" | "emails" | "phones"
+  >,
+): Record<string, unknown> {
+  const name = contact.name.trim();
+  const spaceIdx = name.lastIndexOf(" ");
+  const firstName = spaceIdx > 0 ? name.slice(0, spaceIdx).trim() : name;
+  const lastName = spaceIdx > 0 ? name.slice(spaceIdx + 1).trim() : "";
+  const email = primaryContactEmail(contact);
+  const phone = primaryContactPhone(contact);
+  return {
+    contactId: contact._id,
+    firstName,
+    ...(lastName ? { lastName } : {}),
+    ...(email ? { email } : {}),
+    ...(phone ? { mobile: phone } : {}),
+    ...contactPiiToDealStringFields(contact),
+  };
+}
+
+/** Stable React key for borrower panel rows — prefer CRM contact id. */
+export function borrowerPanelRowKey(row: unknown, index: number): string {
+  if (row && typeof row === "object") {
+    const contactId = (row as { contactId?: Id<"contacts"> }).contactId;
+    if (contactId) return `borrower-contact-${contactId}`;
+  }
+  return `borrower-slot-${index}`;
 }

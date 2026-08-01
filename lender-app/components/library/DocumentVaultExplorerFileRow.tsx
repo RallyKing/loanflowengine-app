@@ -37,6 +37,7 @@ import {
   FileDown,
 } from "lucide-react";
 import { LIBRARY_DOCUMENT_CATEGORY_LABELS } from "@/lib/library/documentVaultTaxonomy";
+import { VaultRegistryAssignMicroAction } from "@/components/library/VaultRegistryAssignMicroAction";
 
 function formatDate(ts: number | undefined) {
   if (ts == null) return "—";
@@ -58,6 +59,7 @@ function formatSize(contentType: string | undefined) {
 export type DocumentVaultExplorerFileRowProps = {
   row: LibraryDocumentListRow;
   depth: number;
+  density?: "default" | "compact";
   isSelected: boolean;
   isHighlighted: boolean;
   canMutate: boolean;
@@ -85,11 +87,14 @@ export type DocumentVaultExplorerFileRowProps = {
   onRemoveLink: () => void;
   onRejectDocument?: (reason: string) => void;
   onToggleClientVisibility?: () => void;
+  organizationId?: Id<"organizations">;
+  memberUserKey?: string;
 };
 
 export function DocumentVaultExplorerFileRow({
   row,
   depth,
+  density = "default",
   isSelected,
   isHighlighted,
   canMutate,
@@ -116,8 +121,11 @@ export function DocumentVaultExplorerFileRow({
   onRemoveLink,
   onRejectDocument,
   onToggleClientVisibility,
+  organizationId,
+  memberUserKey,
 }: DocumentVaultExplorerFileRowProps) {
   const [rejectOpen, setRejectOpen] = useState(false);
+  const isCompact = density === "compact";
   const isRejected = row.reviewStatus === "rejected";
   const showDragHandle =
     dragEnabled && row.linkScope === "pipeline" && canMutate && !isRejected;
@@ -136,6 +144,138 @@ export function DocumentVaultExplorerFileRow({
       }
     : undefined;
 
+  if (isCompact) {
+    return (
+      <li style={dragStyle} className="min-w-0">
+        <div
+          className={cn(
+            "group/file flex min-h-7 min-w-0 items-center gap-0.5 border-b border-border/40 pr-1",
+            isSelected && "bg-primary/8",
+            isHighlighted && "bg-amber-50/60 dark:bg-amber-950/20",
+            isRejected && "bg-rose-50/50 dark:bg-rose-950/15",
+          )}
+          style={{ paddingLeft: `${depth * 10 + 8}px` }}
+          data-testid={`document-vault-tree-document-${row._id}`}
+          data-vault-document-id={row._id}
+        >
+          {showDragHandle ? (
+            <button
+              ref={setNodeRef}
+              type="button"
+              className="inline-flex h-6 w-4 shrink-0 cursor-grab items-center justify-center text-muted-foreground/60 hover:text-foreground active:cursor-grabbing"
+              style={{ touchAction: "none" }}
+              aria-label={`Drag ${row.title}`}
+              onClick={(e) => e.stopPropagation()}
+              {...attributes}
+              {...listeners}
+            >
+              <GripVertical className="h-3 w-3" aria-hidden />
+            </button>
+          ) : (
+            <span ref={setNodeRef} className="inline-block h-6 w-4 shrink-0" aria-hidden />
+          )}
+
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-1 text-left"
+            onClick={isEditing ? undefined : onSelect}
+          >
+            <FileText
+              className="h-3 w-3 shrink-0 text-primary/70"
+              aria-hidden
+            />
+            {isEditing ? (
+              <input
+                type="text"
+                value={editValue}
+                onChange={(e) => onEditChange(e.target.value)}
+                onBlur={onCommitEdit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    onCommitEdit();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    onCancelEdit();
+                  }
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="min-w-0 flex-1 rounded-dlc-sm border border-border bg-background px-1.5 py-0 text-[11px] font-medium outline-none"
+                autoFocus
+              />
+            ) : (
+              <span
+                className={cn(
+                  "min-w-0 truncate text-[11px] font-medium text-foreground",
+                  isSelected && "text-primary",
+                )}
+              >
+                {row.title}
+              </span>
+            )}
+          </button>
+
+          <div
+            className="ml-auto flex shrink-0 items-center gap-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {canMutate && !isEditing ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                onClick={onStartEdit}
+              >
+                <Pencil className="h-2.5 w-2.5" aria-hidden />
+                Edit
+              </button>
+            ) : null}
+            {row.latestVersionNumber > 0 && row.latestVersionId ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-sky-700 hover:text-sky-900 dark:text-sky-400"
+                onClick={onPreview}
+              >
+                <Eye className="h-2.5 w-2.5" aria-hidden />
+                View
+              </button>
+            ) : null}
+            {canMutate && row.linkScope === "pipeline" ? (
+              <VaultRegistryAssignMicroAction
+                organizationId={organizationId}
+                memberUserKey={memberUserKey}
+                target={{ kind: "documentLink", linkId: row.linkId }}
+                assignedContactId={row.assignedContactId}
+                assignedClientId={row.assignedClientId}
+                assignedLenderId={row.assignedLenderId}
+                compact
+              />
+            ) : null}
+            {canMutate && row.linkScope === "pipeline" ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-700 hover:text-amber-900 dark:text-amber-400"
+                onClick={onAssignToRegistry}
+              >
+                <Link2 className="h-2.5 w-2.5" aria-hidden />
+                Assign
+              </button>
+            ) : null}
+            {canMutate ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-red-600 hover:text-red-800 dark:text-red-400"
+                onClick={onRemoveLink}
+              >
+                <Trash2 className="h-2.5 w-2.5" aria-hidden />
+                Trash
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </li>
+    );
+  }
+
   const statusLabel = (() => {
     if (isRejected) return "Rejected";
     if (row.expiryStatus === "expired") return "Expired";
@@ -147,7 +287,7 @@ export function DocumentVaultExplorerFileRow({
   })();
 
   return (
-    <li ref={setNodeRef} style={dragStyle} className="min-w-0">
+    <li style={dragStyle} className="min-w-0">
       <div
         className={cn(
           "group/file flex min-h-10 min-w-0 items-center gap-1 rounded-dlc-sm border border-transparent pr-1 transition-colors duration-dlc-short ease-dlc-standard",
@@ -175,8 +315,10 @@ export function DocumentVaultExplorerFileRow({
       >
         {showDragHandle ? (
           <button
+            ref={setNodeRef}
             type="button"
             className="inline-flex h-7 w-5 shrink-0 cursor-grab items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/file:opacity-100 active:cursor-grabbing"
+            style={{ touchAction: "none" }}
             aria-label={`Drag ${row.title}`}
             onClick={(e) => e.stopPropagation()}
             {...attributes}
@@ -185,7 +327,7 @@ export function DocumentVaultExplorerFileRow({
             <GripVertical className="h-3.5 w-3.5" aria-hidden />
           </button>
         ) : (
-          <span className="inline-block h-7 w-5 shrink-0" aria-hidden />
+          <span ref={setNodeRef} className="inline-block h-7 w-5 shrink-0" aria-hidden />
         )}
 
         <div className="shrink-0" onClick={(e) => e.stopPropagation()}>

@@ -36,6 +36,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { useLiveConnection } from "@/lib/useLiveConnection";
+import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 import { useOfflineSync } from "@/lib/offline/OfflineSyncContext";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -255,6 +256,7 @@ export function PipelineScenarioMatch({
 }: PipelineScenarioMatchProps) {
   const { accountId } = useUserPreferences();
   const preferencesAccountId = accountId.trim() || undefined;
+  const orgScope = useOrgConvexQueryArgs();
   const { canUseHub } = useLiveConnection();
   const offline = useOfflineSync();
   const patchPipelineMut = useMutation(api.pipeline.patch);
@@ -321,7 +323,7 @@ export function PipelineScenarioMatch({
   // Compose the args we'll pass to matchScenario, pulling funding-type keywords
   // from the dropdown option (so the search can use `lender_scenario`).
   const queryArgs = useMemo(() => {
-    if (!searching || !submitted) return null;
+    if (!searching || !submitted || !orgScope) return null;
     const fundingTypeOption = FUNDING_TYPE_OPTIONS.find(
       (o) => o.label === submitted.fundingTypeLabel
     );
@@ -329,6 +331,7 @@ export function PipelineScenarioMatch({
       (o) => o.label === submitted.propertyTypeLabel
     );
     return {
+      ...orgScope,
       fundingAmount: fundingAmount > 0 ? fundingAmount : undefined,
       fundingTypeLabel: submitted.fundingTypeLabel,
       fundingTypeKeywords: fundingTypeOption?.keywords,
@@ -349,7 +352,7 @@ export function PipelineScenarioMatch({
       freeText: scenarioText?.trim() || undefined,
       limit: 50,
     };
-  }, [searching, submitted, fundingAmount, scenarioText]);
+  }, [searching, submitted, fundingAmount, scenarioText, orgScope]);
 
   const data = useQuery(
     api.scenario.matchScenario,

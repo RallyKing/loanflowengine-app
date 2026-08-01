@@ -975,7 +975,11 @@ export default defineSchema({
   })
     .index("by_organization", ["organizationId"])
     .index("by_org_normalized", ["organizationId", "normalizedName"])
-    .index("by_org_owner", ["organizationId", "ownerUserId"]),
+    .index("by_org_owner", ["organizationId", "ownerUserId"])
+    .searchIndex("entity_search", {
+      searchField: "displayName",
+      filterFields: ["organizationId"],
+    }),
 
   /**
    * Phase 13.3 — project under a client (parent of one or more loan files).
@@ -1549,6 +1553,26 @@ export default defineSchema({
     lenders: v.array(v.id("lenders")),
 
     /**
+     * Primary lender for this deal — lead relationship. Denormalized into
+     * `selectedLenderId` and `lenders[]` for legacy readers.
+     */
+    primaryLenderId: v.optional(v.id("lenders")),
+
+    /**
+     * Secondary / syndication lenders (excludes primary). When unset, readers
+     * fall back to legacy `supportingLenderIds`.
+     */
+    secondaryLenderIds: v.optional(v.array(v.id("lenders"))),
+
+    /**
+     * Shortlist — lenders under consideration before role assignment.
+     */
+    consideringLenderIds: v.optional(v.array(v.id("lenders"))),
+
+    /** @deprecated Legacy alias — mirrored from `secondaryLenderIds` on write. */
+    supportingLenderIds: v.optional(v.array(v.id("lenders"))),
+
+    /**
      * The lender the user has chosen to actually fund the deal (after
      * shopping the file around). Always points at one of the ids in
      * `lenders` when set; cleared automatically when that lender is
@@ -1958,6 +1982,12 @@ export default defineSchema({
       v.literal("share_revoke"),
       v.literal("share_update"),
       v.literal("client_momentum"),
+      v.literal("vault_client_upload"),
+      v.literal("vault_broker_review"),
+      v.literal("lender_delivery_accessed"),
+      v.literal("lender_document_previewed"),
+      v.literal("lender_folder_expanded"),
+      v.literal("lender_package_exported"),
     ),
     /** Top-level fields or deal sections touched (short names only). */
     keys: v.optional(v.array(v.string())),
@@ -2450,6 +2480,21 @@ export default defineSchema({
     /** Global search blob; see `lib/globalSearchText`. */
     globalSearchText: v.optional(v.string()),
 
+    /**
+     * Phase Contacts overhaul — CRM list fields (backfilled + maintained by
+     * `contactCrmListFields` on link/activity mutations).
+     */
+    linkStatus: v.optional(
+      v.union(
+        v.literal("linked"),
+        v.literal("unlinked"),
+        v.literal("partial"),
+      ),
+    ),
+    lastActivityAt: v.optional(v.number()),
+    lastInteractionAt: v.optional(v.number()),
+    crmTags: v.optional(v.array(v.string())),
+
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2750,11 +2795,302 @@ export default defineSchema({
     name: v.string(),
     pipelineFileId: v.id("pipeline"),
     parentFolderId: v.optional(v.id("documentFolders")),
+    /** Optional File Task requirement container parent. */
+    fileTaskId: v.optional(v.id("documentVaultFileTasks")),
+    /** Global Registry — individual contact assignee. */
+    assignedContactId: v.optional(v.id("contacts")),
+    /** Global Registry — business entity assignee. */
+    assignedClientId: v.optional(v.id("clients")),
+    /** Global Registry — lender assignee. */
+    assignedLenderId: v.optional(v.id("lenders")),
     /** Manual sort among siblings (lower first). */
     sortOrder: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_pipeline", ["pipelineFileId"]),
+  })
+    .index("by_pipeline", ["pipelineFileId"])
+    .index("by_fileTask", ["fileTaskId"]),
+
+  /**
+   * Document Vault File Tasks — requirement containers (e.g. "6 Months Bank Statements").
+   * Parent wrappers for folders and loose files; distinct from graph `fileTasks` junction.
+   */
+  documentVaultFileTasks: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    title: v.string(),
+    /** Optional broker-facing description shown in task modals. */
+    description: v.optional(v.string()),
+    sortOrder: v.number(),
+    status: v.union(
+      v.literal("incomplete"),
+      v.literal("pending_review"),
+      v.literal("complete"),
+    ),
+    isRequired: v.boolean(),
+    isPortalVisible: v.boolean(),
+    isArchived: v.optional(v.boolean()),
+    /** Unix ms due date for broker/client visibility. */
+    dueDate: v.optional(v.number()),
+    /** Task urgency — shown as row badge. */
+    priority: v.optional(
+      v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    ),
+    /** Polymorphic task kind — defaults to document_upload when unset. */
+    taskType: v.optional(
+      v.union(
+        v.literal("document_upload"),
+        v.literal("client_instruction"),
+        v.literal("internal_task"),
+        v.literal("block_assignment"),
+      ),
+    ),
+    /** Rich text / markdown instruction for client_instruction tasks. */
+    clientInstructionText: v.optional(v.string()),
+    /** External URL for client_instruction tasks (payment portal, etc.). */
+    instructionUrl: v.optional(v.string()),
+    assignedContactId: v.optional(v.id("contacts")),
+    assignedClientId: v.optional(v.id("clients")),
+    assignedLenderId: v.optional(v.id("lenders")),
+    /** Ordered pipeline block assignments for block_assignment tasks. */
+    assignedBlockEntries: v.optional(
+      v.array(
+        v.object({
+          blockId: v.string(),
+          sortOrder: v.number(),
+        }),
+      ),
+    ),
+    /** Legacy flat block ids — kept in sync with assignedBlockEntries on write. */
+    assignedBlocks: v.optional(v.array(v.string())),
+    /** Broker note when rejecting a client upload for rework. */
+    rejectionNote: v.optional(v.string()),
+    lastNotifiedAt: v.optional(v.number()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_pipeline_sort", ["pipelineFileId", "sortOrder"]),
+
+  /**
+   * Tokenized direct-upload gateway for a single File Task (unauthenticated).
+   * Stores SHA-256 hash only; plain token returned once to broker on issue.
+   */
+  documentVaultFileTaskUploadTokens: defineTable({
+    fileTaskId: v.id("documentVaultFileTasks"),
+    pipelineFileId: v.id("pipeline"),
+    tokenHash: v.string(),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+    uploadCount: v.optional(v.number()),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_fileTask", ["fileTaskId"]),
+
+  documentTaskTemplates: defineTable({
+    organizationId: v.id("organizations"),
+    stackId: v.optional(v.id("documentTaskTemplateStacks")),
+    title: v.string(),
+    description: v.optional(v.string()),
+    isRequired: v.boolean(),
+    isPortalVisible: v.boolean(),
+    /** Legacy absolute due — prefer dueOffsetDays for templates. */
+    dueDate: v.optional(v.number()),
+    /** Days after template injection when a live task due date is calculated. */
+    dueOffsetDays: v.optional(v.number()),
+    priority: v.optional(
+      v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    ),
+    taskType: v.optional(
+      v.union(
+        v.literal("document_upload"),
+        v.literal("client_instruction"),
+        v.literal("internal_task"),
+        v.literal("block_assignment"),
+      ),
+    ),
+    clientInstructionText: v.optional(v.string()),
+    instructionUrl: v.optional(v.string()),
+    assignedBlockEntries: v.optional(
+      v.array(
+        v.object({
+          blockId: v.string(),
+          sortOrder: v.number(),
+        }),
+      ),
+    ),
+    assignedBlocks: v.optional(v.array(v.string())),
+    /** Nested upload folders (flat rows; depth 0 = task root). */
+    folderTemplate: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          depth: v.number(),
+          sortOrder: v.number(),
+        }),
+      ),
+    ),
+    sortOrder: v.number(),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_org", ["organizationId"])
+    .index("by_stack", ["stackId"]),
+
+  documentTaskTemplateStacks: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    sortOrder: v.number(),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_org", ["organizationId"]),
+
+  portalEmailTemplates: defineTable({
+    organizationId: v.optional(v.id("organizations")),
+    kind: v.union(
+      v.literal("initial_request"),
+      v.literal("file_task_reminder"),
+      v.literal("magic_link"),
+    ),
+    name: v.string(),
+    subject: v.string(),
+    bodyText: v.string(),
+    isDefault: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_org_kind", ["organizationId", "kind"]),
+
+  documentVaultClientBundleTokens: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    fileTaskIds: v.array(v.id("documentVaultFileTasks")),
+    tokenHash: v.string(),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    mode: v.union(v.literal("all_outstanding"), v.literal("selective")),
+    readOnlyPreview: v.optional(v.boolean()),
+    /** Broker agent preview may edit blocks (not read-only). */
+    brokerAgentCapable: v.optional(v.boolean()),
+    expiresAt: v.number(),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_pipeline", ["pipelineFileId"]),
+
+  /**
+   * Unified link registry — client portal + lender delivery sessions.
+   * Plain token lives only in the URL; registry stores tokenHash for lookup.
+   */
+  clientPortalLinks: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    organizationId: v.optional(v.id("organizations")),
+    linkType: v.optional(
+      v.union(
+        v.literal("client"),
+        v.literal("lender"),
+        v.literal("task_upload"),
+        v.literal("portal_grant"),
+      ),
+    ),
+    bundleTokenId: v.optional(v.id("documentVaultClientBundleTokens")),
+    lenderDeliveryTokenId: v.optional(v.id("lenderDeliveryTokens")),
+    fileTaskUploadTokenId: v.optional(v.id("documentVaultFileTaskUploadTokens")),
+    fileTaskId: v.optional(v.id("documentVaultFileTasks")),
+    grantId: v.optional(v.id("clientPortalGrants")),
+    lenderId: v.optional(v.id("lenders")),
+    targetName: v.optional(v.string()),
+    emailKey: v.optional(v.string()),
+    companySlug: v.optional(v.string()),
+    title: v.optional(v.string()),
+    tokenHash: v.string(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("revoked"),
+      v.literal("expired"),
+    ),
+    linkKind: v.optional(
+      v.union(
+        v.literal("client_invite"),
+        v.literal("broker_preview"),
+        v.literal("broker_agent"),
+        v.literal("lender_delivery"),
+        v.literal("task_upload"),
+        v.literal("portal_grant"),
+      ),
+    ),
+    /** True when the live URL still uses `/lender-delivery/{token}` instead of slug URLs. */
+    legacyPath: v.optional(v.boolean()),
+    requiresVerification: v.optional(v.boolean()),
+    verificationType: v.optional(
+      v.union(v.literal("passcode"), v.literal("email_otp")),
+    ),
+    verificationPasscodeHash: v.optional(v.string()),
+    verificationPasscodeSalt: v.optional(v.string()),
+    verificationEmail: v.optional(v.string()),
+    expiresAt: v.number(),
+    revokedAt: v.optional(v.number()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_pipeline_created", ["pipelineFileId", "createdAt"])
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_companySlug_tokenHash", ["companySlug", "tokenHash"])
+    .index("by_fileTaskUploadToken", ["fileTaskUploadTokenId"])
+    .index("by_grant", ["grantId"]),
+
+  /** Short-lived proof tokens after passcode/OTP verification for gated portal links. */
+  portalLinkAccessProofs: defineTable({
+    tokenHash: v.string(),
+    proofToken: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_proofToken", ["proofToken"])
+    .index("by_tokenHash", ["tokenHash"]),
+
+  /** Pending email OTP codes for portal link verification. */
+  portalVerificationOtps: defineTable({
+    linkId: v.id("clientPortalLinks"),
+    emailKey: v.string(),
+    otpHash: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  }).index("by_link", ["linkId"]),
+
+  lenderDeliveryTokens: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    lenderId: v.id("lenders"),
+    tokenHash: v.string(),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    permission: v.union(v.literal("view_only"), v.literal("downloadable")),
+    includedDocumentIds: v.array(v.id("libraryDocuments")),
+    includedFolderIds: v.array(v.id("documentFolders")),
+    includedFileTaskIds: v.array(v.id("documentVaultFileTasks")),
+    expiresAt: v.number(),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+  }).index("by_tokenHash", ["tokenHash"]),
+
+  /** Point-in-time snapshots of pipeline block settings before client overwrites. */
+  pipelineBlockSnapshots: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    blockId: v.string(),
+    fileTaskId: v.optional(v.id("documentVaultFileTasks")),
+    snapshotData: v.any(),
+    source: v.union(
+      v.literal("client_submission"),
+      v.literal("broker_manual"),
+      v.literal("broker_restore"),
+    ),
+    label: v.optional(v.string()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_pipeline_block", ["pipelineFileId", "blockId"])
+    .index("by_fileTask", ["fileTaskId"]),
 
   /**
    * Central document library: versioned blobs in Convex `_storage`, linked to
@@ -2872,6 +3208,11 @@ export default defineSchema({
     taskId: v.optional(v.id("tasks")),
     /** Phase 39.2 — optional folder placement within a pipeline file vault. */
     folderId: v.optional(v.id("documentFolders")),
+    /** File Task requirement container (loose files at task root). */
+    fileTaskId: v.optional(v.id("documentVaultFileTasks")),
+    assignedContactId: v.optional(v.id("contacts")),
+    assignedClientId: v.optional(v.id("clients")),
+    assignedLenderId: v.optional(v.id("lenders")),
     /** Phase 37.1.B — filter contact docs (ID, DD214, tax return, etc.). */
     documentCategory: v.optional(libraryDocumentCategoryV),
     /** Tax return year (e.g. "2024") when `documentCategory` is `tax_return`. */
@@ -2898,7 +3239,8 @@ export default defineSchema({
     .index("by_client_category", ["clientId", "documentCategory"])
     .index("by_lender_linkedAt", ["lenderId", "linkedAt"])
     .index("by_task_linkedAt", ["taskId", "linkedAt"])
-    .index("by_folder", ["folderId"]),
+    .index("by_folder", ["folderId"])
+    .index("by_fileTask", ["fileTaskId"]),
 
   /**
    * E-signature envelopes for library document versions (Dropbox Sign / HelloSign
@@ -3847,6 +4189,41 @@ export default defineSchema({
   })
     .index("by_delivery", ["deliveryId", "at"])
     .index("by_organization", ["organizationId"]),
+
+  /**
+   * SaaS notification webhook endpoints — multi-channel routing (email/SMS/external).
+   * Managed from Account Settings; deliveries run via `webhookDispatcher`.
+   */
+  webhooks: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    url: v.string(),
+    isActive: v.boolean(),
+    subscribedEvents: v.array(v.string()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  webhook_logs: defineTable({
+    webhookId: v.id("webhooks"),
+    organizationId: v.id("organizations"),
+    event: v.string(),
+    payload: v.string(),
+    status: v.union(
+      v.literal("success"),
+      v.literal("failed"),
+      v.literal("retrying"),
+    ),
+    httpStatus: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+    attempts: v.optional(v.number()),
+    nextRetryAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_webhook", ["webhookId", "createdAt"])
+    .index("by_organization", ["organizationId", "createdAt"]),
 
   /**
    * Snapshots of rows quarantined during `referentialIntegrity` repair (orphan / cross-org links).

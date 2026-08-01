@@ -9,12 +9,12 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { appendTaskFeed } from "./activityFeed";
 import { refreshTaskGlobalSearchText } from "./globalSearchSync";
 import { syncFileTaskEdgeFromTask } from "./indexedGraphEdgeSync";
-import {
-  assertOrgMember,
-  resolveMemberUserKey,
-} from "./organizationAccess";
-import { assertOrgPermission } from "./organizationRbac";
+import { assertOrgMember, resolveMemberUserKey } from "./organizationAccess";
 import { assertOrganizationId } from "./organizationValidators";
+import {
+  requireOrgReaderKey,
+  requireOrgMemberKey,
+} from "./authUtils";
 import { ownerUserIdFieldsForInsert } from "./resourceAccess";
 import { assertAndResolveTaskTriageFields } from "./tasks";
 
@@ -31,10 +31,12 @@ async function requireOrgReader(
   memberUserKey?: string,
 ) {
   await assertOrganizationId(ctx, organizationId);
-  const key = await resolveMemberUserKey(ctx, memberUserKey);
-  if (!key) throw new Error("Not authenticated");
-  await assertOrgPermission(ctx, organizationId, key, "files.view");
-  return key;
+  return requireOrgReaderKey(
+    ctx,
+    organizationId,
+    memberUserKey,
+    "taskTemplateLibrary.requireOrgReader",
+  );
 }
 
 async function requireOrgSettingsAdmin(
@@ -42,9 +44,11 @@ async function requireOrgSettingsAdmin(
   organizationId: Id<"organizations">,
   memberUserKey?: string,
 ) {
-  const key = await requireOrgReader(ctx, organizationId, memberUserKey);
-  await assertOrgPermission(ctx, organizationId, key, "settings.manage");
-  return key;
+  await assertOrganizationId(ctx, organizationId);
+  return requireOrgMemberKey(ctx, organizationId, memberUserKey, {
+    permission: "settings.manage",
+    stage: "taskTemplateLibrary.requireOrgSettingsAdmin",
+  });
 }
 
 function safeAttachmentFileName(name: string) {

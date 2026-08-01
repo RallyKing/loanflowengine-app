@@ -4,6 +4,8 @@ import { useMemo } from "react";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
+import { MASTER_PLATFORM_ORGANIZATION_ID } from "@/lib/invariants/masterOrganizationFallback";
+import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
 
 /** Args shape required by org-scoped Convex queries (`assertOrgScopeArgs`). */
 export type OrgScopedConvexArgs = {
@@ -17,10 +19,13 @@ export type OrgScopedConvexArgs = {
  * falls back to unscoped/global responses.
  */
 export function useOrgConvexQueryArgs(): OrgScopedConvexArgs | null {
+  const orgQueryReady = useConvexOrgQueryReady();
   const { activeOrganizationId } = useOrgPermissions();
   const memberUserKey = useActorUserKey().trim();
   return useMemo(() => {
-    if (!activeOrganizationId || !memberUserKey) return null;
-    return { organizationId: activeOrganizationId, memberUserKey };
-  }, [activeOrganizationId, memberUserKey]);
+    if (!orgQueryReady) return null;
+    const orgId = activeOrganizationId ?? MASTER_PLATFORM_ORGANIZATION_ID;
+    if (!memberUserKey) return null;
+    return { organizationId: orgId, memberUserKey };
+  }, [orgQueryReady, activeOrganizationId, memberUserKey]);
 }

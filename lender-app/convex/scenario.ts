@@ -1,6 +1,7 @@
 import { type QueryCtx, query } from "./_generated/server";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+import { assertOrgScopeArgs } from "./organizationAccess";
 import {
   buildLenderSearchBlob,
   lenderFundingMaxRaw,
@@ -590,8 +591,15 @@ function money(n: number): string {
  */
 async function loadLendersForScenario(
   ctx: QueryCtx,
-  args: { fundingTypeKeywords?: string[] }
+  args: {
+    organizationId: Id<"organizations">;
+    memberUserKey: string;
+    fundingTypeKeywords?: string[];
+  },
 ) {
+  const visible = (row: Doc<"lenders">) =>
+    row.organizationId == null || row.organizationId === args.organizationId;
+
   const kws = args.fundingTypeKeywords?.filter((k) => k.trim().length > 0) ?? [];
   if (kws.length > 0) {
     const first = kws[0]!.trim();
@@ -600,13 +608,15 @@ async function loadLendersForScenario(
         .query("lenders")
         .withSearchIndex("lender_scenario", (q) => q.search("searchText", first))
         .collect();
-      if (narrowed.length > 0) {
-        return { lenders: narrowed, usedSearchNarrow: true as const };
+      const filtered = narrowed.filter(visible);
+      if (filtered.length > 0) {
+        return { lenders: filtered, usedSearchNarrow: true as const };
       }
     }
   }
+  const all = await ctx.db.query("lenders").collect();
   return {
-    lenders: await ctx.db.query("lenders").collect(),
+    lenders: all.filter(visible),
     usedSearchNarrow: false as const,
   };
 }
@@ -617,6 +627,8 @@ async function loadLendersForScenario(
 
 export const matchScenario = query({
   args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
     fundingAmount: v.optional(v.number()),
     fundingTypeLabel: v.optional(v.string()),
     fundingTypeKeywords: v.optional(v.array(v.string())),
@@ -635,11 +647,13 @@ export const matchScenario = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertOrgScopeArgs(ctx, args.organizationId, args.memberUserKey);
     const cap = Math.min(args.limit ?? 30, 100);
-    const { lenders, usedSearchNarrow } = await loadLendersForScenario(
-      ctx,
-      args
-    );
+    const { lenders, usedSearchNarrow } = await loadLendersForScenario(ctx, {
+      organizationId: args.organizationId,
+      memberUserKey: args.memberUserKey,
+      fundingTypeKeywords: args.fundingTypeKeywords,
+    });
 
     const scored: ScoredLender[] = [];
     const filterCounts: Record<string, number> = {};

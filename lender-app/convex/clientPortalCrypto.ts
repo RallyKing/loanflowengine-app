@@ -6,6 +6,27 @@ export function normalizePortalEmailKey(email: string): string {
   return email.trim().toLowerCase();
 }
 
+export function normalizePortalToken(raw: string): string {
+  let token = raw.trim();
+  if (!token) return token;
+  for (let i = 0; i < 2; i++) {
+    try {
+      const decoded = decodeURIComponent(token);
+      if (decoded === token) break;
+      token = decoded.trim();
+    } catch {
+      break;
+    }
+  }
+  if (token.includes("/")) {
+    token = (token.split("/")[0] ?? token).trim();
+  }
+  if (token.includes("?")) {
+    token = (token.split("?")[0] ?? token).trim();
+  }
+  return token;
+}
+
 export async function sha256Hex(input: string): Promise<string> {
   const buf = await crypto.subtle.digest(
     "SHA-256",

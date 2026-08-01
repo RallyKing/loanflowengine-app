@@ -73,19 +73,29 @@ function isTransientLoginTransportError(error: unknown): boolean {
   return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|network/i.test(message);
 }
 
+function isTransientGotoError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /interrupted by another navigation|Frame load interrupted/i.test(message);
+}
+
 async function postLogin(
   page: Page,
   username: string,
   password: string,
 ): Promise<import("@playwright/test").APIResponse> {
-  try {
-    await page.goto("/login", { waitUntil: "domcontentloaded" });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/interrupted by another navigation/i.test(message)) {
-      throw error;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await page.goto("/login", { waitUntil: "domcontentloaded" });
+      break;
+    } catch (error) {
+      if (!isTransientGotoError(error) || attempt === 3) {
+        throw error;
+      }
+      await page.waitForTimeout(350 * attempt);
     }
-    await page.waitForURL(/\/login(?:\?|$)/i, { timeout: 15_000 });
+  }
+  if (!/\/login(?:\?|$)/i.test(new URL(page.url()).pathname)) {
+    await page.waitForURL(/\/login(?:\?|$)/i, { timeout: 15_000 }).catch(() => undefined);
   }
   const origin = new URL(page.url()).origin;
   const maxAttempts = 4;

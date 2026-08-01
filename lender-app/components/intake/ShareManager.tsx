@@ -11,6 +11,7 @@ import {
   type ShareSectionId,
 } from "@/convex/shareSections";
 import { shareTokenAbsoluteUrl } from "@/lib/intake/routes";
+import { useActorUserKey } from "@/lib/useActorUserKey";
 
 type ShareLink = Doc<"shareLinks">;
 
@@ -106,7 +107,11 @@ export function ShareManager({
   currentSection: string;
   onClose: () => void;
 }) {
-  const links = useQuery(api.shareLinks.listForIntake, { intakeId });
+  const memberUserKey = useActorUserKey().trim() || undefined;
+  const links = useQuery(
+    api.shareLinks.listForIntake,
+    memberUserKey ? { intakeId, memberUserKey } : "skip",
+  );
   const createLink = useMutation(api.shareLinks.create);
   const revokeLink = useMutation(api.shareLinks.revoke);
   const removeLink = useMutation(api.shareLinks.remove);
@@ -187,6 +192,7 @@ export function ShareManager({
       setCreating(true);
       const { id } = await createLink({
         intakeId,
+        memberUserKey,
         sections: Array.from(picked),
         access,
         audience,
@@ -427,7 +433,7 @@ export function ShareManager({
                     copied={copied === l.token}
                     highlight={justCreated === l._id}
                     onCopy={() => onCopy(l.token)}
-                    onRevoke={() => revokeLink({ id: l._id })}
+                    onRevoke={() => revokeLink({ id: l._id, memberUserKey })}
                   />
                 ))}
               </ul>
@@ -447,7 +453,7 @@ export function ShareManager({
                       copied={false}
                       inactive
                       onCopy={() => {}}
-                      onRemove={() => removeLink({ id: l._id })}
+                      onRemove={() => removeLink({ id: l._id, memberUserKey })}
                     />
                   ))}
                 </ul>

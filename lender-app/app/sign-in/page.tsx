@@ -22,6 +22,6 @@ export default async function SignInRedirectPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
-  const next = pickFirst(params.next) ?? "/";
+  const next = pickFirst(params.next) ?? "/tasks";
   redirect(`/login?next=${encodeURIComponent(next)}`);
 }

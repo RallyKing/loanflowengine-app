@@ -194,7 +194,7 @@ export function LenderDrawer({
   }
 
   async function save() {
-    if (!draft) return;
+    if (!draft || !orgScope) return;
     setSaving(true);
     try {
       const d = draft as unknown as Record<string, unknown>;
@@ -255,6 +255,7 @@ export function LenderDrawer({
 
       await update({
         id: id as Id<"lenders">,
+        ...orgScope,
         ...(rest as unknown as Record<string, string>),
         programList: cleanedPrograms,
         contacts: cleanedContacts,
@@ -269,10 +270,10 @@ export function LenderDrawer({
   }
 
   async function setRating(stars: number) {
-    if (!draft || !id) return;
+    if (!draft || !id || !orgScope) return;
     setDraft({ ...draft, rating: stars } as Lender);
     try {
-      await rate({ id: id as Id<"lenders">, rating: stars });
+      await rate({ id: id as Id<"lenders">, rating: stars, ...orgScope });
     } catch {
       // revert on failure
     }
@@ -324,7 +325,7 @@ export function LenderDrawer({
   }
 
   async function runMerge(keepId: Id<"lenders">, removeId: Id<"lenders">) {
-    if (merging) return;
+    if (merging || !orgScope) return;
     if (keepId === removeId) return;
     const ok = await confirm({
       ...simpleDeleteConfirm("duplicate lender", {
@@ -338,7 +339,7 @@ export function LenderDrawer({
     setMerging(true);
     setMergeMsg(null);
     try {
-      const res = await mergeLendersM({ keepId, removeId });
+      const res = await mergeLendersM({ keepId, removeId, ...orgScope });
       if (removeId === id) onLenderReplaced?.(res.keepId);
       setMergeQuery("");
       setMergeTarget(null);
@@ -358,7 +359,8 @@ export function LenderDrawer({
       }),
     });
     if (!ok) return;
-    await remove({ id: id as Id<"lenders"> });
+    if (!orgScope) return;
+    await remove({ id: id as Id<"lenders">, ...orgScope });
     onClose();
   }
 
@@ -369,7 +371,8 @@ export function LenderDrawer({
     if (!canUseHub || !noteDelta) return;
     setSavingNotes(true);
     try {
-      await setNotesM({ id, notes: profileNotes });
+      if (!orgScope) return;
+      await setNotesM({ id, notes: profileNotes, ...orgScope });
       setProfileNotesDirty(false);
     } finally {
       setSavingNotes(false);

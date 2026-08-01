@@ -457,6 +457,9 @@ const FAVORITE_INSPECTOR_CAPABLE_BLOCKS = new Set<PipelineBlockId>([
 const FAVORITE_PINNABLE_BLOCK_IDS: readonly PipelineBlockId[] =
   PIPELINE_BLOCK_IDS.filter((id) => id !== "dangerZone");
 
+/** Stable empty reference for lender rows while `detail` is loading. */
+const EMPTY_PIPELINE_LENDER_ROWS: Doc<"lenders">[] = [];
+
 type PipelineDrawerTaskPatchFields = Omit<
   Parameters<ReturnType<typeof useMutation<typeof api.tasks.patch>>>[0],
   "id" | "expectedUpdatedAt" | "organizationId" | "memberUserKey"
@@ -531,8 +534,6 @@ function PipelineFileWorkspaceLoaded({
   const actorKeyRaw = useActorUserKey();
   const convexMemberKey = actorKeyRaw.trim() || undefined;
   const { activeOrganizationId } = useOrgPermissions();
-  const [lenderSearch, setLenderSearch] = useState("");
-  /** Phase 17.3 — secondary metadata; default collapsed to reclaim vertical space. */
   const [headerDetailsExpanded, setHeaderDetailsExpanded] = useState(false);
   const [headerDetailsMounted, setHeaderDetailsMounted] = useState(false);
   useEffect(() => {
@@ -550,7 +551,7 @@ function PipelineFileWorkspaceLoaded({
     standaloneContacts,
     associatedContactLinks,
     fileTaskAttachmentCounts,
-    searchHits,
+    lenderOrgArgs,
     revenueOrgAgg,
     revenueUserAgg,
     pipelineOrgId,
@@ -560,7 +561,6 @@ function PipelineFileWorkspaceLoaded({
     preferencesAccountId,
     activeOrganizationId,
     accountId,
-    lenderSearch,
     embedded,
   });
 
@@ -585,6 +585,27 @@ function PipelineFileWorkspaceLoaded({
         }
       : "skip",
   );
+
+  const vaultPendingReview = useQuery(
+    api.documentVaultFileTasks.countPendingReviewByPipeline,
+    detail?.pipeline?._id && (convexMemberKey ?? preferencesAccountId)
+      ? {
+          pipelineFileId: detail.pipeline._id,
+          memberUserKey: convexMemberKey ?? preferencesAccountId,
+        }
+      : "skip",
+  );
+
+  const workspaceTabIndicators = useMemo((): Partial<
+    Record<FileWorkspaceTabId, { showDot?: boolean; count?: number }>
+  > => {
+    const count = vaultPendingReview?.count ?? 0;
+    if (count <= 0) return {};
+    return {
+      documents: { showDot: true, count },
+    };
+  }, [vaultPendingReview?.count]);
+
   const fileLenderLinkById = useMemo(() => {
     const m = new Map<
       string,
@@ -668,9 +689,97 @@ function PipelineFileWorkspaceLoaded({
   );
 
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [attaching, setAttaching] = useState<Id<"lenders"> | null>(null);
-  const [detaching, setDetaching] = useState<Id<"lenders"> | null>(null);
-  const [selecting, setSelecting] = useState<Id<"lenders"> | null>(null);
+  const [optimisticConsideringIds, setOptimisticConsideringIds] = useState<
+    Set<Id<"lenders">>
+  >(() => new Set());
+
+  /** Stable subscription — must run before any early return (Rules of Hooks). */
+  const pipelineLenderRows = detail?.lenders ?? EMPTY_PIPELINE_LENDER_ROWS;
+
+  const [optimisticLenderDocs, setOptimisticLenderDocs] = useState<
+    Map<Id<"lenders">, Doc<"lenders">>
+  >(() => new Map());
+
+  useEffect(() => {
+    if (optimisticConsideringIds.size === 0) return;
+    const linkedConsidering = new Set(
+      (detail?.consideringLenderIds ?? []).map(String),
+    );
+    setOptimisticConsideringIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of prev) {
+        if (linkedConsidering.has(String(id))) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [detail?.consideringLenderIds, optimisticConsideringIds.size]);
+
+  const mergedLenderRows = useMemo(() => {
+    if (optimisticLenderDocs.size === 0) return pipelineLenderRows;
+    const byId = new Map(pipelineLenderRows.map((l) => [l._id, l]));
+    for (const [lenderId, doc] of optimisticLenderDocs) {
+      if (!byId.has(lenderId)) byId.set(lenderId, doc);
+    }
+    return [...byId.values()];
+  }, [pipelineLenderRows, optimisticLenderDocs]);
+
+  const withOptimisticDoc = useCallback(
+    (l: Doc<"lenders">) => optimisticLenderDocs.get(l._id) ?? l,
+    [optimisticLenderDocs],
+  );
+
+  const primaryLender = useMemo(() => {
+    const base = detail?.primaryLender ?? null;
+    return base ? withOptimisticDoc(base) : null;
+  }, [detail?.primaryLender, withOptimisticDoc]);
+
+  const secondaryLenders = useMemo(() => {
+    const base =
+      detail?.secondaryLenders ?? detail?.supportingLenders ?? [];
+    return base.map(withOptimisticDoc);
+  }, [detail?.secondaryLenders, detail?.supportingLenders, withOptimisticDoc]);
+
+  const consideringLenders = useMemo(() => {
+    const base = detail?.consideringLenders ?? [];
+    const byId = new Map(base.map((l) => [l._id, withOptimisticDoc(l)]));
+    for (const lenderId of optimisticConsideringIds) {
+      if (!byId.has(lenderId)) {
+        const doc = optimisticLenderDocs.get(lenderId);
+        if (doc) byId.set(lenderId, doc);
+      }
+    }
+    return [...byId.values()];
+  }, [
+    detail?.consideringLenders,
+    optimisticConsideringIds,
+    optimisticLenderDocs,
+    withOptimisticDoc,
+  ]);
+
+  useEffect(() => {
+    setOptimisticLenderDocs((prev) => {
+      if (prev.size === 0) return prev;
+      const linked = new Set(pipelineLenderRows.map((l) => l._id));
+      let changed = false;
+      const next = new Map(prev);
+      for (const lenderId of prev.keys()) {
+        if (linked.has(lenderId)) {
+          next.delete(lenderId);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [pipelineLenderRows]);
+
+  const [settingBoardRoleId, setSettingBoardRoleId] =
+    useState<Id<"lenders"> | null>(null);
+  const [removingFromFileId, setRemovingFromFileId] =
+    useState<Id<"lenders"> | null>(null);
   const [rejectModalLenderId, setRejectModalLenderId] =
     useState<Id<"lenders"> | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -1186,9 +1295,11 @@ function PipelineFileWorkspaceLoaded({
     },
     [detail, intakeForLicense, runPatchDeal]
   );
-  const attachLender = useMutation(api.pipeline.attachLender);
-  const detachLender = useMutation(api.pipeline.detachLender);
-  const selectLender = useMutation(api.pipeline.selectLender);
+  const addLenderToConsiderationMut = useMutation(
+    api.pipeline.addLenderToConsideration,
+  );
+  const setLenderBoardRoleMut = useMutation(api.pipeline.setLenderBoardRole);
+  const removeLenderFromFileMut = useMutation(api.pipeline.removeLenderFromFile);
   const rejectLenderLink = useMutation(api.fileLenders.rejectLenderLink);
   const restoreLenderLink = useMutation(api.fileLenders.restoreLenderLink);
   const clearOtherLenders = useMutation(api.pipeline.clearOtherLenders);
@@ -1410,7 +1521,6 @@ function PipelineFileWorkspaceLoaded({
 
   // Reset transient state when switching files.
   useEffect(() => {
-    setLenderSearch("");
     setAttachError(null);
     setExportCopied(null);
     setOpenTaskId(null);
@@ -2006,17 +2116,12 @@ function PipelineFileWorkspaceLoaded({
     isSnoozed && snoozeUntilMs != null ? snoozeUntilMs : null;
   const hasSnoozeStored = p.snoozedUntil != null;
 
-  const lenderRows = detail.lenders;
-  // Surface the chosen lender at the top so the user always sees it first,
-  // even after a detach or a fresh attach reorders the underlying array.
-  const sortedLenderRows = p.selectedLenderId
-    ? [...lenderRows].sort((a, b) => {
-        const aChosen = a._id === p.selectedLenderId ? 0 : 1;
-        const bChosen = b._id === p.selectedLenderId ? 0 : 1;
-        return aChosen - bChosen;
-      })
-    : lenderRows;
-  const linkedIds = new Set(sortedLenderRows.map((l) => l._id));
+  // Surface primary lender first in legacy flat lists (insights, suggestions).
+  const sortedLenderRows = [
+    ...(primaryLender ? [primaryLender] : []),
+    ...secondaryLenders,
+    ...consideringLenders,
+  ];
   const statusInfo = getPipelineStatusInfo(p.status);
   const dealCommandCenterRateDisplay = (() => {
     const busRaw = fileDetailsBusRate?.display;
@@ -2050,12 +2155,73 @@ function PipelineFileWorkspaceLoaded({
     }
   }
 
-  async function onAttachLender(lenderId: Id<"lenders">) {
+  async function onAddToConsideration(payload: {
+    lenderId: Id<"lenders">;
+    hit: Doc<"lenders">;
+  }) {
     if (readOnly) return;
     setAttachError(null);
-    setAttaching(lenderId);
+    setOptimisticConsideringIds((prev) => {
+      const next = new Set(prev);
+      next.add(payload.lenderId);
+      return next;
+    });
+    setOptimisticLenderDocs((prev) => {
+      const next = new Map(prev);
+      next.set(payload.lenderId, payload.hit);
+      return next;
+    });
     try {
-      await attachLender({
+      await addLenderToConsiderationMut({
+        fileId: p._id,
+        lenderId: payload.lenderId,
+        preferencesAccountId: accountId || undefined,
+      });
+    } catch (e) {
+      setOptimisticConsideringIds((prev) => {
+        if (!prev.has(payload.lenderId)) return prev;
+        const next = new Set(prev);
+        next.delete(payload.lenderId);
+        return next;
+      });
+      setOptimisticLenderDocs((prev) => {
+        const next = new Map(prev);
+        next.delete(payload.lenderId);
+        return next.size === prev.size ? prev : next;
+      });
+      const message = e instanceof Error ? e.message : String(e);
+      setAttachError(message);
+      throw e;
+    }
+  }
+
+  async function onSetBoardRole(
+    lenderId: Id<"lenders">,
+    role: "primary" | "secondary" | "considering",
+  ) {
+    if (readOnly) return;
+    setAttachError(null);
+    setSettingBoardRoleId(lenderId);
+    try {
+      await setLenderBoardRoleMut({
+        fileId: p._id,
+        lenderId,
+        role,
+        preferencesAccountId: accountId || undefined,
+      });
+    } catch (e) {
+      setAttachError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSettingBoardRoleId(null);
+    }
+  }
+
+  async function onRemoveFromFile(lenderId: Id<"lenders">) {
+    if (readOnly) return;
+    setAttachError(null);
+    setRemovingFromFileId(lenderId);
+    try {
+      await removeLenderFromFileMut({
         fileId: p._id,
         lenderId,
         preferencesAccountId: accountId || undefined,
@@ -2063,41 +2229,7 @@ function PipelineFileWorkspaceLoaded({
     } catch (e) {
       setAttachError(e instanceof Error ? e.message : String(e));
     } finally {
-      setAttaching(null);
-    }
-  }
-
-  async function onDetachLender(lenderId: Id<"lenders">) {
-    if (readOnly) return;
-    setAttachError(null);
-    setDetaching(lenderId);
-    try {
-      await detachLender({
-        fileId: p._id,
-        lenderId,
-        ...(preferencesAccountId ? { preferencesAccountId } : {}),
-      });
-    } catch (e) {
-      setAttachError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDetaching(null);
-    }
-  }
-
-  async function onSelectLender(lenderId: Id<"lenders"> | null) {
-    if (readOnly) return;
-    setAttachError(null);
-    setSelecting(lenderId ?? ("__clear__" as unknown as Id<"lenders">));
-    try {
-      await selectLender({
-        fileId: p._id,
-        lenderId,
-        preferencesAccountId: accountId || undefined,
-      });
-    } catch (e) {
-      setAttachError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSelecting(null);
+      setRemovingFromFileId(null);
     }
   }
 
@@ -2522,26 +2654,25 @@ function PipelineFileWorkspaceLoaded({
         onOpen: (taskId) => setOpenTaskId(taskId),
       },
     lenders: {
-      lenders: lenderRows,
-      selectedLenderId: p.selectedLenderId,
+      fileId: p._id,
+      primaryLender,
+      secondaryLenders,
+      consideringLenders,
       linkByLenderId: fileLenderLinkById,
       readOnly,
-      searchHits,
-      lenderSearch,
-      onLenderSearchChange: setLenderSearch,
-      attaching,
+      lenderOrgArgs,
       attachError,
       onAttachErrorClear: () => setAttachError(null),
-      detaching,
-      selecting,
+      onAddToConsideration: (payload) => onAddToConsideration(payload),
+      settingBoardRoleId,
+      removingFromFileId,
       rejecting,
       restoring,
       clearing,
       confirmClear,
       onConfirmClearChange: setConfirmClear,
-      onAttachLender: (lenderId) => void onAttachLender(lenderId),
-      onDetachLender: (lenderId) => void onDetachLender(lenderId),
-      onSelectLender: (lenderId) => void onSelectLender(lenderId),
+      onSetBoardRole: (lenderId, role) => void onSetBoardRole(lenderId, role),
+      onRemoveFromFile: (lenderId) => void onRemoveFromFile(lenderId),
       onRestoreLender: (lenderId) => void onRestoreLender(lenderId),
       onClearLenders: (keep) => void onClearLenders(keep),
       onOpenRejectModal: (lenderId) => {
@@ -2628,7 +2759,7 @@ function PipelineFileWorkspaceLoaded({
       onCommitBrokerNmls: commitBrokerNmls,
     },
     organizationId: p.organizationId ?? undefined,
-    memberUserKey: convexMemberKey,
+    memberUserKey: convexMemberKey ?? preferencesAccountId,
     contactFileLinks: associatedContactLinks,
     clientId: globalBannerSwitchRow?.clientId,
   };
@@ -2784,7 +2915,7 @@ function PipelineFileWorkspaceLoaded({
           pipelineScenarioLine={
             typeof p.scenario === "string" ? p.scenario : undefined
           }
-          lenderCount={p.lenders.length}
+          lenderCount={sortedLenderRows.length}
           legacyContactCount={p.contacts?.length ?? 0}
           drawerLayout={drawerLayout}
           visibilitySignals={drawerVisibilitySignals}
@@ -2792,7 +2923,7 @@ function PipelineFileWorkspaceLoaded({
           setDrawerLayout={setDrawerLayout}
           accountId={accountId}
           workflowRules={workflowRulesForIntelligence}
-          hasSelectedLender={p.selectedLenderId != null}
+          hasSelectedLender={primaryLender != null}
           enableAi={drawerAiAssistEnabled}
         />
       }
@@ -3180,6 +3311,7 @@ function PipelineFileWorkspaceLoaded({
                   activeTab={workspaceActiveTab}
                   onActiveTabChange={setWorkspaceActiveTab}
                   placement="pinned"
+                  tabIndicators={workspaceTabIndicators}
                 />
                 <FileFavoritesBar
                   favorites={preferences.favoriteFileBlocks}

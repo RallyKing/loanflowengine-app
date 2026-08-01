@@ -4,6 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { assertCanReadContactRow, assertCanMutateContactRow } from "./organizationAccess";
 import { mirrorContactActivityToFeed } from "./activityFeed";
+import { patchContactAfterActivity } from "./contactCrmListFields";
 
 const activityKindV = v.union(
   v.literal("note"),
@@ -64,6 +65,7 @@ export async function insertContactActivity(
     relatedFileId: row.relatedFileId,
     relatedLenderId: row.relatedLenderId,
   });
+  await patchContactAfterActivity(ctx, row.contactId, { at, kind: row.kind });
   return id;
 }
 

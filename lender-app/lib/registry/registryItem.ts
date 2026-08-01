@@ -29,6 +29,12 @@ export type RegistryItem = {
   primaryPhone: string;
   roles: RegistryRoleId[];
   updatedAt: number;
+  /** CRM list fields (contacts; entities/lenders may omit). */
+  linkStatus?: "linked" | "unlinked" | "partial";
+  lastActivityAt?: number;
+  lastInteractionAt?: number;
+  crmTags?: string[];
+  notes?: string;
 };
 
 export function mapContactToRegistryItem(
@@ -44,6 +50,11 @@ export function mapContactToRegistryItem(
     primaryPhone: primaryContactPhone(contact).trim(),
     roles: roles.length > 0 ? roles : [REGISTRY_ROLE_IDS.client],
     updatedAt: contact.updatedAt,
+    linkStatus: contact.linkStatus,
+    lastActivityAt: contact.lastActivityAt,
+    lastInteractionAt: contact.lastInteractionAt,
+    crmTags: contact.crmTags,
+    notes: contact.notes?.trim() || undefined,
   };
 }
 
@@ -78,6 +89,8 @@ export function registrySearchHaystack(item: RegistryItem): string {
     item.primaryEmail,
     item.primaryPhone,
     item.registryType,
+    item.notes ?? "",
+    ...(item.crmTags ?? []),
     ...item.roles,
   ]
     .join(" ")
@@ -117,7 +130,11 @@ export function registryItemMatchesTypeFilter(
 
 export function sortRegistryItems(
   items: RegistryItem[],
-  sortBy: "updatedAt" | "displayName" = "updatedAt",
+  sortBy:
+    | "updatedAt"
+    | "displayName"
+    | "lastActivityAt"
+    | "lastInteractionAt" = "updatedAt",
 ): RegistryItem[] {
   const sorted = [...items];
   if (sortBy === "displayName") {
@@ -126,6 +143,49 @@ export function sortRegistryItems(
     );
     return sorted;
   }
+  if (sortBy === "lastActivityAt") {
+    sorted.sort(
+      (a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0),
+    );
+    return sorted;
+  }
+  if (sortBy === "lastInteractionAt") {
+    sorted.sort(
+      (a, b) => (b.lastInteractionAt ?? 0) - (a.lastInteractionAt ?? 0),
+    );
+    return sorted;
+  }
   sorted.sort((a, b) => b.updatedAt - a.updatedAt);
   return sorted;
+}
+
+export function registryItemMatchesLinkStatusFilter(
+  item: RegistryItem,
+  linkStatusFilter: readonly RegistryItem["linkStatus"][],
+): boolean {
+  if (linkStatusFilter.length === 0) return true;
+  if (item.registryType !== "contact") return true;
+  const status = item.linkStatus ?? "unlinked";
+  return linkStatusFilter.includes(status);
+}
+
+export function registryItemMatchesTagFilter(
+  item: RegistryItem,
+  tagFilter: readonly string[],
+): boolean {
+  if (tagFilter.length === 0) return true;
+  const tags = new Set((item.crmTags ?? []).map((t) => t.toLowerCase()));
+  return tagFilter.every((t) => tags.has(t.toLowerCase()));
+}
+
+export function registryItemMatchesDateRange(
+  item: RegistryItem,
+  field: "lastActivityAt" | "lastInteractionAt" | "updatedAt",
+  fromMs?: number,
+  toMs?: number,
+): boolean {
+  const value = item[field];
+  if (fromMs != null && (value == null || value < fromMs)) return false;
+  if (toMs != null && (value == null || value > toMs)) return false;
+  return true;
 }

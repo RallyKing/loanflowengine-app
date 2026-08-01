@@ -4,10 +4,6 @@ import { useMemo } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import {
-  buildListQueryArgs,
-  emptyBrowseFilterForm,
-} from "@/components/BrowseFiltersPanel";
 import { buildPipelineSwitcherRows } from "@/lib/pipeline/workspaceDataDerivations";
 import { isPipelineFileQueryId } from "@/lib/pipeline/workspaceFileQuery";
 import {
@@ -26,7 +22,6 @@ export function usePipelineFileWorkspaceData(args: {
   preferencesAccountId: string | undefined;
   activeOrganizationId: Id<"organizations"> | null | undefined;
   accountId: string;
-  lenderSearch: string;
   /** Nested fractal file card — skip hub switcher subscriptions. */
   embedded?: boolean;
 }) {
@@ -36,7 +31,6 @@ export function usePipelineFileWorkspaceData(args: {
     preferencesAccountId,
     activeOrganizationId,
     accountId,
-    lenderSearch,
     embedded = false,
   } = args;
 
@@ -97,6 +91,19 @@ export function usePipelineFileWorkspaceData(args: {
   const detail = useQuery(api.pipeline.getDetail, qArgs);
 
   const pipelineOrgId = detail?.pipeline?.organizationId ?? undefined;
+
+  /** Lender search org scope — query runs inside `LenderSearchPanel`. */
+  const lenderOrgArgs = useMemo(() => {
+    const organizationId = pipelineOrgId ?? activeOrganizationId;
+    const memberUserKey = (convexMemberKey ?? preferencesAccountId)?.trim();
+    if (!organizationId || !memberUserKey) return null;
+    return { organizationId, memberUserKey };
+  }, [
+    activeOrganizationId,
+    convexMemberKey,
+    pipelineOrgId,
+    preferencesAccountId,
+  ]);
 
   const orgPlanEntitlementsArgs = useMemo(():
     | { organizationId: Id<"organizations">; memberUserKey: string }
@@ -201,24 +208,6 @@ export function usePipelineFileWorkspaceData(args: {
       ? undefined
       : fileTaskAttachmentCountsRaw;
 
-  const lenderListArgs = useMemo(() => {
-    if (!orgConvexArgs) return null;
-    return {
-      ...buildListQueryArgs(lenderSearch, "", "", emptyBrowseFilterForm),
-      limit: 40,
-      ...orgConvexArgs,
-    };
-  }, [lenderSearch, orgConvexArgs]);
-
-  const canSearchLenders = Boolean(
-    orgConvexArgs && lenderSearch.trim().length > 0,
-  );
-
-  const searchHits = useQuery(
-    api.lenders.list,
-    canSearchLenders && lenderListArgs ? lenderListArgs : "skip",
-  );
-
   const revenueOrgArgs = useMemo(():
     | {
         organizationId: Id<"organizations">;
@@ -272,7 +261,7 @@ export function usePipelineFileWorkspaceData(args: {
     standaloneContacts,
     associatedContactLinks,
     fileTaskAttachmentCounts,
-    searchHits,
+    lenderOrgArgs,
     revenueOrgAgg,
     revenueUserAgg,
     pipelineOrgId,

@@ -6,7 +6,32 @@ export type VaultDownloadItem = {
   versionId: Id<"libraryDocumentVersions">;
   fileName: string;
   url: string;
+  /** Nested path inside the ZIP (e.g. `Tax Returns/2024/doc.pdf`). */
+  zipPath?: string;
 };
+
+function dedupeZipPath(path: string, used: Set<string>): string {
+  if (!used.has(path)) {
+    used.add(path);
+    return path;
+  }
+  const slash = path.lastIndexOf("/");
+  const dir = slash >= 0 ? path.slice(0, slash + 1) : "";
+  const base = slash >= 0 ? path.slice(slash + 1) : path;
+  const dot = base.lastIndexOf(".");
+  let suffix = 1;
+  let next = path;
+  while (used.has(next)) {
+    const nextBase =
+      dot > 0
+        ? `${base.slice(0, dot)} (${suffix})${base.slice(dot)}`
+        : `${base} (${suffix})`;
+    next = `${dir}${nextBase}`;
+    suffix += 1;
+  }
+  used.add(next);
+  return next;
+}
 
 export async function downloadVaultDocumentsZip(
   items: VaultDownloadItem[],
@@ -14,7 +39,7 @@ export async function downloadVaultDocumentsZip(
 ): Promise<void> {
   if (items.length === 0) throw new Error("No files to download.");
   const zip = new JSZip();
-  const usedNames = new Set<string>();
+  const usedPaths = new Set<string>();
 
   for (const item of items) {
     const res = await fetch(item.url, { cache: "no-store" });
@@ -22,19 +47,12 @@ export async function downloadVaultDocumentsZip(
       throw new Error(`Failed to fetch ${item.fileName} (${res.status})`);
     }
     const buf = await res.arrayBuffer();
-    let name = item.fileName.trim() || `document-${item.documentId}`;
-    let suffix = 1;
-    while (usedNames.has(name)) {
-      const dot = name.lastIndexOf(".");
-      if (dot > 0) {
-        name = `${name.slice(0, dot)} (${suffix})${name.slice(dot)}`;
-      } else {
-        name = `${name} (${suffix})`;
-      }
-      suffix += 1;
-    }
-    usedNames.add(name);
-    zip.file(name, buf);
+    const rawPath =
+      item.zipPath?.trim() ||
+      item.fileName.trim() ||
+      `document-${item.documentId}`;
+    const path = dedupeZipPath(rawPath, usedPaths);
+    zip.file(path, buf);
   }
 
   const blob = await zip.generateAsync({ type: "blob" });

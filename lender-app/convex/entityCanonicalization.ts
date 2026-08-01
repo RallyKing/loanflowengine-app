@@ -32,6 +32,7 @@ import {
 import {
   addLoanFileClientLink,
   findFileClientEdge,
+  removeLoanFileClientLink,
 } from "./indexedGraphEdgeSync";
 
 type ClientEntityType = NonNullable<Doc<"clients">["entityType"]>;
@@ -513,6 +514,26 @@ export const bindEntityBorrowerToFile = mutation({
         updatedAt: now,
       }) as Partial<Doc<"pipeline">>,
     );
+
+    if (file.intakeSheetId) {
+      const intakeRow = await ctx.db.get(file.intakeSheetId);
+      if (intakeRow) {
+        const intakeBusiness =
+          intakeRow.business != null &&
+          typeof intakeRow.business === "object" &&
+          !Array.isArray(intakeRow.business)
+            ? (intakeRow.business as Record<string, unknown>)
+            : {};
+        await ctx.db.patch(
+          file.intakeSheetId,
+          sanitizeDbPatch({
+            business: { ...intakeBusiness, ...businessPatch },
+            updatedAt: now,
+          }) as Partial<Doc<"intakeSheets">>,
+        );
+      }
+    }
+
     await appendPipelineFileActivity(ctx, {
       fileId: file._id,
       at: now,
@@ -560,6 +581,82 @@ export const bindEntityBorrowerToFile = mutation({
       clientId: args.clientId,
       business: businessPatch,
     };
+  },
+});
+
+/**
+ * Remove entity borrower binding — clears `dealData.business` (and intake
+ * mirror) and drops the non-primary `loanClients` / file-client edge.
+ */
+export const unbindEntityBorrowerFromFile = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    clientId: v.optional(v.id("clients")),
+    ...memberUserKeyArg,
+  },
+  handler: async (ctx, args) => {
+    const file = await ctx.db.get(args.fileId);
+    if (!file || !file.organizationId) throw new Error("File not found.");
+    await assertOrgMember(ctx, file.organizationId, args.memberUserKey);
+    const level = await resolvePipelineAccessLevel(
+      ctx,
+      file,
+      args.memberUserKey,
+    );
+    if (level !== "edit") {
+      throw new Error("You do not have permission to edit this file.");
+    }
+
+    const deal = await resolveDealBaseForPipelinePatch(ctx, file);
+    const now = Date.now();
+    const mergedDeal = mergePatchIntoDeal(deal, {
+      business: {},
+      updatedAt: now,
+    }) as Record<string, unknown>;
+
+    await ctx.db.patch(
+      file._id,
+      sanitizeDbPatch({
+        dealData: mergedDeal as Doc<"pipeline">["dealData"],
+        updatedAt: now,
+      }) as Partial<Doc<"pipeline">>,
+    );
+
+    if (file.intakeSheetId) {
+      const intakeRow = await ctx.db.get(file.intakeSheetId);
+      if (intakeRow) {
+        await ctx.db.patch(
+          file.intakeSheetId,
+          sanitizeDbPatch({
+            business: {},
+            updatedAt: now,
+          }) as Partial<Doc<"intakeSheets">>,
+        );
+      }
+    }
+
+    if (args.clientId) {
+      try {
+        await removeLoanFileClientLink(
+          ctx,
+          file,
+          args.clientId,
+          args.memberUserKey,
+        );
+      } catch {
+        // Edge may already be absent — business clear is the source of truth.
+      }
+    }
+
+    await appendPipelineFileActivity(ctx, {
+      fileId: file._id,
+      at: now,
+      kind: "deal_patch",
+      keys: ["business"],
+      summary: clampActivitySummary("Entity borrower removed"),
+    });
+    await refreshPipelineGlobalSearchText(ctx, file._id);
+    return { ok: true as const };
   },
 });
 

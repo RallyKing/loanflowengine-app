@@ -3,9 +3,15 @@
  */
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { platformUserKeyFallback } from "./viewerIdentity";
+import { requireAuthenticatedCaller } from "./callerAuth";
 import { getActiveImpersonationForInitiatorKey } from "./superuserImpersonation/runtime";
 import { pickCanonicalOrgMember } from "./orgMembership";
+import {
+  authUserHasGlobalAdminElevation,
+  tryGetAuthUserByPermissionKey,
+} from "./auth/globalAdmin";
+import { callerHasUnrestrictedOrgDataAccess } from "./viewerOrgAccess";
+import { rowBelongsToOrganizationScope } from "./orgScopeMatching";
 
 export type ResourceType =
   | "client"
@@ -47,11 +53,7 @@ async function resolveViewerKey(
   ctx: QueryCtx | MutationCtx,
   memberUserKey: string | undefined,
 ): Promise<string> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (identity?.subject?.trim()) return identity.subject.trim();
-  const key = memberUserKey?.trim();
-  if (key) return key;
-  return platformUserKeyFallback();
+  return requireAuthenticatedCaller(ctx, memberUserKey);
 }
 
 export async function impersonationGrantsOrgResourceVisibility(
@@ -350,12 +352,25 @@ async function resolveInheritedPipelineAccessLevel(
   return "none";
 }
 
+async function legacyRowAccessLevel(
+  ctx: QueryCtx | MutationCtx,
+  memberUserKey: string | undefined,
+): Promise<ResourceAccessLevel> {
+  try {
+    const key = await resolveViewerKey(ctx, memberUserKey);
+    const authUser = await tryGetAuthUserByPermissionKey(ctx, key);
+    return authUserHasGlobalAdminElevation(authUser) ? "edit" : "none";
+  } catch {
+    return "none";
+  }
+}
+
 export async function resolvePipelineAccessLevel(
   ctx: QueryCtx | MutationCtx,
   row: Doc<"pipeline">,
   memberUserKey: string | undefined,
 ): Promise<ResourceAccessLevel> {
-  if (!row.organizationId) return "edit";
+  if (!row.organizationId) return legacyRowAccessLevel(ctx, memberUserKey);
   let key: string;
   try {
     key = await resolveViewerKey(ctx, memberUserKey);
@@ -383,7 +398,7 @@ export async function resolveTaskAccessLevel(
   row: Doc<"tasks">,
   memberUserKey: string | undefined,
 ): Promise<ResourceAccessLevel> {
-  if (!row.organizationId) return "edit";
+  if (!row.organizationId) return legacyRowAccessLevel(ctx, memberUserKey);
   let key: string;
   try {
     key = await resolveViewerKey(ctx, memberUserKey);
@@ -411,7 +426,12 @@ export async function filterPipelineRowsForMember(
   memberUserKey: string | undefined,
 ): Promise<Doc<"pipeline">[]> {
   const key = await resolveViewerKey(ctx, memberUserKey);
-  const scoped = rows.filter((r) => r.organizationId === organizationId);
+  const scoped = rows.filter((r) =>
+    rowBelongsToOrganizationScope(r.organizationId, organizationId),
+  );
+  if (await callerHasUnrestrictedOrgDataAccess(ctx, key)) {
+    return scoped;
+  }
   if (await impersonationGrantsOrgResourceVisibility(ctx, key, organizationId)) {
     return scoped;
   }
@@ -439,7 +459,12 @@ export async function filterTaskRowsForMember(
   memberUserKey: string | undefined,
 ): Promise<Doc<"tasks">[]> {
   const key = await resolveViewerKey(ctx, memberUserKey);
-  const scoped = rows.filter((r) => r.organizationId === organizationId);
+  const scoped = rows.filter((r) =>
+    rowBelongsToOrganizationScope(r.organizationId, organizationId),
+  );
+  if (await callerHasUnrestrictedOrgDataAccess(ctx, key)) {
+    return scoped;
+  }
   if (await impersonationGrantsOrgResourceVisibility(ctx, key, organizationId)) {
     return scoped;
   }
@@ -481,7 +506,13 @@ export async function assertCanMutatePipelineRow(
   memberUserKey: string | undefined,
   action = "mutate",
 ): Promise<void> {
-  if (!row.organizationId) return;
+  if (!row.organizationId) {
+    const level = await legacyRowAccessLevel(ctx, memberUserKey);
+    if (level !== "edit") {
+      throw new Error("You do not have permission to edit this pipeline file.");
+    }
+    return;
+  }
   const key = await resolveViewerKey(ctx, memberUserKey);
   const level = await resolvePipelineAccessLevel(ctx, row, key);
   if (level !== "edit") {
@@ -502,7 +533,13 @@ export async function assertCanReadPipelineRow(
   row: Doc<"pipeline">,
   memberUserKey: string | undefined,
 ): Promise<void> {
-  if (!row.organizationId) return;
+  if (!row.organizationId) {
+    const level = await legacyRowAccessLevel(ctx, memberUserKey);
+    if (level === "none") {
+      throw new Error("You do not have access to this pipeline file.");
+    }
+    return;
+  }
   const level = await resolvePipelineAccessLevel(ctx, row, memberUserKey);
   if (level === "none") {
     throw new Error("You do not have access to this pipeline file.");
@@ -528,7 +565,10 @@ export async function pipelineFileReadable(
   row: Doc<"pipeline">,
   memberUserKey: string | undefined,
 ): Promise<boolean> {
-  if (!row.organizationId) return true;
+  if (!row.organizationId) {
+    const level = await legacyRowAccessLevel(ctx, memberUserKey);
+    return level !== "none";
+  }
   const level = await resolvePipelineAccessLevel(ctx, row, memberUserKey);
   return level !== "none";
 }
@@ -539,7 +579,13 @@ export async function assertCanMutateTaskRow(
   memberUserKey: string | undefined,
   action = "mutate",
 ): Promise<void> {
-  if (!row.organizationId) return;
+  if (!row.organizationId) {
+    const level = await legacyRowAccessLevel(ctx, memberUserKey);
+    if (level !== "edit") {
+      throw new Error("You do not have permission to edit this task.");
+    }
+    return;
+  }
   const key = await resolveViewerKey(ctx, memberUserKey);
   const level = await resolveTaskAccessLevel(ctx, row, key);
   if (level !== "edit") {
@@ -560,7 +606,13 @@ export async function assertCanReadTaskRow(
   row: Doc<"tasks">,
   memberUserKey: string | undefined,
 ): Promise<void> {
-  if (!row.organizationId) return;
+  if (!row.organizationId) {
+    const level = await legacyRowAccessLevel(ctx, memberUserKey);
+    if (level === "none") {
+      throw new Error("You do not have access to this task.");
+    }
+    return;
+  }
   const level = await resolveTaskAccessLevel(ctx, row, memberUserKey);
   if (level === "none") {
     throw new Error("You do not have access to this task.");

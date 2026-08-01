@@ -1347,15 +1347,17 @@ export const processOutboundMessage = internalAction({
         channel: payload.message.channel,
         providerKey: payload.message.providerKey,
       });
-      const attachmentDescriptors = payload.attachments.map((attachment) => ({
+      const attachmentDescriptors = payload.attachments.map(
+        (attachment: Doc<"outboundMessageAttachments">) => ({
         fileName: attachment.fileName,
         contentType: attachment.contentType,
         size: attachment.size,
-      }));
+      }),
+      );
       const result = await provider.send({
         channel: payload.message.channel,
         providerKey: payload.message.providerKey,
-        recipients: payload.message.recipientSummary.map((value) => ({ value })),
+        recipients: payload.message.recipientSummary.map((value: string) => ({ value })),
         subject: payload.message.subject ?? "(no subject)",
         bodyText: payload.message.bodyText,
         bodyHtml: payload.message.bodyHtml,

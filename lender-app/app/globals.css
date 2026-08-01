@@ -666,7 +666,10 @@ html[data-ui-density="analyst"] {
 /* Primary app scrollport + pipeline/registry workspace scrollports (same interaction contract). */
 [data-app-main-scroll],
 [data-pipeline-workspace-scroll],
-[data-registry-workspace-scroll] {
+[data-registry-workspace-scroll],
+[data-contacts-workspace-scroll],
+[data-contacts-table-scroll],
+[data-contacts-panel-scroll] {
   scroll-behavior: smooth;
   /* Momentum + vertical touch routing (pairs with `.touch-scroll-y`). */
   -webkit-overflow-scrolling: touch;
@@ -684,7 +687,10 @@ html[data-ui-density="analyst"] {
 }
 html[data-reduce-motion="true"] [data-app-main-scroll],
 html[data-reduce-motion="true"] [data-pipeline-workspace-scroll],
-html[data-reduce-motion="true"] [data-registry-workspace-scroll] {
+html[data-reduce-motion="true"] [data-registry-workspace-scroll],
+html[data-reduce-motion="true"] [data-contacts-workspace-scroll],
+html[data-reduce-motion="true"] [data-contacts-table-scroll],
+html[data-reduce-motion="true"] [data-contacts-panel-scroll] {
   scroll-behavior: auto;
 }
 

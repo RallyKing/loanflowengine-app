@@ -269,7 +269,7 @@ export function ContactDocumentsNotesTab(props: ContactDocumentsNotesTabProps) {
           No notes in this category yet.
         </p>
       ) : (
-        <ul className="max-h-80 touch-scroll-y space-y-2 overflow-y-auto pr-1" role="list">
+        <ul className="space-y-2" role="list">
           {filteredNotes.map((row) => (
             <li
               key={row._id}

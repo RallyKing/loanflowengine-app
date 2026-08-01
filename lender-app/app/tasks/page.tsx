@@ -84,6 +84,7 @@ import {
 import { SnoozeMenu, SnoozedBadge, isSnoozed } from "@/components/SnoozeMenu";
 import { ConvexQueryBoundary } from "@/components/ConvexQueryBoundary";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
+import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 import { useOrgMemberDisplayLabel } from "@/lib/useOrgMemberDisplayLabel";
 import type { ResourceOwnershipPresentationClient } from "@/lib/resourceOwnershipUi";
 import { useActorUserKey } from "@/lib/useActorUserKey";
@@ -1269,13 +1270,7 @@ function TasksPageInner() {
   const { activeOrganizationId } = useOrgPermissions();
   const actorKeyRaw = useActorUserKey();
   const actorUserKey = actorKeyRaw.trim() || undefined;
-  const orgConvexArgs = useMemo(() => {
-    if (!activeOrganizationId || !actorKeyRaw.trim()) return null;
-    return {
-      organizationId: activeOrganizationId,
-      memberUserKey: actorKeyRaw.trim(),
-    };
-  }, [activeOrganizationId, actorKeyRaw]);
+  const orgConvexArgs = useOrgConvexQueryArgs();
   const { labelFor: assigneeLabel } = useOrgMemberDisplayLabel(
     activeOrganizationId,
     actorUserKey,
@@ -1290,7 +1285,12 @@ function TasksPageInner() {
 
   const taskListResults = useQueries(taskListQueries);
   const tasksRaw = orgConvexArgs ? taskListResults.tasksAll : undefined;
-  const tasksQueryError = tasksRaw instanceof Error ? tasksRaw : null;
+  const tasksQueryError =
+    tasksRaw instanceof Error &&
+    tasksRaw.message !== "Unauthorized" &&
+    orgConvexArgs
+      ? tasksRaw
+      : null;
   const tasks = tasksRaw instanceof Error ? undefined : tasksRaw;
 
   useEffect(() => {

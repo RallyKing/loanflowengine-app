@@ -80,6 +80,10 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     updateDraftOnly,
 
+    blockServerMergeForKeys,
+
+    unblockServerMergeForKeys,
+
     preferencesAccountId,
 
   } = useDealWorkspaceEditor();
@@ -250,6 +254,10 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
       setBorrowerSavedAt(Date.now());
 
+      if (!pendingBorrowersRef.current) {
+        unblockServerMergeForKeys(["borrowers"]);
+      }
+
     } catch {
 
       pendingBorrowersRef.current = borrowers;
@@ -326,6 +334,10 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
       setGuarantorSavedAt(Date.now());
 
+      if (!pendingGuarantorsRef.current) {
+        unblockServerMergeForKeys(["guarantors"]);
+      }
+
     } catch {
 
       pendingGuarantorsRef.current = guarantors;
@@ -401,6 +413,10 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       }
 
       setIncomeSavedAt(Date.now());
+
+      if (!pendingIncomeRowsRef.current) {
+        unblockServerMergeForKeys(["incomeRows"]);
+      }
 
     } catch {
 
@@ -496,6 +512,10 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
       setAssetsSavedAt(Date.now());
 
+      if (!pendingPfsRef.current) {
+        unblockServerMergeForKeys(["assets", "liabilities"]);
+      }
+
     } catch {
 
       pendingPfsRef.current = {
@@ -578,6 +598,10 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
       setReoSavedAt(Date.now());
 
+      if (!pendingReoRef.current) {
+        unblockServerMergeForKeys(["reo"]);
+      }
+
     } catch {
 
       pendingReoRef.current = reo;
@@ -653,6 +677,10 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       }
 
       setBusinessDebtSavedAt(Date.now());
+
+      if (!pendingBusinessDebtRef.current) {
+        unblockServerMergeForKeys(["weightedInterest"]);
+      }
 
     } catch {
 
@@ -752,6 +780,10 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
       setHouseholdSavedAt(Date.now());
 
+      if (!pendingHouseholdRef.current) {
+        unblockServerMergeForKeys(["dependentsCount", "dependentsAges"]);
+      }
+
     } catch {
 
       pendingHouseholdRef.current = pending;
@@ -782,6 +814,8 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     (borrowers: Sheet["borrowers"]) => {
 
+      blockServerMergeForKeys(["borrowers"]);
+
       pendingBorrowersRef.current = borrowers;
 
       if (borrowerTimerRef.current) clearTimeout(borrowerTimerRef.current);
@@ -800,7 +834,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     },
 
-    [flushBorrowers, settings.intakeAutosaveCadence],
+    [flushBorrowers, settings.intakeAutosaveCadence, blockServerMergeForKeys],
 
   );
 
@@ -809,6 +843,8 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
   const queueGuarantorDualWrite = useCallback(
 
     (guarantors: Sheet["guarantors"]) => {
+
+      blockServerMergeForKeys(["guarantors"]);
 
       pendingGuarantorsRef.current = guarantors;
 
@@ -828,7 +864,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     },
 
-    [flushGuarantors, settings.intakeAutosaveCadence],
+    [flushGuarantors, settings.intakeAutosaveCadence, blockServerMergeForKeys],
 
   );
 
@@ -837,6 +873,8 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
   const queueIncomeDualWrite = useCallback(
 
     (incomeRows: Sheet["incomeRows"]) => {
+
+      blockServerMergeForKeys(["incomeRows"]);
 
       pendingIncomeRowsRef.current = incomeRows;
 
@@ -856,7 +894,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     },
 
-    [flushIncome, settings.intakeAutosaveCadence],
+    [flushIncome, settings.intakeAutosaveCadence, blockServerMergeForKeys],
 
   );
 
@@ -865,6 +903,8 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
   const queuePfsDualWrite = useCallback(
 
     (patch: PendingPfsPatch) => {
+
+      blockServerMergeForKeys(["assets", "liabilities"]);
 
       pendingPfsRef.current = {
 
@@ -890,7 +930,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     },
 
-    [flushPfs, settings.intakeAutosaveCadence],
+    [flushPfs, settings.intakeAutosaveCadence, blockServerMergeForKeys],
 
   );
 
@@ -899,6 +939,8 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
   const queueReoDualWrite = useCallback(
 
     (reo: NonNullable<Sheet["reo"]>) => {
+
+      blockServerMergeForKeys(["reo"]);
 
       pendingReoRef.current = reo;
 
@@ -918,7 +960,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     },
 
-    [flushReo, settings.intakeAutosaveCadence],
+    [flushReo, settings.intakeAutosaveCadence, blockServerMergeForKeys],
 
   );
 
@@ -927,6 +969,8 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
   const queueBusinessDebtDualWrite = useCallback(
 
     (weightedInterest: NonNullable<Sheet["weightedInterest"]>) => {
+
+      blockServerMergeForKeys(["weightedInterest"]);
 
       pendingBusinessDebtRef.current = weightedInterest;
 
@@ -950,7 +994,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     },
 
-    [flushBusinessDebt, settings.intakeAutosaveCadence],
+    [flushBusinessDebt, settings.intakeAutosaveCadence, blockServerMergeForKeys],
 
   );
 
@@ -959,6 +1003,8 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
   const queueHouseholdDualWrite = useCallback(
 
     (patch: PendingHouseholdPatch) => {
+
+      blockServerMergeForKeys(["dependentsCount", "dependentsAges"]);
 
       pendingHouseholdRef.current = patch;
 
@@ -978,7 +1024,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
     },
 
-    [flushHousehold, settings.intakeAutosaveCadence],
+    [flushHousehold, settings.intakeAutosaveCadence, blockServerMergeForKeys],
 
   );
 
@@ -1020,6 +1066,18 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
       void flushHousehold();
 
+      unblockServerMergeForKeys([
+        "borrowers",
+        "guarantors",
+        "incomeRows",
+        "assets",
+        "liabilities",
+        "reo",
+        "weightedInterest",
+        "dependentsCount",
+        "dependentsAges",
+      ]);
+
     };
 
   }, [
@@ -1037,6 +1095,8 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
     flushBusinessDebt,
 
     flushHousehold,
+
+    unblockServerMergeForKeys,
 
   ]);
 

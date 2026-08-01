@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/sessionUiClient";
-import { useMutation, useQueries, type RequestForQueries } from "convex/react";
+import { useMutation, useQueries, useConvexAuth, type RequestForQueries } from "convex/react";
 import { useMemo, useState } from "react";
 import { api } from "@/convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { useProductTour } from "@/lib/productTourContext";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
+import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
 import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
 import { simpleDeleteConfirm } from "@/lib/ui/confirmDestructive";
@@ -38,16 +39,24 @@ export function GettingStartedSettingsPanel() {
   const { accountId: preferencesAccountId } = useUserPreferences();
   const memberKey = useActorUserKey().trim();
   const { activeOrganizationId, can: orgCan } = useOrgPermissions();
+  const { isAuthenticated, isLoading: convexAuthLoading } = useConvexAuth();
+  const orgQueryReady = useConvexOrgQueryReady();
 
   const gettingStartedQueries = useMemo((): RequestForQueries => {
     const q: RequestForQueries = {};
-    if (isLoaded && isSignedIn && memberKey) {
+    if (
+      isLoaded &&
+      isSignedIn &&
+      memberKey &&
+      isAuthenticated &&
+      !convexAuthLoading
+    ) {
       q.onboarding = {
         query: api.userOnboarding.getForViewer,
         args: { memberUserKey: memberKey },
       };
     }
-    if (isLoaded && isSignedIn && activeOrganizationId && memberKey) {
+    if (orgQueryReady && activeOrganizationId && memberKey) {
       q.demoStatus = {
         query: api.demoWorkspace.status,
         args: {
@@ -57,7 +66,15 @@ export function GettingStartedSettingsPanel() {
       };
     }
     return q;
-  }, [isLoaded, isSignedIn, memberKey, activeOrganizationId]);
+  }, [
+    isLoaded,
+    isSignedIn,
+    memberKey,
+    isAuthenticated,
+    convexAuthLoading,
+    orgQueryReady,
+    activeOrganizationId,
+  ]);
 
   const gsResults = useQueries(gettingStartedQueries);
   const onboardingRaw =

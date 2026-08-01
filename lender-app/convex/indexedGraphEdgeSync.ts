@@ -504,8 +504,10 @@ export async function syncFileLenderEdgesFromPipeline(
     desired.add(String(lenderId));
     const existingEdge = await findFileLenderEdge(ctx, row._id, lenderId);
     const isSelected =
-      row.selectedLenderId != null &&
-      String(row.selectedLenderId) === String(lenderId);
+      (row.primaryLenderId != null &&
+        String(row.primaryLenderId) === String(lenderId)) ||
+      (row.selectedLenderId != null &&
+        String(row.selectedLenderId) === String(lenderId));
     const rel: FileLenderRel =
       existingEdge?.relationshipType === "declined"
         ? "declined"

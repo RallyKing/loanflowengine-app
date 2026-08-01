@@ -136,6 +136,8 @@ export function RegistryEditModal({
         }
         await updateLender({
           id: item._id as Id<"lenders">,
+          organizationId,
+          memberUserKey,
           ...lenderDocToUpdatePayload(lenderDoc),
           company: name,
           email: primaryEmail.trim(),

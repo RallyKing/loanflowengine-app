@@ -9,7 +9,6 @@ import {
   expectPipelineHubVisible,
   expectWorkspaceRouteVisible,
   waitPipelineHubReady,
-  isPipelineHubDegraded,
 } from "../../helpers/mobile/pipelineHubReady";
 
 test.describe("Mobile regression — core routes render", () => {
@@ -37,13 +36,7 @@ test.describe("Mobile regression — core routes render", () => {
       await dismissMobileNavIfOpen(page);
       if (path === "/pipeline") {
         await waitPipelineHubReady(page, { allowDegraded: true });
-        if (await isPipelineHubDegraded(page).isVisible().catch(() => false)) {
-          await expect(page.getByTestId("app-main-scroll")).toBeVisible({
-            timeout: 35_000,
-          });
-        } else {
-          await expectPipelineHubVisible(page);
-        }
+        await expectPipelineHubVisible(page, { allowDegraded: true });
       } else if (path === "/lenders") {
         await expectWorkspaceRouteVisible(page, {
           heading: /^Lenders$/i,

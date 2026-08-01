@@ -3,10 +3,9 @@ import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { normalizeOrganizationPlan } from "../lib/orgPlanFeatures";
-import {
-  resolveMemberUserKey,
-  sessionKeyIsGlobalAdmin,
-} from "./organizationAccess";
+import { sessionKeyIsGlobalAdmin } from "./organizationAccess";
+import { resolveAuthenticatedMemberKey } from "./callerAuth";
+import { isSuperAdmin } from "./authUtils";
 import {
   productKnowledgeArticleBodyV,
   productKnowledgeArticleStatusV,
@@ -43,6 +42,9 @@ async function viewerContext(
     const org = await ctx.db.get(organizationId);
     if (org) {
       plan = normalizeOrganizationPlan(org.plan);
+    }
+    if (await isSuperAdmin(ctx, memberUserKey)) {
+      return { plan, productRoleKey: "admin", tenantRole: "owner" };
     }
     const key = memberUserKey.trim();
     const member = await ctx.db
@@ -92,7 +94,10 @@ export const listPublishedArticlesForViewer = query({
     organizationId: v.optional(v.id("organizations")),
   },
   handler: async (ctx, args) => {
-    const memberUserKey = await resolveMemberUserKey(ctx, args.memberUserKey);
+    const memberUserKey = await resolveAuthenticatedMemberKey(
+      ctx,
+      args.memberUserKey,
+    );
     const viewer = await viewerContext(ctx, args.organizationId, memberUserKey);
     const rows = await ctx.db
       .query("productKnowledgeArticles")
@@ -111,7 +116,10 @@ export const listPublishedReleasePostsForViewer = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const memberUserKey = await resolveMemberUserKey(ctx, args.memberUserKey);
+    const memberUserKey = await resolveAuthenticatedMemberKey(
+      ctx,
+      args.memberUserKey,
+    );
     const viewer = await viewerContext(ctx, args.organizationId, memberUserKey);
     const cap = Math.min(Math.max(args.limit ?? 40, 1), 100);
     const rows = await ctx.db
@@ -131,7 +139,10 @@ export const unreadReleaseCountForUser = query({
     organizationId: v.optional(v.id("organizations")),
   },
   handler: async (ctx, args) => {
-    const memberUserKey = await resolveMemberUserKey(ctx, args.memberUserKey);
+    const memberUserKey = await resolveAuthenticatedMemberKey(
+      ctx,
+      args.memberUserKey,
+    );
     const viewer = await viewerContext(ctx, args.organizationId, memberUserKey);
     const receipt = await ctx.db
       .query("productReleaseReadReceipts")
@@ -157,7 +168,10 @@ export const markReleaseFeedRead = mutation({
     throughPublishedAt: v.number(),
   },
   handler: async (ctx, args) => {
-    const memberUserKey = await resolveMemberUserKey(ctx, args.memberUserKey);
+    const memberUserKey = await resolveAuthenticatedMemberKey(
+      ctx,
+      args.memberUserKey,
+    );
     const through = args.throughPublishedAt;
     const existing = await ctx.db
       .query("productReleaseReadReceipts")

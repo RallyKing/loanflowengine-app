@@ -48,7 +48,8 @@ export type VaultUploadMutations = {
   patchLinkMetadata?: (args: {
     documentId: Id<"libraryDocuments">;
     proof: LibraryDocumentsProof;
-    folderId: Id<"documentFolders">;
+    folderId?: Id<"documentFolders">;
+    fileTaskId?: Id<"documentVaultFileTasks">;
     memberUserKey: string;
   }) => Promise<unknown>;
   enqueueDocumentClassification?: EnqueueClassification;
@@ -126,6 +127,7 @@ export async function uploadFileToVault(options: {
   memberUserKey: string;
   title?: string;
   folderId?: Id<"documentFolders"> | null;
+  fileTaskId?: Id<"documentVaultFileTasks"> | null;
   mutations: VaultUploadMutations;
   onProgress?: (progress: VaultUploadProgress) => void;
   maxRetries?: number;
@@ -207,17 +209,18 @@ export async function uploadFileToVault(options: {
   );
 
   if (
-    options.folderId &&
     proof.kind === "pipeline" &&
-    mutations.patchLinkMetadata
+    mutations.patchLinkMetadata &&
+    (options.folderId || options.fileTaskId)
   ) {
-    report("folder", "Placing in folder…");
+    report("folder", "Placing in vault…");
     await withRetries(
       () =>
         mutations.patchLinkMetadata!({
           documentId,
           proof,
-          folderId: options.folderId!,
+          ...(options.folderId ? { folderId: options.folderId } : {}),
+          ...(options.fileTaskId ? { fileTaskId: options.fileTaskId } : {}),
           memberUserKey,
         }),
       maxRetries,

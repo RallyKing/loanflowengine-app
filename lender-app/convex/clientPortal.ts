@@ -41,6 +41,12 @@ import {
 } from "./fileMessages";
 import { validatePlaintextPasswordPolicy } from "../lib/auth/passwordPolicy";
 import {
+  portalPublicFileSummary,
+  portalRequestDto,
+  portalSharedDocumentDto,
+  portalUploadDto,
+} from "./portalPublicDtos";
+import {
   folderPortalPath,
   portalRequestGroupHeading,
   type DocumentFolderRow,
@@ -52,15 +58,7 @@ const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 function publicPipelineView(row: Doc<"pipeline">) {
   return {
     _id: row._id,
-    fileName: row.fileName,
-    status: row.status,
-    propertyAddress: row.propertyAddress,
-    scenario: row.scenario,
-    fundingAmount:
-      typeof row.fundingAmount === "number" && Number.isFinite(row.fundingAmount)
-        ? row.fundingAmount
-        : undefined,
-    updatedAt: row.updatedAt,
+    ...portalPublicFileSummary(row),
   };
 }
 
@@ -241,25 +239,17 @@ export const getFileBundle = query({
     const folderRows = vaultFolders as DocumentFolderRow[];
 
     const requests = await Promise.all(
-      requestsSorted.map(async (r) => ({
-        _id: r._id,
-        title: r.title,
-        description: await openOptionalPortalCiphertext(r.description),
-        status: r.status,
-        createdAt: r.createdAt,
-        completedAt: r.completedAt,
-        clientCompletedNote: await openOptionalPortalCiphertext(
-          r.clientCompletedNote,
+      requestsSorted.map(async (r) =>
+        portalRequestDto(
+          r,
+          await openOptionalPortalCiphertext(r.description),
+          await openOptionalPortalCiphertext(r.clientCompletedNote),
+          r.targetFolderId
+            ? folderPortalPath(folderRows, r.targetFolderId)
+            : undefined,
+          portalRequestGroupHeading(folderRows, r.targetFolderId),
         ),
-        targetFolderId: r.targetFolderId,
-        folderPath: r.targetFolderId
-          ? folderPortalPath(folderRows, r.targetFolderId)
-          : undefined,
-        folderGroupHeading: portalRequestGroupHeading(
-          folderRows,
-          r.targetFolderId,
-        ),
-      })),
+      ),
     );
 
     const idn = await ctx.db
@@ -283,26 +273,55 @@ export const getFileBundle = query({
       .query("libraryDocumentLinks")
       .withIndex("by_pipeline_linkedAt", (q) => q.eq("pipelineFileId", fileId))
       .collect();
-    const sharedLinks = pipelineLinks.filter((l) => l.isSharedWithClient === true);
-    const sharedDocuments: Array<{
-      _id: Id<"libraryDocuments">;
-      linkId: Id<"libraryDocumentLinks">;
-      title: string;
-      fileName: string | undefined;
-      contentType: string | undefined;
-      uploadedAt: number | undefined;
-    }> = [];
-    for (const link of sharedLinks) {
+
+    const fileTasks = await ctx.db
+      .query("documentVaultFileTasks")
+      .withIndex("by_pipeline_sort", (q) => q.eq("pipelineFileId", fileId))
+      .collect();
+    const portalVisibleTaskIds = new Set(
+      fileTasks.filter((t) => t.isPortalVisible).map((t) => String(t._id)),
+    );
+
+    const allFolders = await ctx.db
+      .query("documentFolders")
+      .withIndex("by_pipeline", (q) => q.eq("pipelineFileId", fileId))
+      .collect();
+    const folderById = new Map(allFolders.map((f) => [String(f._id), f]));
+
+    function linkInPortalVisibleTask(
+      link: Doc<"libraryDocumentLinks">,
+    ): boolean {
+      if (!link.fileTaskId) {
+        if (!link.folderId) return false;
+        let cursor: Id<"documentFolders"> | undefined = link.folderId;
+        const guard = new Set<string>();
+        while (cursor && !guard.has(String(cursor))) {
+          guard.add(String(cursor));
+          const folder = folderById.get(String(cursor));
+          if (!folder) break;
+          if (
+            folder.fileTaskId &&
+            portalVisibleTaskIds.has(String(folder.fileTaskId))
+          ) {
+            return true;
+          }
+          cursor = folder.parentFolderId;
+        }
+        return false;
+      }
+      return portalVisibleTaskIds.has(String(link.fileTaskId));
+    }
+
+    const linksForPortal = pipelineLinks.filter((l) => {
+      if (linkInPortalVisibleTask(l)) return true;
+      if (l.fileTaskId != null) return false;
+      return l.isSharedWithClient === true;
+    });
+    const sharedDocuments = [];
+    for (const link of linksForPortal) {
       const doc = await ctx.db.get(link.documentId);
       if (!doc || doc.latestVersionNumber <= 0) continue;
-      sharedDocuments.push({
-        _id: doc._id,
-        linkId: link._id,
-        title: doc.title,
-        fileName: doc.latestFileName,
-        contentType: doc.latestContentType,
-        uploadedAt: doc.latestUploadedAt,
-      });
+      sharedDocuments.push(portalSharedDocumentDto(doc, link._id));
     }
     sharedDocuments.sort(
       (a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0),
@@ -320,12 +339,7 @@ export const getFileBundle = query({
       },
       file: publicPipelineView(file),
       sharedDocuments: sharedDocuments.slice(0, 80),
-      uploads: uploads.map((u) => ({
-        _id: u._id,
-        fileName: u.fileName,
-        createdAt: u.createdAt,
-        size: u.size,
-      })),
+      uploads: uploads.map((u) => portalUploadDto(u)),
       updates: updates.map((u) => ({
         _id: u._id,
         summary: u.summary,
@@ -362,25 +376,49 @@ export const getSharedDocumentDownloadUrl = query({
   args: {
     sessionToken: v.string(),
     fileId: v.id("pipeline"),
-    documentId: v.id("libraryDocuments"),
+    linkId: v.id("libraryDocumentLinks"),
   },
-  handler: async (ctx, { sessionToken, fileId, documentId }) => {
+  handler: async (ctx, { sessionToken, fileId, linkId }) => {
     const auth = await authorizeSession(ctx, sessionToken);
     if (!auth) return { status: "unauthorized" as const };
     const grant = auth.grants.find((g) => g.pipelineFileId === fileId);
     if (!grant) return { status: "forbidden" as const };
 
-    const link = await ctx.db
-      .query("libraryDocumentLinks")
-      .withIndex("by_document", (q) => q.eq("documentId", documentId))
-      .collect();
-    const shared = link.find(
-      (l) =>
-        l.pipelineFileId === fileId && l.isSharedWithClient === true,
-    );
-    if (!shared) return { status: "not_found" as const };
+    const pipelineLink = await ctx.db.get(linkId);
+    if (!pipelineLink || pipelineLink.pipelineFileId !== fileId) {
+      return { status: "not_found" as const };
+    }
 
-    const doc = await ctx.db.get(documentId);
+    let portalAllowed = false;
+    if (pipelineLink.fileTaskId) {
+      const task = await ctx.db.get(pipelineLink.fileTaskId);
+      portalAllowed = task?.isPortalVisible === true;
+    } else if (pipelineLink.folderId) {
+      const folders = await ctx.db
+        .query("documentFolders")
+        .withIndex("by_pipeline", (q) => q.eq("pipelineFileId", fileId))
+        .collect();
+      const byId = new Map(folders.map((f) => [String(f._id), f]));
+      let cursor: Id<"documentFolders"> | undefined = pipelineLink.folderId;
+      const guard = new Set<string>();
+      while (cursor && !guard.has(String(cursor))) {
+        guard.add(String(cursor));
+        const folder = byId.get(String(cursor));
+        if (!folder) break;
+        if (folder.fileTaskId) {
+          const task = await ctx.db.get(folder.fileTaskId);
+          portalAllowed = task?.isPortalVisible === true;
+          break;
+        }
+        cursor = folder.parentFolderId;
+      }
+    }
+    if (!portalAllowed && pipelineLink.fileTaskId == null) {
+      portalAllowed = pipelineLink.isSharedWithClient === true;
+    }
+    if (!portalAllowed) return { status: "not_found" as const };
+
+    const doc = await ctx.db.get(pipelineLink.documentId);
     if (!doc?.latestVersionId) return { status: "not_found" as const };
     const version = await ctx.db.get(doc.latestVersionId);
     if (!version?.storageId) return { status: "not_found" as const };

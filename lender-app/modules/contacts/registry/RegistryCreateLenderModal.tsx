@@ -9,6 +9,7 @@ import { Input, Label } from "@/components/ui/Input";
 import { OverlayShell } from "@/components/ui/OverlayShell";
 import { blankLender } from "@/lib/schema";
 import { classifyEntity } from "@/lib/classify";
+import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 
 export type RegistryCreateLenderModalProps = {
   open: boolean;
@@ -22,6 +23,7 @@ export function RegistryCreateLenderModal({
   onCreated,
 }: RegistryCreateLenderModalProps) {
   const upsert = useMutation(api.lenders.upsert);
+  const orgScope = useOrgConvexQueryArgs();
 
   const [company, setCompany] = useState("");
   const [email, setEmail] = useState("");
@@ -44,6 +46,10 @@ export function RegistryCreateLenderModal({
       setError("Company name is required.");
       return;
     }
+    if (!orgScope) {
+      setError("Sign in and select a workspace.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -51,6 +57,7 @@ export function RegistryCreateLenderModal({
       const entityType = classifyEntity(name, draft.primaryNiche, draft.notes);
       const result = await upsert({
         ...draft,
+        ...orgScope,
         company: name,
         email: email.trim(),
         phone: phone.trim(),

@@ -98,10 +98,18 @@ async function main() {
           },
         ] as const)
       : []),
-    {
-      name: "discovery:providerStatus",
-      run: () => client.query(api.discovery.providerStatus, {}),
-    },
+    ...(smokeOrgId && smokeMemberKey
+      ? [
+          {
+            name: "discovery:providerStatus",
+            run: () =>
+              client.query(api.discovery.providerStatus, {
+                organizationId: smokeOrgId,
+                memberUserKey: smokeMemberKey,
+              }),
+          },
+        ]
+      : []),
     {
       name: "clientPortal:listScopesForEmail (smoke)",
       run: () =>

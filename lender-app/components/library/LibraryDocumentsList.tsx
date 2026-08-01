@@ -58,6 +58,7 @@ export type LibraryDocumentListRow = {
   documentCategory?: LibraryDocumentCategory;
   taxYear?: string;
   folderId?: Id<"documentFolders">;
+  fileTaskId?: Id<"documentVaultFileTasks">;
   expiresAt?: number;
   expiryStatus?: "none" | "active" | "expiring_soon" | "expired";
   linkScope: LibraryDocumentLinkScope;
@@ -70,6 +71,9 @@ export type LibraryDocumentListRow = {
   reviewStatus?: "rejected";
   rejectionReason?: string;
   isSharedWithClient?: boolean;
+  assignedContactId?: Id<"contacts">;
+  assignedClientId?: Id<"clients">;
+  assignedLenderId?: Id<"lenders">;
 };
 
 export type LibraryDocumentsListDensity = "list" | "compact";

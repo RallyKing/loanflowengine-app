@@ -76,9 +76,11 @@ describeOrSkip("Pipeline file workspace — Deal Command Center tabs (Phase 4)",
     await expect(page.getByTestId("pipeline-file-tabpanel-dealInfo")).toBeVisible();
     await expect(page.getByTestId("pipeline-deal-info-command-center-tab")).toBeVisible();
     await expect(page.getByTestId("pipeline-deal-info-unified-sections")).toBeVisible();
-    await expect(page.getByTestId("pipeline-deal-info-overview-sections")).toBeVisible();
+    await expect(page.getByTestId("pipeline-deal-info-layout-control")).toBeVisible();
     await expect(page.getByTestId("pipeline-file-details-telemetry")).toBeVisible();
-    await expect(page.getByTestId("pipeline-deal-info-fees-sections")).toBeVisible();
+    await expect(
+      page.locator("[data-sortable-section-id]").first(),
+    ).toBeVisible();
   });
 
   test("Portals & Progress tab routes to underwriting ledger", async ({ page }) => {

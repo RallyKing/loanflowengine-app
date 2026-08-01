@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/sessionUiClient";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMutation, useQueries, type RequestForQueries } from "convex/react";
+import { useMutation, useQueries, useConvexAuth, type RequestForQueries } from "convex/react";
 import {
   useCallback,
   useEffect,
@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { useViewer } from "@/lib/sessionContext";
 import { useActorUserKey } from "@/lib/useActorUserKey";
+import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
 import { settingsHref } from "@/lib/settingsRegistry";
@@ -114,6 +115,8 @@ export function UserOnboardingChecklist({
   const { isLoaded, isSignedIn, isGlobalAdmin } = useAuth();
   const viewer = useViewer();
   const { activeOrganizationId } = useOrgPermissions();
+  const { isAuthenticated, isLoading: convexAuthLoading } = useConvexAuth();
+  const orgQueryReady = useConvexOrgQueryReady();
   const memberKey = useActorUserKey().trim();
 
   /**
@@ -132,7 +135,13 @@ export function UserOnboardingChecklist({
   /** `useQuery` throws on Convex errors; `useQueries` returns `Error` per key. */
   const checklistQueries = useMemo((): RequestForQueries => {
     const q: RequestForQueries = {};
-    if (isLoaded && isSignedIn && !sessionNotReady) {
+    if (
+      isLoaded &&
+      isSignedIn &&
+      !sessionNotReady &&
+      isAuthenticated &&
+      !convexAuthLoading
+    ) {
       q.onboarding = {
         query: api.userOnboarding.getForViewer,
         args: onboardingMemberKey
@@ -140,7 +149,7 @@ export function UserOnboardingChecklist({
           : {},
       };
     }
-    if (activeOrganizationId && mutationMemberKey) {
+    if (orgQueryReady && activeOrganizationId && mutationMemberKey) {
       q.filesPeek = {
         query: api.pipeline.listLight,
         args: {
@@ -162,6 +171,9 @@ export function UserOnboardingChecklist({
     isLoaded,
     isSignedIn,
     sessionNotReady,
+    isAuthenticated,
+    convexAuthLoading,
+    orgQueryReady,
     onboardingMemberKey,
     activeOrganizationId,
     mutationMemberKey,

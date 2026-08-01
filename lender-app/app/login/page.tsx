@@ -21,7 +21,7 @@ export default async function LoginPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
-  const next = pickFirst(params.next) ?? "/";
+  const next = pickFirst(params.next) ?? "/tasks";
   const devPrefill =
     process.env.NODE_ENV === "development"
       ? {

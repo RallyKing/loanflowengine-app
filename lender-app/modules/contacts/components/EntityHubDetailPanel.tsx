@@ -575,6 +575,7 @@ export function EntityHubDetailPanel({
     <HubDetailTabs
 
       defaultTabId="kyc"
+      scrollablePanel={false}
 
       tabs={[
 
@@ -618,7 +619,9 @@ export function EntityHubDetailPanel({
 
       {layoutMode === "commandCenter" ? (
 
-        <div className="border-b border-slate-200 bg-dlc-surface/80 px-4 py-3 md:px-8">
+        <div className="sticky top-0 z-50 border-b border-border/60 bg-dlc-surface/90 shadow-sm backdrop-blur-md">
+
+          <div className="mx-auto flex w-full max-w-5xl items-center gap-3 px-4 py-3 md:px-5">
 
           <Link
 
@@ -628,9 +631,17 @@ export function EntityHubDetailPanel({
 
           >
 
-            ← Back to contacts
+            ← Contacts
 
           </Link>
+
+          <p className="truncate border-l border-border/60 pl-3 text-base font-semibold tracking-tight text-foreground">
+
+            {client.displayName?.trim() || "Entity"}
+
+          </p>
+
+          </div>
 
         </div>
 

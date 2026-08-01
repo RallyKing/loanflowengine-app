@@ -36,7 +36,7 @@ export function SectionDragHandle({
     <button
       type="button"
       className={cn(
-        "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-dlc-sm text-muted-foreground touch-none",
+        "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-dlc-sm text-gray-300 touch-none hover:text-gray-500 dark:text-gray-600 dark:hover:text-gray-400",
         disabled ? "cursor-not-allowed opacity-40" : "cursor-grab active:cursor-grabbing",
       )}
       aria-label="Reorder section"

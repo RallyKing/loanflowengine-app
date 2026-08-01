@@ -851,13 +851,17 @@ export const patchDocumentLinkMetadata = mutation({
     folderId: v.optional(
       v.union(v.id("documentFolders"), linkMetadataUnset),
     ),
+    /** File Task requirement container (pipeline links only). */
+    fileTaskId: v.optional(
+      v.union(v.id("documentVaultFileTasks"), linkMetadataUnset),
+    ),
     customTags: v.optional(
       v.union(v.array(v.string()), linkMetadataUnset),
     ),
     ...memberKeyArg,
   },
   handler: async (ctx, args) => {
-    const { documentId, proof, documentCategory, taxYear, folderId, customTags, memberUserKey } =
+    const { documentId, proof, documentCategory, taxYear, folderId, fileTaskId, customTags, memberUserKey } =
       args;
     await assertProofWrite(ctx, proof, memberUserKey);
     const link = await requireLinkForProof(ctx, documentId, proof);
@@ -866,6 +870,7 @@ export const patchDocumentLinkMetadata = mutation({
       documentCategory?: Doc<"libraryDocumentLinks">["documentCategory"];
       taxYear?: string;
       folderId?: Id<"documentFolders">;
+      fileTaskId?: Id<"documentVaultFileTasks">;
       customTags?: string[];
       expiresAt?: number;
     } = {};
@@ -907,6 +912,25 @@ export const patchDocumentLinkMetadata = mutation({
           throw new Error("Folder belongs to a different file.");
         }
         patch.folderId = folderId;
+        if (folder.fileTaskId) {
+          patch.fileTaskId = folder.fileTaskId;
+        }
+      }
+    }
+
+    if (fileTaskId !== undefined) {
+      if (proof.kind !== "pipeline") {
+        throw new Error("File tasks apply to pipeline file links only.");
+      }
+      if (fileTaskId === "__unset__") {
+        patch.fileTaskId = undefined;
+      } else {
+        const task = await ctx.db.get(fileTaskId);
+        if (!task) throw new Error("File task not found.");
+        if (task.pipelineFileId !== proof.pipelineFileId) {
+          throw new Error("File task belongs to a different file.");
+        }
+        patch.fileTaskId = fileTaskId;
       }
     }
 
@@ -1144,6 +1168,7 @@ async function listDocumentsForScopedLinks(
     documentCategory: Doc<"libraryDocumentLinks">["documentCategory"];
     taxYear: string | undefined;
     folderId: Id<"documentFolders"> | undefined;
+    fileTaskId: Id<"documentVaultFileTasks"> | undefined;
     expiresAt: number | undefined;
     expiryStatus: ReturnType<typeof resolveDocumentExpiryStatus>;
     linkScope: "pipeline" | "contact" | "entity" | "lender" | "task";
@@ -1157,6 +1182,9 @@ async function listDocumentsForScopedLinks(
     reviewStatus: "rejected" | undefined;
     rejectionReason: string | undefined;
     isSharedWithClient: boolean;
+    assignedContactId: Id<"contacts"> | undefined;
+    assignedClientId: Id<"clients"> | undefined;
+    assignedLenderId: Id<"lenders"> | undefined;
   }> = [];
   for (const entry of scoped) {
     const l = entry.link;
@@ -1182,6 +1210,7 @@ async function listDocumentsForScopedLinks(
       documentCategory: l.documentCategory,
       taxYear: l.taxYear,
       folderId: l.folderId,
+      fileTaskId: l.fileTaskId,
       expiresAt,
       expiryStatus: resolveDocumentExpiryStatus(expiresAt),
       linkScope: entry.linkScope,
@@ -1194,6 +1223,9 @@ async function listDocumentsForScopedLinks(
       reviewStatus: l.reviewStatus,
       rejectionReason: l.rejectionReason,
       isSharedWithClient: l.isSharedWithClient === true,
+      assignedContactId: l.assignedContactId,
+      assignedClientId: l.assignedClientId,
+      assignedLenderId: l.assignedLenderId,
     });
   }
   return out;
@@ -1347,18 +1379,29 @@ export const bulkMoveDocuments = mutation({
     pipelineFileId: v.id("pipeline"),
     documentIds: v.array(v.id("libraryDocuments")),
     folderId: v.optional(v.union(v.id("documentFolders"), linkMetadataUnset)),
+    fileTaskId: v.optional(
+      v.union(v.id("documentVaultFileTasks"), linkMetadataUnset),
+    ),
     ...memberKeyArg,
   },
-  handler: async (ctx, { pipelineFileId, documentIds, folderId, memberUserKey }) => {
+  handler: async (ctx, { pipelineFileId, documentIds, folderId, fileTaskId, memberUserKey }) => {
     const pipeline = await ctx.db.get(pipelineFileId);
     if (!pipeline) throw new Error("Pipeline file not found.");
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
 
+    let resolvedFileTaskId: Id<"documentVaultFileTasks"> | undefined;
     if (folderId && folderId !== "__unset__") {
       const folder = await ctx.db.get(folderId);
       if (!folder || folder.pipelineFileId !== pipelineFileId) {
         throw new Error("Folder does not belong to this file.");
       }
+      resolvedFileTaskId = folder.fileTaskId ?? undefined;
+    } else if (fileTaskId && fileTaskId !== "__unset__") {
+      const task = await ctx.db.get(fileTaskId);
+      if (!task || task.pipelineFileId !== pipelineFileId) {
+        throw new Error("File task does not belong to this file.");
+      }
+      resolvedFileTaskId = fileTaskId;
     }
 
     const proof = { kind: "pipeline" as const, pipelineFileId };
@@ -1369,9 +1412,19 @@ export const bulkMoveDocuments = mutation({
       try {
         await assertProofWrite(ctx, proof, memberUserKey);
         const link = await requireLinkForProof(ctx, documentId, proof);
-        const patch: { folderId?: Id<"documentFolders"> } = {};
-        if (folderId === undefined) continue;
-        patch.folderId = folderId === "__unset__" ? undefined : folderId;
+        const patch: {
+          folderId?: Id<"documentFolders">;
+          fileTaskId?: Id<"documentVaultFileTasks">;
+        } = {};
+        if (folderId !== undefined) {
+          patch.folderId = folderId === "__unset__" ? undefined : folderId;
+        }
+        if (fileTaskId !== undefined) {
+          patch.fileTaskId = fileTaskId === "__unset__" ? undefined : fileTaskId;
+        } else if (resolvedFileTaskId) {
+          patch.fileTaskId = resolvedFileTaskId;
+        }
+        if (Object.keys(patch).length === 0) continue;
         await ctx.db.patch(link._id, patch);
         await ctx.db.patch(documentId, { updatedAt: Date.now() });
         moved += 1;

@@ -108,7 +108,7 @@ export default function PortalFileDetailPage() {
       }
     >();
     for (const r of openRequests) {
-      const key = r.targetFolderId ?? "__general__";
+      const key = r.folderGroupHeading ?? r.folderPath ?? "__general__";
       const existing = map.get(key);
       if (existing) {
         existing.items.push(r);
@@ -156,39 +156,58 @@ export default function PortalFileDetailPage() {
 
   const canUpload = grant.canUpload;
 
-  async function uploadPortalFile(
-    fileToUpload: File,
+  async function uploadPortalFiles(
+    filesToUpload: File[],
     requestId?: Id<"clientPortalRequests">,
   ) {
     if (!token) return;
-    if (fileToUpload.size > 25 * 1024 * 1024) {
-      setUploadErr("Each file must be 25 MB or smaller.");
-      return;
-    }
+    const list = filesToUpload.filter((f) => f.size > 0);
+    if (list.length === 0) return;
+
     setUploadErr(null);
     setUploadNotice(null);
     setUploadBusy(true);
+    const uploadedNames: string[] = [];
+
     try {
-      const uploadUrl = await genUpload({
-        sessionToken: token,
-        fileId: file._id,
-      });
-      const { storageId } = await postFileToConvexUploadUrl(
-        uploadUrl,
-        fileToUpload,
+      for (const fileToUpload of list) {
+        if (fileToUpload.size > 25 * 1024 * 1024) {
+          throw new Error("Each file must be 25 MB or smaller.");
+        }
+        const uploadUrl = await genUpload({
+          sessionToken: token,
+          fileId: file._id,
+        });
+        const { storageId } = await postFileToConvexUploadUrl(
+          uploadUrl,
+          fileToUpload,
+        );
+        await attachUpload({
+          sessionToken: token,
+          fileId: file._id,
+          storageId: storageId as Id<"_storage">,
+          fileName: fileToUpload.name,
+          contentType: fileToUpload.type || undefined,
+          size: fileToUpload.size,
+          requestId,
+        });
+        uploadedNames.push(fileToUpload.name);
+      }
+
+      setUploadNotice(
+        uploadedNames.length === 1
+          ? uploadedNames[0]!
+          : `${uploadedNames.length} files uploaded`,
       );
-      await attachUpload({
-        sessionToken: token,
-        fileId: file._id,
-        storageId: storageId as Id<"_storage">,
-        fileName: fileToUpload.name,
-        contentType: fileToUpload.type || undefined,
-        size: fileToUpload.size,
-        requestId,
-      });
-      setUploadNotice(fileToUpload.name);
       window.setTimeout(() => setUploadNotice(null), 12000);
     } catch (err) {
+      if (uploadedNames.length > 0) {
+        setUploadNotice(
+          uploadedNames.length === 1
+            ? uploadedNames[0]!
+            : `${uploadedNames.length} files uploaded before error`,
+        );
+      }
       const raw = err instanceof Error ? err.message : String(err);
       setUploadErr(formatPortalTrustError(raw).detail ?? raw);
     } finally {
@@ -231,12 +250,6 @@ export default function PortalFileDetailPage() {
             <div>
               <dt className="text-muted-foreground">Property</dt>
               <dd>{file.propertyAddress}</dd>
-            </div>
-          ) : null}
-          {file.scenario ? (
-            <div>
-              <dt className="text-muted-foreground">Scenario</dt>
-              <dd className="line-clamp-3">{file.scenario}</dd>
             </div>
           ) : null}
         </dl>
@@ -346,17 +359,20 @@ export default function PortalFileDetailPage() {
                             <input
                               type="file"
                               className="sr-only"
+                              multiple
                               disabled={uploadBusy}
                               onChange={(e) => {
                                 const input = e.target;
-                                const f = input.files?.[0];
+                                const selected = input.files
+                                  ? Array.from(input.files)
+                                  : [];
                                 input.value = "";
-                                if (!f) return;
-                                void uploadPortalFile(f, r._id);
+                                if (selected.length === 0) return;
+                                void uploadPortalFiles(selected, r._id);
                               }}
                             />
                             <span className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted">
-                              {uploadBusy ? "Uploading…" : "Upload for this request"}
+                              {uploadBusy ? "Uploading…" : "Upload files for this request"}
                             </span>
                           </label>
                         ) : null}
@@ -407,11 +423,11 @@ export default function PortalFileDetailPage() {
           </p>
           <ul className="mt-2 space-y-1 text-sm">
             {sharedDocuments.map((doc) => (
-              <li key={doc._id}>
+              <li key={doc.linkId}>
                 <PortalSharedDocumentLink
                   sessionToken={token}
                   fileId={file._id}
-                  documentId={doc._id}
+                  linkId={doc.linkId}
                   label={doc.title || doc.fileName || "Document"}
                 />
               </li>
@@ -428,8 +444,9 @@ export default function PortalFileDetailPage() {
         {uploadNotice ? <TrustUploadReceipt fileName={uploadNotice} /> : null}
         {canUpload ? (
           <p className="text-xs text-muted-foreground">
-            PDF or images only. Maximum 25 MB per file. Uploads are scanned into
-            this loan file — same visibility rules as other shared documents.
+            PDF or images only. Maximum 25 MB per file. Select multiple files at
+            once. Uploads are scanned into this loan file — same visibility rules
+            as other shared documents.
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">
@@ -447,20 +464,21 @@ export default function PortalFileDetailPage() {
           <input
             type="file"
             className="sr-only"
+            multiple
             disabled={uploadBusy || !canUpload}
             onChange={(e) => {
               const input = e.target;
-              const f = input.files?.[0];
+              const selected = input.files ? Array.from(input.files) : [];
               input.value = "";
-              if (!f) return;
-              void uploadPortalFile(f);
+              if (selected.length === 0) return;
+              void uploadPortalFiles(selected);
             }}
           />
           <span className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted">
             {uploadBusy
               ? "Uploading…"
               : canUpload
-                ? "Upload a file"
+                ? "Upload files"
                 : "Upload disabled"}
           </span>
         </label>
@@ -552,18 +570,18 @@ export default function PortalFileDetailPage() {
 function PortalSharedDocumentLink({
   sessionToken,
   fileId,
-  documentId,
+  linkId,
   label,
 }: {
   sessionToken: string;
   fileId: Id<"pipeline">;
-  documentId: Id<"libraryDocuments">;
+  linkId: Id<"libraryDocumentLinks">;
   label: string;
 }) {
   const res = useQuery(api.clientPortal.getSharedDocumentDownloadUrl, {
     sessionToken,
     fileId,
-    documentId,
+    linkId,
   });
   if (!res || res.status !== "ok" || !res.url) {
     return <span className="text-muted-foreground">{label}</span>;

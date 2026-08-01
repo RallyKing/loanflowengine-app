@@ -112,6 +112,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  if (process.env.NODE_ENV !== "development") {
+    return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+  }
   const raw = await req.text();
   if (raw.length > MAX_PAYLOAD_BYTES) {
     return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });

@@ -3,14 +3,13 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
-import { Field, Select, TextInput } from "@/components/intake/ui/Field";
+import { DebouncedPartyFieldCell } from "@/modules/pipeline/components/deal/DebouncedPartyFieldCell";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import {
   BORROWER_EMPLOYMENT_FIELDS,
   fieldsForPartyKind,
   type DealPartyBlockKind,
-  type DealPartyFieldDef,
 } from "@/modules/pipeline/lib/core/dealPartyFieldRegistry";
 import { personNameFromBorrowerRow } from "@/lib/contacts/borrowerIdentityFromDeal";
 import { personNameFromGuarantorRow } from "@/lib/contacts/guarantorIdentityFromDeal";
@@ -18,56 +17,10 @@ import type { DealWorkspaceUpdater } from "@/lib/file/dealSectionTypes";
 import type { DealWorkspaceSheet } from "@/lib/file/dealSectionTypes";
 import { DealPartyIdentityChip } from "@/modules/pipeline/components/deal/DealPartyIdentityChip";
 
-const compactInputClass =
-  "h-8 py-1 text-xs rounded-dlc-sm border-gray-100 dark:border-gray-800";
-
 function readRowString(row: unknown, key: string): string {
   if (!row || typeof row !== "object") return "";
   const val = (row as Record<string, unknown>)[key];
   return typeof val === "string" ? val : "";
-}
-
-function FieldCell({
-  def,
-  value,
-  onChange,
-}: {
-  def: DealPartyFieldDef;
-  value: string;
-  onChange: (next: string) => void;
-}) {
-  const inputType =
-    def.kind === "email" ? "email" : def.kind === "tel" ? "tel" : def.kind === "date" ? "date" : "text";
-
-  if (def.kind === "select" && def.selectOptions) {
-    return (
-      <Field label={def.label} className="gap-1">
-        <Select
-          className={compactInputClass}
-          value={value}
-          onChange={(e) => onChange(e.currentTarget.value)}
-        >
-          <option value="">—</option>
-          {def.selectOptions.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </Select>
-      </Field>
-    );
-  }
-
-  return (
-    <Field label={def.label} className="gap-1">
-      <TextInput
-        type={inputType}
-        className={compactInputClass}
-        value={value}
-        onChange={(e) => onChange(e.currentTarget.value)}
-      />
-    </Field>
-  );
 }
 
 export type DealPartyInstancePanelProps = {
@@ -161,7 +114,7 @@ export function DealPartyInstancePanel({
                 def.colSpan === 3 && "sm:col-span-3",
               )}
             >
-              <FieldCell
+              <DebouncedPartyFieldCell
                 def={def}
                 value={readRowString(row, def.rowKey)}
                 onChange={(next) => patchRow({ [def.rowKey]: next })}
@@ -192,7 +145,7 @@ export function DealPartyInstancePanel({
                     key={def.registryKey}
                     className={cn(def.colSpan === 2 && "sm:col-span-2")}
                   >
-                    <FieldCell
+                    <DebouncedPartyFieldCell
                       def={def}
                       value={readRowString(row, def.rowKey)}
                       onChange={(next) => patchRow({ [def.rowKey]: next })}

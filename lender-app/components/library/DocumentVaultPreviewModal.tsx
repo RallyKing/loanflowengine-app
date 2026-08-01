@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { OverlayShell } from "@/components/ui/OverlayShell";
@@ -52,6 +52,8 @@ export type DocumentVaultPreviewModalProps = {
   onError?: (message: string) => void;
   onVersionCommitted?: (version: number) => void;
   lastModified?: number;
+  /** Optional broker review controls shown below preview (non-blocking). */
+  reviewFooter?: ReactNode;
 };
 
 export function DocumentVaultPreviewModal({
@@ -77,6 +79,7 @@ export function DocumentVaultPreviewModal({
   vaultMutations,
   onError,
   lastModified,
+  reviewFooter,
 }: DocumentVaultPreviewModalProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mode, setMode] = useState<PreviewMode>("view");
@@ -451,6 +454,7 @@ export function DocumentVaultPreviewModal({
             {...sharedChrome}
           />
         )}
+        {reviewFooter}
       </div>
     </OverlayShell>
   );

@@ -5,7 +5,7 @@
  * (category / description / budget / spent / draw / status) over the
  * `constructionBudgetLines` table with a summary roll-up row.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { HardHat, Plus, Trash2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -45,6 +45,104 @@ function formatMoney(n: number): string {
     currency: "USD",
     maximumFractionDigits: 0,
   });
+}
+
+const CELL_INPUT_CLASS =
+  "h-8 w-full min-w-0 rounded-dlc-sm border border-transparent bg-transparent px-1.5 text-sm focus-visible:border-primary/50 focus-visible:bg-background focus-visible:outline-none";
+
+type BudgetLineField =
+  | "category"
+  | "description"
+  | "budgetAmount"
+  | "spentAmount"
+  | "drawNumber";
+
+function BudgetLineEditableCell({
+  line,
+  field,
+  fileId,
+  memberUserKey,
+  upsertLine,
+  required,
+  inputMode,
+  alignRight,
+}: {
+  line: BudgetLine;
+  field: BudgetLineField;
+  fileId: Id<"pipeline">;
+  memberUserKey?: string;
+  upsertLine: (args: {
+    fileId: Id<"pipeline">;
+    lineId: Id<"constructionBudgetLines">;
+    category: string;
+    description?: string;
+    budgetAmount?: string;
+    spentAmount?: string;
+    drawNumber?: string;
+    memberUserKey?: string;
+  }) => Promise<unknown>;
+  required?: boolean;
+  inputMode?: "decimal" | "text";
+  alignRight?: boolean;
+}) {
+  const serverValue = line[field] ?? "";
+  const [value, setValue] = useState(serverValue);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setValue(line[field] ?? "");
+  }, [field, line._id, line.updatedAt, line[field]]);
+
+  const commit = async () => {
+    const trimmed = value.trim();
+    if (required && !trimmed) {
+      setValue(serverValue);
+      return;
+    }
+    const next = trimmed || undefined;
+    const prev = (line[field] ?? "").trim() || undefined;
+    if (next === prev) return;
+
+    setSaving(true);
+    try {
+      await upsertLine({
+        fileId,
+        lineId: line._id,
+        category: field === "category" ? trimmed : line.category,
+        description:
+          field === "description" ? next : line.description ?? undefined,
+        budgetAmount:
+          field === "budgetAmount" ? next : line.budgetAmount ?? undefined,
+        spentAmount:
+          field === "spentAmount" ? next : line.spentAmount ?? undefined,
+        drawNumber:
+          field === "drawNumber" ? next : line.drawNumber ?? undefined,
+        ...(memberUserKey ? { memberUserKey } : {}),
+      });
+    } catch {
+      setValue(serverValue);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Input
+      className={cn(
+        CELL_INPUT_CLASS,
+        alignRight && "text-right tabular-nums",
+      )}
+      value={value}
+      inputMode={inputMode}
+      disabled={saving}
+      aria-label={`${field} for ${line.category}`}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
 }
 
 export type ConstructionBudgetBlockProps = {
@@ -177,21 +275,66 @@ export function ConstructionBudgetBlock({
                   parseMoney(line.budgetAmount) - parseMoney(line.spentAmount);
                 return (
                   <tr key={line._id} className="align-middle">
-                    <td className="border-b border-border/40 px-2 py-1.5 font-medium text-foreground">
-                      {line.category}
+                    <td className="border-b border-border/40 px-1 py-0.5 font-medium text-foreground">
+                      {readOnly ? (
+                        line.category
+                      ) : (
+                        <BudgetLineEditableCell
+                          line={line}
+                          field="category"
+                          fileId={fileId}
+                          memberUserKey={memberUserKey}
+                          upsertLine={upsertLine}
+                          required
+                        />
+                      )}
                     </td>
-                    <td className="border-b border-border/40 px-2 py-1.5 text-muted-foreground">
-                      {line.description || "—"}
+                    <td className="border-b border-border/40 px-1 py-0.5 text-muted-foreground">
+                      {readOnly ? (
+                        line.description || "—"
+                      ) : (
+                        <BudgetLineEditableCell
+                          line={line}
+                          field="description"
+                          fileId={fileId}
+                          memberUserKey={memberUserKey}
+                          upsertLine={upsertLine}
+                        />
+                      )}
                     </td>
-                    <td className="border-b border-border/40 px-2 py-1.5 text-right tabular-nums">
-                      {line.budgetAmount
-                        ? formatMoney(parseMoney(line.budgetAmount))
-                        : "—"}
+                    <td className="border-b border-border/40 px-1 py-0.5 text-right tabular-nums">
+                      {readOnly ? (
+                        line.budgetAmount
+                          ? formatMoney(parseMoney(line.budgetAmount))
+                          : "—"
+                      ) : (
+                        <BudgetLineEditableCell
+                          line={line}
+                          field="budgetAmount"
+                          fileId={fileId}
+                          memberUserKey={memberUserKey}
+                          upsertLine={upsertLine}
+                          inputMode="decimal"
+                          alignRight
+                        />
+                      )}
                     </td>
-                    <td className="border-b border-border/40 px-2 py-1.5 text-right tabular-nums">
-                      {line.spentAmount
-                        ? formatMoney(parseMoney(line.spentAmount))
-                        : "—"}
+                    <td className="border-b border-border/40 px-1 py-0.5 text-right tabular-nums">
+                      {readOnly ? (
+                        line.spentAmount
+                          ? formatMoney(parseMoney(line.spentAmount))
+                          : "—"
+                      ) : (
+                        <BudgetLineEditableCell
+                          line={line}
+                          field="spentAmount"
+                          fileId={fileId}
+                          memberUserKey={memberUserKey}
+                          upsertLine={upsertLine}
+                          inputMode="decimal"
+                          alignRight
+                        />
+                      )}
                     </td>
                     <td
                       className={cn(
@@ -201,8 +344,18 @@ export function ConstructionBudgetBlock({
                     >
                       {formatMoney(remaining)}
                     </td>
-                    <td className="border-b border-border/40 px-2 py-1.5">
-                      {line.drawNumber || "—"}
+                    <td className="border-b border-border/40 px-1 py-0.5">
+                      {readOnly ? (
+                        line.drawNumber || "—"
+                      ) : (
+                        <BudgetLineEditableCell
+                          line={line}
+                          field="drawNumber"
+                          fileId={fileId}
+                          memberUserKey={memberUserKey}
+                          upsertLine={upsertLine}
+                        />
+                      )}
                     </td>
                     <td className="border-b border-border/40 px-2 py-1.5">
                       {readOnly ? (

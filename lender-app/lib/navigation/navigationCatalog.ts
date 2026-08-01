@@ -140,8 +140,8 @@ export const NAV_CATALOG: NavCatalogEntry[] = [
   },
   {
     id: "contacts",
-    href: "/registry",
-    label: "Registry",
+    href: "/contacts",
+    label: "Contacts",
     iconKey: "users",
     group: "crm",
     priority: "high",

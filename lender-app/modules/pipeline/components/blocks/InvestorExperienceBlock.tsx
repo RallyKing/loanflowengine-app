@@ -5,7 +5,7 @@
  * for the file's primary borrower contact (`contactInvestorProjects`), with a
  * 36-month recency window filter so lender-required experience is one glance.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { Building2, Plus, Trash2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -52,6 +52,98 @@ const EMPTY_DRAFT = {
   saleDate: "",
   outcome: "",
 };
+
+const CELL_INPUT_CLASS =
+  "h-8 w-full min-w-0 rounded-dlc-sm border border-transparent bg-transparent px-1.5 text-sm focus-visible:border-primary/50 focus-visible:bg-background focus-visible:outline-none";
+
+type InvestorProjectField = keyof typeof EMPTY_DRAFT;
+
+function InvestorProjectEditableCell({
+  row,
+  field,
+  contactId,
+  memberUserKey,
+  upsertProject,
+  inputMode,
+  alignRight,
+}: {
+  row: InvestorProject;
+  field: InvestorProjectField;
+  contactId: Id<"contacts">;
+  memberUserKey?: string;
+  upsertProject: (args: {
+    contactId: Id<"contacts">;
+    projectId: Id<"contactInvestorProjects">;
+    address?: string;
+    projectType?: string;
+    role?: string;
+    purchaseAmount?: string;
+    purchaseDate?: string;
+    saleAmount?: string;
+    saleDate?: string;
+    outcome?: string;
+    memberUserKey?: string;
+  }) => Promise<unknown>;
+  inputMode?: "decimal" | "text";
+  alignRight?: boolean;
+}) {
+  const serverValue = row[field] ?? "";
+  const [value, setValue] = useState(serverValue);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setValue(row[field] ?? "");
+  }, [field, row._id, row.updatedAt, row[field]]);
+
+  const commit = async () => {
+    const trimmed = value.trim();
+    const next = trimmed || undefined;
+    const prev = (row[field] ?? "").trim() || undefined;
+    if (next === prev) return;
+
+    setSaving(true);
+    try {
+      await upsertProject({
+        contactId,
+        projectId: row._id,
+        address: field === "address" ? next : row.address ?? undefined,
+        projectType:
+          field === "projectType" ? next : row.projectType ?? undefined,
+        role: field === "role" ? next : row.role ?? undefined,
+        purchaseAmount:
+          field === "purchaseAmount" ? next : row.purchaseAmount ?? undefined,
+        purchaseDate:
+          field === "purchaseDate" ? next : row.purchaseDate ?? undefined,
+        saleAmount: field === "saleAmount" ? next : row.saleAmount ?? undefined,
+        saleDate: field === "saleDate" ? next : row.saleDate ?? undefined,
+        outcome: field === "outcome" ? next : row.outcome ?? undefined,
+        ...(memberUserKey ? { memberUserKey } : {}),
+      });
+    } catch {
+      setValue(serverValue);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Input
+      className={cn(
+        CELL_INPUT_CLASS,
+        alignRight && "text-right tabular-nums",
+      )}
+      value={value}
+      inputMode={inputMode}
+      disabled={saving}
+      aria-label={`${field} for investor project`}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
+}
 
 export function InvestorExperienceBlock({
   contactId,
@@ -229,29 +321,113 @@ export function InvestorExperienceBlock({
                 <tbody>
                   {visibleProjects.map((row) => (
                     <tr key={row._id} className="align-middle">
-                      <td className="border-b border-border/40 px-2 py-1.5 font-medium text-foreground">
-                        {row.address || "—"}
+                      <td className="border-b border-border/40 px-1 py-0.5 font-medium text-foreground">
+                        {readOnly ? (
+                          row.address || "—"
+                        ) : (
+                          <InvestorProjectEditableCell
+                            row={row}
+                            field="address"
+                            contactId={contactId}
+                            memberUserKey={memberUserKey}
+                            upsertProject={upsertProject}
+                          />
+                        )}
                       </td>
-                      <td className="border-b border-border/40 px-2 py-1.5">
-                        {row.projectType || "—"}
+                      <td className="border-b border-border/40 px-1 py-0.5">
+                        {readOnly ? (
+                          row.projectType || "—"
+                        ) : (
+                          <InvestorProjectEditableCell
+                            row={row}
+                            field="projectType"
+                            contactId={contactId}
+                            memberUserKey={memberUserKey}
+                            upsertProject={upsertProject}
+                          />
+                        )}
                       </td>
-                      <td className="border-b border-border/40 px-2 py-1.5">
-                        {row.role || "—"}
+                      <td className="border-b border-border/40 px-1 py-0.5">
+                        {readOnly ? (
+                          row.role || "—"
+                        ) : (
+                          <InvestorProjectEditableCell
+                            row={row}
+                            field="role"
+                            contactId={contactId}
+                            memberUserKey={memberUserKey}
+                            upsertProject={upsertProject}
+                          />
+                        )}
                       </td>
-                      <td className="border-b border-border/40 px-2 py-1.5 text-right tabular-nums">
-                        {row.purchaseAmount || "—"}
+                      <td className="border-b border-border/40 px-1 py-0.5 text-right tabular-nums">
+                        {readOnly ? (
+                          row.purchaseAmount || "—"
+                        ) : (
+                          <InvestorProjectEditableCell
+                            row={row}
+                            field="purchaseAmount"
+                            contactId={contactId}
+                            memberUserKey={memberUserKey}
+                            upsertProject={upsertProject}
+                            inputMode="decimal"
+                            alignRight
+                          />
+                        )}
                       </td>
-                      <td className="border-b border-border/40 px-2 py-1.5">
-                        {row.purchaseDate || "—"}
+                      <td className="border-b border-border/40 px-1 py-0.5">
+                        {readOnly ? (
+                          row.purchaseDate || "—"
+                        ) : (
+                          <InvestorProjectEditableCell
+                            row={row}
+                            field="purchaseDate"
+                            contactId={contactId}
+                            memberUserKey={memberUserKey}
+                            upsertProject={upsertProject}
+                          />
+                        )}
                       </td>
-                      <td className="border-b border-border/40 px-2 py-1.5 text-right tabular-nums">
-                        {row.saleAmount || "—"}
+                      <td className="border-b border-border/40 px-1 py-0.5 text-right tabular-nums">
+                        {readOnly ? (
+                          row.saleAmount || "—"
+                        ) : (
+                          <InvestorProjectEditableCell
+                            row={row}
+                            field="saleAmount"
+                            contactId={contactId}
+                            memberUserKey={memberUserKey}
+                            upsertProject={upsertProject}
+                            inputMode="decimal"
+                            alignRight
+                          />
+                        )}
                       </td>
-                      <td className="border-b border-border/40 px-2 py-1.5">
-                        {row.saleDate || "—"}
+                      <td className="border-b border-border/40 px-1 py-0.5">
+                        {readOnly ? (
+                          row.saleDate || "—"
+                        ) : (
+                          <InvestorProjectEditableCell
+                            row={row}
+                            field="saleDate"
+                            contactId={contactId}
+                            memberUserKey={memberUserKey}
+                            upsertProject={upsertProject}
+                          />
+                        )}
                       </td>
-                      <td className="border-b border-border/40 px-2 py-1.5">
-                        {row.outcome || "—"}
+                      <td className="border-b border-border/40 px-1 py-0.5">
+                        {readOnly ? (
+                          row.outcome || "—"
+                        ) : (
+                          <InvestorProjectEditableCell
+                            row={row}
+                            field="outcome"
+                            contactId={contactId}
+                            memberUserKey={memberUserKey}
+                            upsertProject={upsertProject}
+                          />
+                        )}
                       </td>
                       {!readOnly ? (
                         <td className="border-b border-border/40 px-2 py-1.5">

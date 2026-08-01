@@ -6,7 +6,6 @@ import {
   assertCanReadContactRow,
   assertOrgPermission,
   assertOrgScopeArgs,
-  sessionKeyIsGlobalAdmin,
 } from "./organizationAccess";
 import {
   normalizeCompanyKey,
@@ -298,6 +297,8 @@ export const list = query({
     contactRoleIdFilter: v.optional(v.string()),
     /** When true with `contactRoleIdFilter`, match stored `contacts.contactRoleId` only (no legacy/link inference). */
     strictCanonicalRoleMatch: v.optional(v.boolean()),
+    /** Optional cap for peek/pagination callers (default: no limit). */
+    limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const {
@@ -305,6 +306,7 @@ export const list = query({
       memberUserKey,
       contactRoleIdFilter,
       strictCanonicalRoleMatch,
+      limit,
     } = args;
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
     await assertOrgPermission(
@@ -313,16 +315,21 @@ export const list = query({
       memberUserKey,
       "contacts.view",
     );
-    const globalAdmin = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
-    let rows = globalAdmin
-      ? await ctx.db.query("contacts").withIndex("by_updatedAt").order("desc").collect()
-      : await ctx.db
-          .query("contacts")
-          .withIndex("by_organization_updatedAt", (q) =>
-            q.eq("organizationId", organizationId),
-          )
-          .order("desc")
-          .collect();
+    // Org-scoped list — global admin still reads within the active org (avoids full-table scan).
+    const rowCap =
+      limit != null && Number.isFinite(limit) && limit > 0
+        ? Math.min(Math.floor(limit), 5000)
+        : undefined;
+    const contactQuery = ctx.db
+      .query("contacts")
+      .withIndex("by_organization_updatedAt", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .order("desc");
+    let rows =
+      rowCap != null
+        ? await contactQuery.take(rowCap)
+        : await contactQuery.collect();
 
     const roleFilter = contactRoleIdFilter?.trim();
     if (roleFilter) {
@@ -529,6 +536,7 @@ export const update = mutation({
     emails: contactEmailsArgV,
     phones: contactPhonesArgV,
     notes: v.optional(v.string()),
+    crmTags: v.optional(v.array(v.string())),
     contactRoleId: v.optional(v.string()),
     contactRoleIds: v.optional(v.array(v.string())),
     /** @deprecated Phase CRM-4 — use entityContactLinks via setIndividualPrimaryCompany. */
@@ -598,6 +606,13 @@ export const update = mutation({
       ...(rest.name !== undefined ? { name: rest.name.trim() } : {}),
       ...(methodPatch ?? {}),
       ...(rest.notes !== undefined ? { notes: rest.notes.trim() } : {}),
+      ...(rest.crmTags !== undefined
+        ? {
+            crmTags: rest.crmTags
+              .map((t) => t.trim())
+              .filter(Boolean),
+          }
+        : {}),
       ...(rolePatch ?? {}),
       ...contactPiiPatchFromArgs(rest),
       updatedAt: now,

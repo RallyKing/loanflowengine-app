@@ -28,6 +28,7 @@ import { deriveIntake } from "@/lib/intake/derivations";
 import { useNarrowViewport } from "@/lib/useNarrowViewport";
 import { cn } from "@/lib/cn";
 import { sumLiabilitiesMonthlyPayments } from "@/lib/intake/moneyAggregates";
+import { reoFingerprintFromLegacyRow } from "@/lib/contacts/reoFromDeal";
 import {
   computeWeightedAverageRateByBalance,
   sumWeightedInterestMonthlyPayments,
@@ -1237,7 +1238,7 @@ export function ReoSection({ draft, update }: SectionProps) {
       }
     >
       <div className="max-w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-        <table className="w-full min-w-[1500px] border-separate border-spacing-y-2 text-xs">
+        <table className="w-full min-w-[1680px] border-separate border-spacing-y-2 text-xs">
           <thead>
             <tr className="text-left font-medium uppercase tracking-wide text-muted-foreground">
               <th className="px-2">#</th>
@@ -1254,17 +1255,22 @@ export function ReoSection({ draft, update }: SectionProps) {
               <th className="px-2">Taxes</th>
               <th className="px-2">Ins</th>
               <th className="px-2">HOA</th>
+              <th className="px-2">Escrow</th>
               <th className="px-2">Gross rent</th>
               <th className="px-2">Net rent</th>
               <th className="px-2">APN</th>
               <th className="px-2">Invested</th>
+              <th className="px-2">Lat/Long</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {rows.map((r, i) => {
+              const rowKey =
+                reoFingerprintFromLegacyRow(r) || `reo-row-${i}`;
+              return (
               <tr
-                key={i}
+                key={rowKey}
                 className={cn(
                   i % 2 === 0
                     ? "bg-white dark:bg-slate-800"
@@ -1299,15 +1305,18 @@ export function ReoSection({ draft, update }: SectionProps) {
                 <td className="px-1 w-24"><TextInput value={r.taxes ?? ""} onChange={(e) => setRow(i, { taxes: e.target.value })} /></td>
                 <td className="px-1 w-24"><TextInput value={r.insurance ?? ""} onChange={(e) => setRow(i, { insurance: e.target.value })} /></td>
                 <td className="px-1 w-20"><TextInput value={r.hoa ?? ""} onChange={(e) => setRow(i, { hoa: e.target.value })} /></td>
+                <td className="px-1 w-24"><TextInput value={r.escrow ?? ""} onChange={(e) => setRow(i, { escrow: e.target.value })} /></td>
                 <td className="px-1 w-24"><TextInput value={r.grossRent ?? ""} onChange={(e) => setRow(i, { grossRent: e.target.value })} /></td>
                 <td className="px-1 w-24"><TextInput value={r.netRent ?? ""} onChange={(e) => setRow(i, { netRent: e.target.value })} /></td>
                 <td className="px-1 w-24"><TextInput value={r.apn ?? ""} onChange={(e) => setRow(i, { apn: e.target.value })} /></td>
                 <td className="px-1 w-24"><TextInput value={r.invested ?? ""} onChange={(e) => setRow(i, { invested: e.target.value })} /></td>
+                <td className="px-1 min-w-[120px]"><TextInput value={r.latLong ?? ""} onChange={(e) => setRow(i, { latLong: e.target.value })} placeholder="lat, lng" /></td>
                 <td className="rounded-r-lg px-1 text-right">
                   <Button variant="ghost" onClick={() => update("reo", rows.filter((_, idx) => idx !== i))}>×</Button>
                 </td>
               </tr>
-            ))}
+            );
+            })}
             <tr className="text-[11px] font-semibold text-foreground/90">
               <td className="px-2" colSpan={6}>TOTALS</td>
               <td className="px-2">{formatUSD(totals.marketValue)}</td>
@@ -1318,10 +1327,12 @@ export function ReoSection({ draft, update }: SectionProps) {
               <td className="px-2">{formatUSD(totals.taxes)}</td>
               <td className="px-2">{formatUSD(totals.insurance)}</td>
               <td className="px-2">{formatUSD(totals.hoa)}</td>
+              <td />
               <td className="px-2">{formatUSD(totals.grossRent)}</td>
               <td className="px-2">{formatUSD(totals.netRent)}</td>
               <td />
               <td className="px-2">{formatUSD(totals.invested)}</td>
+              <td />
               <td />
             </tr>
           </tbody>

@@ -14,19 +14,24 @@ When the user asks you to "add a lender" or "update X's info" from a chat prompt
 
 ## Preferred path: Convex MCP `run`
 
+**Authenticated browser sessions** use JWT via `ConvexProviderWithAuth` — MCP/CLI cannot spoof `memberUserKey`.
+
+For agent-driven lender writes, prefer **`lenders:operatorUpsert`** (gated by `DATA_MIGRATION_ADMIN_SECRET` on the Convex deployment + `APP_AUTH_ORGANIZATION_ID` / `APP_AUTH_USER_KEY` on Convex):
+
 Call the `run` tool on the `user-convex` MCP server with:
 
-- `functionName`: `"lenders:upsert"` (or `"lenders:bulkUpsert"` for multiple)
-- `args`: an object matching the Convex `upsert` mutation schema (see `convex/lenders.ts`)
+- `functionName`: `"lenders:operatorUpsert"` (single) — or `"lenders:bulkUpsert"` with org scope when JWT tooling is available
+- `args`: lender fields plus `operatorSecret` (from local `DATA_MIGRATION_ADMIN_SECRET`, never commit)
 - `projectDir`: the absolute path to `lender-app/`
 
-Example single-lender call:
+Example operator upsert:
 
 ```json
 {
   "projectDir": "c:/Users/joshu/OneDrive/Desktop/Lender List/lender-app",
-  "functionName": "lenders:upsert",
+  "functionName": "lenders:operatorUpsert",
   "args": {
+    "operatorSecret": "<DATA_MIGRATION_ADMIN_SECRET>",
     "company": "Acme Capital Partners",
     "contactName": "Jane Doe",
     "titleRole": "Director of Originations",
@@ -42,9 +47,11 @@ Example single-lender call:
 }
 ```
 
-`upsert` is idempotent — if a lender with the same company+email already exists, it updates the record. Always prefer `lenders:upsert`.
+`operatorUpsert` is idempotent — same company+email updates the record.
 
-For multiple lenders at once, use `lenders:bulkUpsert` with a `records` array.
+For in-app authenticated upsert (`lenders:upsert`), the signed-in user JWT must match `memberUserKey`; pass `organizationId` + `memberUserKey` from the workspace session only.
+
+For multiple lenders at once via seed script, use `scripts/seed.mts` (passes org scope from `.env.local`) or `lenders:bulkUpsert` with `organizationId`, `memberUserKey`, and `records`.
 
 ## Schema reference
 
@@ -57,8 +64,10 @@ See the full field list in `lib/schema.ts` (exported as `LENDER_FIELDS`).
 Use the Shell tool from the `lender-app/` directory:
 
 ```powershell
-npx convex run lenders:upsert '{\"company\":\"Acme Capital\",\"email\":\"jane@example.com\"}'
+npx tsx scripts/add-lender-cli.mts '{"company":"Acme Capital","email":"jane@example.com"}'
 ```
+
+Or `npx convex run lenders:operatorUpsert` with `operatorSecret` plus lender fields (secret must match Convex `DATA_MIGRATION_ADMIN_SECRET`).
 
 ## After adding
 
