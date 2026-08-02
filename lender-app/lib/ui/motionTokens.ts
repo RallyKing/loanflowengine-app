@@ -18,6 +18,10 @@ export const motionMs = {
   searchOverlay: 260,
   /** Drawer / dock position */
   drawer: 280,
+  /** Desktop sidebar expand / collapse width */
+  sidebarRail: 300,
+  /** Desktop sidebar label/icon crossfade */
+  sidebarRailFade: 180,
   /** Color / micro */
   hover: 180,
   /** Bottom sheet “more” panel */
@@ -92,6 +96,21 @@ export const shellMotionTw = {
     `max-md:duration-[${motionMs.drawer}ms]`,
     te(motionEase.standard),
     "max-md:motion-reduce:transition-none",
+  ),
+  /** Desktop left nav width — keep SaasSidebar + collapsed rail in sync. */
+  sidebarRailWidth: cn(
+    "md:transition-[width,min-width,max-width,border-color]",
+    // Static class names so Tailwind JIT always emits them (matches motionMs.sidebarRail).
+    "md:duration-300",
+    te(motionEase.standard),
+    "md:motion-reduce:transition-none",
+  ),
+  sidebarRailFade: cn(
+    "md:transition-opacity",
+    // Static — matches motionMs.sidebarRailFade (~180ms).
+    "md:duration-200",
+    te(motionEase.standard),
+    "md:motion-reduce:transition-none",
   ),
   workspaceDockChip: cn(
     "motion-safe:transition-[transform,opacity,background-color]",

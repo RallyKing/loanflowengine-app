@@ -86,7 +86,10 @@ function Section({
       >
         {title}
         <ChevronDown
-          className={cn("h-4 w-4 shrink-0 text-white/70", open && "rotate-180")}
+          className={cn(
+            "h-4 w-4 shrink-0 text-white/70 transition-transform duration-200 ease-out motion-reduce:transition-none",
+            open && "rotate-180",
+          )}
           aria-hidden
         />
       </button>
@@ -126,12 +129,21 @@ function Section({
 export function SaasSidebar({
   mobileOpen = true,
   desktopExpanded = true,
+  motionReady = true,
+  variant = "default",
   onNavLinkClick,
   onCloseMobile,
   onCollapseDesktop,
 }: {
   mobileOpen?: boolean;
   desktopExpanded?: boolean;
+  /** When false, skip desktop width transition (first paint / reduced CLS). */
+  motionReady?: boolean;
+  /**
+   * `desktopEmbedded` — fill the animated rail shell (no own sticky/width/border).
+   * `default` — standalone mobile drawer / legacy desktop column.
+   */
+  variant?: "default" | "desktopEmbedded";
   onNavLinkClick?: () => void;
   onCloseMobile?: () => void;
   onCollapseDesktop?: () => void;
@@ -147,23 +159,35 @@ export function SaasSidebar({
   const quickActions = navCtx?.resolvedQuickActions ?? [];
   const navCompact = navCtx?.config.navLayoutMode === "compact";
   const narrow = useNarrowViewport();
+  const embedded = variant === "desktopEmbedded";
   return (
     <aside
       className={cn(
-        "flex w-64 min-w-64 flex-col border-r border-white/5 bg-nav-sidebar text-nav-sidebar-foreground",
-        "max-md:w-[min(22rem,88vw)] max-md:max-w-[90vw] max-md:min-w-0",
-        /* Viewport-height column: middle scrolls, footer stays visible (do not
-           stretch with the main content column, which pushed the footer off-screen). */
-        "max-md:h-dvh max-md:max-h-dvh",
-        "md:sticky md:top-0 md:h-dvh md:max-h-dvh md:min-h-0 md:self-start md:shrink-0 md:translate-x-0",
-        !desktopExpanded && "md:hidden",
-        /** Mobile drawer: fixed plane above bottom nav (z-50). */
-        "max-md:fixed max-md:bottom-0 max-md:top-0 max-md:z-50",
-        shellMotionTw.drawerTranslate,
-        mobileOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full max-md:pointer-events-none"
+        "flex flex-col bg-nav-sidebar text-nav-sidebar-foreground",
+        embedded
+          ? "h-full w-full min-w-0 border-0"
+          : cn(
+              "w-64 min-w-64 max-w-64 border-r border-white/5",
+              "max-md:w-[min(22rem,88vw)] max-md:max-w-[90vw] max-md:min-w-0",
+              /* Viewport-height column: middle scrolls, footer stays visible (do not
+                 stretch with the main content column, which pushed the footer off-screen). */
+              "max-md:h-dvh max-md:max-h-dvh",
+              "md:sticky md:top-0 md:h-dvh md:max-h-dvh md:min-h-0 md:self-start md:shrink-0 md:translate-x-0 md:overflow-hidden",
+              motionReady ? shellMotionTw.sidebarRailWidth : "md:transition-none",
+              desktopExpanded
+                ? "md:w-64 md:min-w-64 md:max-w-64 md:opacity-100"
+                : "md:w-0 md:min-w-0 md:max-w-0 md:opacity-0 md:pointer-events-none md:border-transparent",
+              /** Mobile drawer: fixed plane above bottom nav (z-50). */
+              "max-md:fixed max-md:bottom-0 max-md:top-0 max-md:z-50",
+              shellMotionTw.drawerTranslate,
+              mobileOpen
+                ? "max-md:translate-x-0"
+                : "max-md:-translate-x-full max-md:pointer-events-none",
+            ),
       )}
-      style={{ zIndex: narrow ? 50 : undefined }}
+      style={{ zIndex: embedded ? undefined : narrow ? 50 : undefined }}
       aria-label="Primary navigation"
+      aria-hidden={!embedded && !desktopExpanded ? true : undefined}
     >
       <div
         className={cn(
