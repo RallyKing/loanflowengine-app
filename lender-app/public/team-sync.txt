@@ -1,0 +1,2 @@
+DLC team sync check — pushed by OnPointBS on 2026-08-02.
+If you can read this after git pull, collaboration works.
