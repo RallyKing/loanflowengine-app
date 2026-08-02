@@ -255,8 +255,11 @@ function BoardCardDetails({
         <PipelineStageSelector
           stageId={row.stageId}
           subStageId={row.subStageId}
+          status={row.status}
           readOnly={row.archivedAt != null || !row.canEditFile}
+          canEditFile={row.canEditFile}
           compact
+          stopPropagation
           ariaLabel={`Change stage for ${row.fileName}`}
           onCommit={onStageCommit}
         />

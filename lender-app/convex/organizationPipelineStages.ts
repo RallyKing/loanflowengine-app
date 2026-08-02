@@ -11,6 +11,7 @@ import {
 import {
   appendStageArchitectureActivity,
   listOrgStageBundle,
+  repairPipelineStageLinksForOrg,
   seedDefaultOrgPipelineStages,
   uniqueStageSlug,
 } from "./organizationPipelineStagesHelpers";
@@ -393,5 +394,16 @@ export const reorderSubStages = mutation({
       actorUserKey: key,
     });
     return { ok: true as const };
+  },
+});
+
+/** Backfill missing/invalid pipeline `stageId` values from legacy status labels. */
+export const repairPipelineStageLinks = mutation({
+  args: orgArgs,
+  handler: async (ctx, { organizationId, memberUserKey }) => {
+    await assertOrganizationId(ctx, organizationId);
+    const key = await requireMemberKey(ctx, organizationId, memberUserKey);
+    await assertOrgPermission(ctx, organizationId, key, "files.edit");
+    return await repairPipelineStageLinksForOrg(ctx, organizationId);
   },
 });

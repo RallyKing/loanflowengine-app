@@ -25,7 +25,7 @@ import { pickIntakeShapedPreviewPayload } from "../lib/pipeline/pickIntakeShaped
 import { buildSubjectAddressDisplay } from "../lib/pipeline/subjectAddressDisplay";
 import { parseClientMomentum } from "../lib/clientMomentum";
 import type { PipelineListRow } from "../lib/pipelineListRow";
-import { syncPipelineStatusFromStage } from "./organizationPipelineStagesHelpers";
+import { syncPipelineStatusFromStage, assertPipelineStageBelongsToOrg } from "./organizationPipelineStagesHelpers";
 import { insertCollaborationActivityEvent } from "./activityEvents";
 import { isCurrentlySnoozed as pipelineIsCurrentlySnoozed } from "../lib/pipelineSnooze";
 import { resolvePipelineTableFundingAmount } from "../lib/pipeline/resolvePipelineTableFundingAmount";
@@ -2085,6 +2085,24 @@ export const patch = mutation({
     if (rest.stageId !== undefined) {
       const nextStageId =
         rest.stageId === null ? undefined : rest.stageId;
+      if (nextStageId !== undefined) {
+        const orgId = existing.organizationId;
+        if (!orgId) {
+          throw new Error("Pipeline file has no organization; cannot assign stage.");
+        }
+        const mergedSubForValidation =
+          rest.subStageId !== undefined
+            ? rest.subStageId === null
+              ? undefined
+              : rest.subStageId
+            : existing.subStageId;
+        await assertPipelineStageBelongsToOrg(
+          ctx,
+          orgId,
+          nextStageId,
+          mergedSubForValidation,
+        );
+      }
       if (nextStageId !== existing.stageId) {
         patchObj.stageId = nextStageId;
         stageAssignmentChanged = true;

@@ -123,6 +123,118 @@ export async function findStageBySlug(
   return rows.find((r) => !r.isArchived) ?? rows[0] ?? null;
 }
 
+/** Match org stage from a pipeline row's legacy/custom status label or slug. */
+export async function findStageForPipelineStatus(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  rawStatus: string,
+): Promise<Doc<"organizationPipelineStages"> | null> {
+  const trimmed = rawStatus.trim();
+  if (!trimmed) return null;
+
+  const parentRaw = trimmed.split("::")[0] ?? trimmed;
+  const slug = resolveLegacyStatusToSlug(parentRaw);
+  const bySlug = await findStageBySlug(ctx, organizationId, slug);
+  if (bySlug) return bySlug;
+
+  const stages = await ctx.db
+    .query("organizationPipelineStages")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .collect();
+
+  const parentKey = normalizeStatusKey(parentRaw);
+  const lower = parentRaw.trim().toLowerCase();
+  for (const stage of stages) {
+    if (
+      stage.slug === parentKey ||
+      slugifyStageName(stage.name) === parentKey ||
+      stage.name.trim().toLowerCase() === lower
+    ) {
+      return stage;
+    }
+  }
+  return null;
+}
+
+export async function assertPipelineStageBelongsToOrg(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  stageId: Id<"organizationPipelineStages">,
+  subStageId?: Id<"organizationPipelineSubStages">,
+): Promise<Doc<"organizationPipelineStages">> {
+  const stage = await ctx.db.get(stageId);
+  if (!stage || String(stage.organizationId) !== String(organizationId)) {
+    throw new Error("Invalid pipeline stage for this organization.");
+  }
+  if (subStageId) {
+    const sub = await ctx.db.get(subStageId);
+    if (
+      !sub ||
+      String(sub.organizationId) !== String(organizationId) ||
+      String(sub.parentStageId) !== String(stageId)
+    ) {
+      throw new Error("Invalid pipeline sub-stage for this stage.");
+    }
+  }
+  return stage;
+}
+
+/** Backfill missing/invalid `stageId` from `status` for one org. */
+export async function repairPipelineStageLinksForOrg(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+): Promise<{ scanned: number; repaired: number; skipped: number }> {
+  const pipelines = await ctx.db
+    .query("pipeline")
+    .withIndex("by_organization_createdAt", (q) =>
+      q.eq("organizationId", organizationId),
+    )
+    .collect();
+
+  const stageById = new Map(
+    (
+      await ctx.db
+        .query("organizationPipelineStages")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", organizationId),
+        )
+        .collect()
+    ).map((s) => [String(s._id), s]),
+  );
+
+  let repaired = 0;
+  let skipped = 0;
+
+  for (const row of pipelines) {
+    const currentValid =
+      row.stageId != null && stageById.has(String(row.stageId));
+    if (currentValid) {
+      skipped += 1;
+      continue;
+    }
+
+    const stage = await findStageForPipelineStatus(
+      ctx,
+      organizationId,
+      row.status,
+    );
+    if (!stage) {
+      skipped += 1;
+      continue;
+    }
+
+    await ctx.db.patch(row._id, {
+      stageId: stage._id,
+      subStageId: undefined,
+      status: stage.slug,
+      updatedAt: row.updatedAt,
+    });
+    repaired += 1;
+  }
+
+  return { scanned: pipelines.length, repaired, skipped };
+}
+
 export async function resolveDefaultStageId(
   ctx: QueryCtx | MutationCtx,
   organizationId: Id<"organizations">,

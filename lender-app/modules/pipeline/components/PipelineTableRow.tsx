@@ -1,7 +1,7 @@
  "use client";
 
 import Link from "next/link";
-import { Archive, BellOff, FileText } from "lucide-react";
+import { BellOff, FileText } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
@@ -25,6 +25,7 @@ import {
   formatPipelineStageCompactLabel,
   useOrganizationPipelineStages,
 } from "@/hooks/useOrganizationPipelineStages";
+import { resolvePipelineRowStage } from "@/lib/pipeline/resolvePipelineRowStage";
 import { PipelineStageSelector } from "@/components/pipeline/PipelineStageSelector";
 import {
   commitPipelineFileName,
@@ -44,6 +45,7 @@ import {
   fmtPipelineRelativeUpdated,
 } from "@/lib/pipeline/pipelineTableFormatting";
 import { PipelineFileRowHierarchyStack } from "@/components/pipeline/PipelineFileRowHierarchyStack";
+import { PipelineFileArchivedIndicator } from "@/components/pipeline/PipelineFileArchivedIndicator";
 
 type PatchPipelineFn = (args: {
   id: Id<"pipeline">;
@@ -100,9 +102,14 @@ export function PipelineTableRow({
   /** Account display tint for stage pill borders / dots (see `UserPreferences.displaySettings`). */
   globalStageIndicator?: string | null;
 }) {
-  const { stageById, subById } = useOrganizationPipelineStages();
+  const stageIndex = useOrganizationPipelineStages();
+  const { subById } = stageIndex;
   const archived = r.archivedAt != null;
   const editable = !archived;
+  const resolvedStage = resolvePipelineRowStage(
+    { stageId: r.stageId, subStageId: r.subStageId, status: r.status },
+    stageIndex,
+  );
   const stop = (e: React.SyntheticEvent) => {
     e.stopPropagation();
   };
@@ -151,53 +158,52 @@ export function PipelineTableRow({
               <FileText className="h-4 w-4" aria-hidden />
             </Link>
             <div className="min-w-0 flex-1">
-              <PipelineFileRowHierarchyStack
-                row={r}
-                fileTitleSlot={
-                  editable ? (
-                    <InlineText
-                      value={r.fileName}
-                      validate={(t) =>
-                        !t.trim() ? "File name is required" : null
-                      }
-                      onCommit={async (next) => {
-                        const t = next.trim();
-                        if (!t) return;
-                        await commitPipelineFileName(
-                          r,
-                          patchPipeline,
-                          patchDeal,
-                          t,
-                        );
-                      }}
-                      ariaLabel={`File name for ${r.fileName}`}
-                      className="inline min-w-0 max-w-full shrink text-sm font-medium text-slate-900 dark:text-slate-100"
-                      displayClassName="truncate text-left text-sm font-medium text-slate-900 dark:text-slate-100"
-                    />
-                  ) : undefined
-                }
-              />
-              {(archived || (r.isSnoozed && snoozedUntilToMs(r.snoozedUntil) != null)) ? (
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <div className="min-w-0 flex-1">
+                  <PipelineFileRowHierarchyStack
+                    row={r}
+                    fileTitleSlot={
+                      editable ? (
+                        <InlineText
+                          value={r.fileName}
+                          validate={(t) =>
+                            !t.trim() ? "File name is required" : null
+                          }
+                          onCommit={async (next) => {
+                            const t = next.trim();
+                            if (!t) return;
+                            await commitPipelineFileName(
+                              r,
+                              patchPipeline,
+                              patchDeal,
+                              t,
+                            );
+                          }}
+                          ariaLabel={`File name for ${r.fileName}`}
+                          className="inline min-w-0 max-w-full shrink text-sm font-medium text-slate-900 dark:text-slate-100"
+                          displayClassName="truncate text-left text-sm font-medium text-slate-900 dark:text-slate-100"
+                        />
+                      ) : undefined
+                    }
+                  />
+                </div>
+                <PipelineFileArchivedIndicator
+                  archivedAt={r.archivedAt}
+                  compact
+                  withLabel
+                />
+              </div>
+              {r.isSnoozed && snoozedUntilToMs(r.snoozedUntil) != null ? (
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {archived ? (
-                    <span
-                      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-200"
-                    >
-                      <Archive className="h-2.5 w-2.5" aria-hidden />
-                      Archived
-                    </span>
-                  ) : null}
-                  {r.isSnoozed && snoozedUntilToMs(r.snoozedUntil) != null ? (
-                    <span
-                      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-800 dark:border-blue-700 dark:bg-blue-950/60 dark:text-blue-200"
-                    >
-                      <BellOff className="h-2.5 w-2.5" aria-hidden />
-                      Until{" "}
-                      {new Date(
-                        snoozedUntilToMs(r.snoozedUntil)!,
-                      ).toLocaleDateString()}
-                    </span>
-                  ) : null}
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-800 dark:border-blue-700 dark:bg-blue-950/60 dark:text-blue-200"
+                  >
+                    <BellOff className="h-2.5 w-2.5" aria-hidden />
+                    Until{" "}
+                    {new Date(
+                      snoozedUntilToMs(r.snoozedUntil)!,
+                    ).toLocaleDateString()}
+                  </span>
                 </div>
               ) : null}
             </div>
@@ -238,7 +244,10 @@ export function PipelineTableRow({
           <PipelineStageSelector
             stageId={r.stageId}
             subStageId={r.subStageId}
+            status={r.status}
+            canEditFile={r.canEditFile}
             compact
+            stopPropagation
             onCommit={(next) =>
               patchPipeline({
                 id: r._id,
@@ -252,20 +261,22 @@ export function PipelineTableRow({
           <span
             className="inline-flex max-w-full items-center rounded-full border px-2.5 py-0.5 text-xs font-medium"
             style={
-              r.stageId && stageById.get(r.stageId)
+              resolvedStage.stage
                 ? {
-                    backgroundColor: `${stageById.get(r.stageId)!.color}22`,
-                    borderColor: stageById.get(r.stageId)!.color,
+                    backgroundColor: `${resolvedStage.stage.color}22`,
+                    borderColor: resolvedStage.stage.color,
                   }
                 : getPipelineStatusBadgeStyle(r.status, stageColors, {
                     globalIndicator: globalStageIndicator,
                   })
             }
           >
-            {r.stageId
+            {resolvedStage.stage
               ? formatPipelineStageCompactLabel(
-                  stageById.get(r.stageId),
-                  r.subStageId ? subById.get(r.subStageId) : undefined,
+                  resolvedStage.stage,
+                  resolvedStage.subStageId
+                    ? subById.get(resolvedStage.subStageId)
+                    : resolvedStage.subStage,
                 )
               : getPipelineStatusInfo(r.status).label}
           </span>

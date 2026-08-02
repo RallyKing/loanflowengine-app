@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Id } from "@/convex/_generated/dataModel";
 import { InlineSelect } from "@/components/inline";
 import { Button } from "@/components/ui/Button";
@@ -10,17 +10,28 @@ import {
   formatPipelineStageCompactLabel,
   useOrganizationPipelineStages,
 } from "@/hooks/useOrganizationPipelineStages";
+import {
+  buildParentStageOptions,
+  resolvePipelineRowStage,
+} from "@/lib/pipeline/resolvePipelineRowStage";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 
+const repairedStageLinkOrgs = new Set<string>();
+
 type Props = {
   stageId?: Id<"organizationPipelineStages">;
   subStageId?: Id<"organizationPipelineSubStages">;
+  /** Legacy/custom status string — used to resolve stage when `stageId` is missing. */
+  status?: string;
   readOnly?: boolean;
+  /** When true, allow stage changes for users editing this file (even without org-wide `files.edit`). */
+  canEditFile?: boolean;
   compact?: boolean;
   ariaLabel?: string;
+  stopPropagation?: boolean;
   onCommit: (next: {
     stageId: Id<"organizationPipelineStages">;
     subStageId?: Id<"organizationPipelineSubStages">;
@@ -30,48 +41,78 @@ type Props = {
 export function PipelineStageSelector({
   stageId,
   subStageId,
+  status,
   readOnly = false,
+  canEditFile = false,
   compact = false,
   ariaLabel = "Pipeline stage",
+  stopPropagation = false,
   onCommit,
 }: Props) {
+  const stageIndex = useOrganizationPipelineStages();
   const {
     tree,
-    stageById,
     subById,
     loading,
     canManageStageArchitecture,
     canAssignStages,
-  } = useOrganizationPipelineStages();
+  } = stageIndex;
   const { activeOrganizationId } = useOrgPermissions();
   const memberUserKey = useActorUserKey();
   const createSubStage = useMutation(api.organizationPipelineStages.createSubStage);
+  const repairLinks = useMutation(
+    api.organizationPipelineStages.repairPipelineStageLinks,
+  );
 
   const [creatingSub, setCreatingSub] = useState(false);
   const [newSubName, setNewSubName] = useState("");
 
-  const currentStage = stageId ? stageById.get(stageId) : tree[0]?.stage;
-  const currentSub = subStageId ? subById.get(subStageId) : undefined;
+  const resolved = useMemo(
+    () =>
+      resolvePipelineRowStage({ stageId, subStageId, status }, stageIndex),
+    [stageId, subStageId, status, stageIndex],
+  );
+
+  const currentStage = resolved.stage;
+  const currentSub = resolved.subStageId
+    ? subById.get(resolved.subStageId)
+    : resolved.subStage;
+
+  const mayAssign = canAssignStages || canEditFile;
+  const disabled = readOnly || !mayAssign || loading;
+
+  useEffect(() => {
+    if (!activeOrganizationId || !memberUserKey.trim()) return;
+    if (!resolved.inferredFromStatus) return;
+    if (!mayAssign) return;
+    const orgKey = String(activeOrganizationId);
+    if (repairedStageLinkOrgs.has(orgKey)) return;
+    repairedStageLinkOrgs.add(orgKey);
+    void repairLinks({
+      organizationId: activeOrganizationId,
+      memberUserKey,
+    }).catch(() => {
+      repairedStageLinkOrgs.delete(orgKey);
+    });
+  }, [
+    activeOrganizationId,
+    memberUserKey,
+    mayAssign,
+    repairLinks,
+    resolved.inferredFromStatus,
+  ]);
 
   const parentOptions = useMemo(
-    () =>
-      tree.map(({ stage }) => ({
-        value: String(stage._id),
-        label: stage.name,
-        badgeStyle: {
-          backgroundColor: `${stage.color}22`,
-          borderColor: stage.color,
-          color: "#111827",
-        },
-      })),
-    [tree],
+    () => buildParentStageOptions(stageIndex, currentStage),
+    [stageIndex, currentStage],
   );
 
   const subOptions = useMemo(() => {
     const pid = currentStage?._id;
     if (!pid) return [];
     const node = tree.find((t) => t.stage._id === pid);
-    return (node?.subStages ?? []).map((sub) => ({
+    const subs = node?.subStages ?? [];
+    const opts = subs.map((sub) => ({
       value: String(sub._id),
       label: sub.name,
       badgeStyle: {
@@ -80,10 +121,26 @@ export function PipelineStageSelector({
         color: "#111827",
       },
     }));
-  }, [currentStage?._id, tree]);
+    if (
+      currentSub &&
+      !opts.some((o) => o.value === String(currentSub._id))
+    ) {
+      opts.unshift({
+        value: String(currentSub._id),
+        label: currentSub.isArchived
+          ? `${currentSub.name} (archived)`
+          : currentSub.name,
+        badgeStyle: {
+          backgroundColor: `${currentSub.color}22`,
+          borderColor: currentSub.color,
+          color: "#111827",
+        },
+      });
+    }
+    return opts;
+  }, [currentStage?._id, currentSub, tree]);
 
   const displayLabel = formatPipelineStageCompactLabel(currentStage, currentSub);
-  const disabled = readOnly || !canAssignStages || loading;
 
   if (disabled && !loading) {
     return (
@@ -107,14 +164,19 @@ export function PipelineStageSelector({
     );
   }
 
+  const selectValue = currentStage ? String(currentStage._id) : "";
+
   return (
     <div className={cn("flex min-w-0 flex-wrap items-center gap-1.5", compact && "gap-1")}>
       <InlineSelect
-        value={currentStage ? String(currentStage._id) : ""}
+        value={selectValue}
         options={parentOptions}
         ariaLabel={`${ariaLabel} — parent`}
         asBadge
+        readOnly={disabled}
+        stopPropagation={stopPropagation}
         onCommit={(next) => {
+          if (!next) return;
           onCommit({
             stageId: next as Id<"organizationPipelineStages">,
             subStageId: undefined,
@@ -127,6 +189,8 @@ export function PipelineStageSelector({
           options={[{ value: "", label: "No sub-stage" }, ...subOptions]}
           ariaLabel={`${ariaLabel} — sub-stage`}
           asBadge
+          readOnly={disabled}
+          stopPropagation={stopPropagation}
           onCommit={(next) => {
             if (!currentStage) return;
             onCommit({

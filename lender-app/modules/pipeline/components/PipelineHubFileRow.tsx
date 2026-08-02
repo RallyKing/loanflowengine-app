@@ -11,6 +11,7 @@ import { ClientMomentumStars } from "@/components/pipeline/ClientMomentumStars";
 import { HubHierarchyLoanRowActions } from "@/components/pipeline/HubHierarchyLoanRowActions";
 import { OperationalRowShell } from "@/components/ui/OperationalRowShell";
 import { PipelineFileRowHierarchyStack } from "@/components/pipeline/PipelineFileRowHierarchyStack";
+import { PipelineFileArchivedIndicator } from "@/components/pipeline/PipelineFileArchivedIndicator";
 import { OperationalCheckbox } from "@/components/ui/OperationalCheckbox";
 import {
   fmtPipelineBoardLoanCompact,
@@ -161,8 +162,11 @@ export function PipelineHubFileRow({
             <PipelineStageSelector
               stageId={row.stageId}
               subStageId={row.subStageId}
+              status={row.status}
               readOnly={!row.canEditFile}
+              canEditFile={row.canEditFile}
               compact
+              stopPropagation
               onCommit={onChangeRowStatus}
             />
             {onSetClientMomentum ? (
@@ -186,9 +190,15 @@ export function PipelineHubFileRow({
         primary={
           <button
             type="button"
-            className="min-w-0 flex-1 text-left"
+            className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
             onClick={onOpen}
           >
+            <PipelineFileArchivedIndicator
+              archivedAt={row.archivedAt}
+              compact
+              withLabel
+              className="mt-0.5 shrink-0"
+            />
             <PipelineFileRowHierarchyStack row={row} />
           </button>
         }
@@ -231,8 +241,11 @@ export function PipelineHubFileRow({
             <PipelineStageSelector
               stageId={row.stageId}
               subStageId={row.subStageId}
+              status={row.status}
               readOnly={!row.canEditFile}
+              canEditFile={row.canEditFile}
               compact
+              stopPropagation
               onCommit={onChangeRowStatus}
             />
             {onSetClientMomentum ? (

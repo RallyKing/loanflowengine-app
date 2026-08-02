@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Archive, BellOff, FileText, User } from "lucide-react";
+import { BellOff, FileText, User } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
 import { cn } from "@/lib/cn";
@@ -26,6 +26,7 @@ import {
   type HubTriageHighlightMapView,
 } from "@/lib/pipeline/hubTriageHighlight";
 import { PipelineFileRowHierarchyStack } from "@/components/pipeline/PipelineFileRowHierarchyStack";
+import { PipelineFileArchivedIndicator } from "@/components/pipeline/PipelineFileArchivedIndicator";
 
 /** High-density mobile hub row: scan-friendly without replacing the full data grid on desktop. */
 export function PipelineHubMobileFileCard({
@@ -83,10 +84,17 @@ export function PipelineHubMobileFileCard({
     >
       <div className="flex flex-col gap-2">
         <div className="flex min-w-0 items-start gap-2">
-          <FileText
-            className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
+          <div className="mt-0.5 flex shrink-0 flex-col items-center gap-1">
+            <FileText
+              className="h-4 w-4 text-muted-foreground"
+              aria-hidden
+            />
+            <PipelineFileArchivedIndicator
+              archivedAt={r.archivedAt}
+              compact
+              withLabel
+            />
+          </div>
           <Link
             href={pipelineDealEditorHref(r._id)}
             className="min-w-0 flex-1 text-left"
@@ -128,15 +136,6 @@ export function PipelineHubMobileFileCard({
                 : undefined
             }
           />
-          {r.archivedAt != null && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-200"
-              title={`Archived ${new Date(r.archivedAt).toLocaleString()}`}
-            >
-              <Archive className="h-2.5 w-2.5" aria-hidden />
-              Archived
-            </span>
-          )}
           {r.isSnoozed && snoozedUntilToMs(r.snoozedUntil) != null && (
             <span
               className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-800 dark:border-blue-700 dark:bg-blue-950/60 dark:text-blue-200"

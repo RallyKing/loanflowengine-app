@@ -57,6 +57,7 @@ import {
 } from "@/lib/pipeline/pipelineTableFormatting";
 import { getPipelineStatusInfo } from "@/lib/pipelineStatus";
 import { PipelineFileRowHierarchyStack } from "@/components/pipeline/PipelineFileRowHierarchyStack";
+import { PipelineFileArchivedIndicator } from "@/components/pipeline/PipelineFileArchivedIndicator";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
 import type { InlineSelectOption } from "@/components/inline";
 import { PipelineHubNotesIndicatorChip } from "@/components/pipeline/notes/PipelineHubNotesIndicatorChip";
@@ -202,7 +203,17 @@ function LoanStackRow({
         </span>
       )}
       <div className="flex flex-col gap-2 md:hidden">
-        <button type="button" className="w-full min-w-0 text-left" onClick={onOpen}>
+        <button
+          type="button"
+          className="flex w-full min-w-0 items-start gap-1.5 text-left"
+          onClick={onOpen}
+        >
+          <PipelineFileArchivedIndicator
+            archivedAt={row.archivedAt}
+            compact
+            withLabel
+            className="mt-0.5 shrink-0"
+          />
           <PipelineFileRowHierarchyStack row={row} />
         </button>
         <div
@@ -260,12 +271,24 @@ function LoanStackRow({
           onClick={(e) => e.stopPropagation()}
         />
         <div className="min-w-0 flex-1">
-          <button type="button" className="w-full text-left" onClick={onOpen}>
-            <PipelineFileRowHierarchyStack row={row} />
-            {(row.linkedClients?.length ?? 0) > 1 ? (
-              <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
-            ) : null}
-            <PipelineHubRelationshipBadges row={row} compact />
+          <button
+            type="button"
+            className="flex w-full items-start gap-1.5 text-left"
+            onClick={onOpen}
+          >
+            <PipelineFileArchivedIndicator
+              archivedAt={row.archivedAt}
+              compact
+              withLabel
+              className="mt-0.5 shrink-0"
+            />
+            <div className="min-w-0 flex-1">
+              <PipelineFileRowHierarchyStack row={row} />
+              {(row.linkedClients?.length ?? 0) > 1 ? (
+                <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
+              ) : null}
+              <PipelineHubRelationshipBadges row={row} compact />
+            </div>
           </button>
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="tabular-nums font-medium text-foreground/80">
@@ -303,8 +326,11 @@ function LoanStackRow({
         <PipelineStageSelector
           stageId={row.stageId}
           subStageId={row.subStageId}
+          status={row.status}
           readOnly={!row.canEditFile}
+          canEditFile={row.canEditFile}
           compact
+          stopPropagation
           onCommit={onChangeRowStatus}
         />
         {onSetClientMomentum ? (

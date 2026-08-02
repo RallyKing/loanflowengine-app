@@ -8,6 +8,7 @@ import { assertDataMigrationAdmin } from "../migrationAdminAuth";
 import { LEGACY_FUNNEL_STAGE_SEEDS } from "../../lib/pipeline/legacyStageSeed";
 import {
   findStageBySlug,
+  findStageForPipelineStatus,
   orgHasPipelineStages,
   resolveLegacyStatusToSlug,
   seedDefaultOrgPipelineStages,
@@ -117,7 +118,7 @@ export const migrateAllOrganizations = mutation({
         }
         const slug = resolveLegacyStatusToSlug(row.status);
         tallyLegacyStatus(legacyMap, row.status, slug);
-        let stage = await findStageBySlug(ctx, org._id, slug);
+        let stage = await findStageForPipelineStatus(ctx, org._id, row.status);
         let targetStageName: string;
         let targetStageId: Id<"organizationPipelineStages"> | undefined;
         if (stage) {
@@ -217,7 +218,7 @@ export const migrateAllOrganizations = mutation({
         for (const row of pipelines) {
           if (row.stageId) continue;
           const slug = resolveLegacyStatusToSlug(row.status);
-          const stage = await findStageBySlug(ctx, org._id, slug);
+          const stage = await findStageForPipelineStatus(ctx, org._id, row.status);
           if (!stage) continue;
           secondToMap += 1;
           await ctx.db.patch(row._id, {
@@ -360,7 +361,7 @@ export const migrateOrganization = mutation({
         continue;
       }
       const slug = resolveLegacyStatusToSlug(row.status);
-      const stage = await findStageBySlug(ctx, organizationId, slug);
+      const stage = await findStageForPipelineStatus(ctx, organizationId, row.status);
       if (!stage) {
         pipelineRowsSkipped += 1;
         continue;

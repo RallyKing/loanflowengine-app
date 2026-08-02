@@ -25,6 +25,8 @@ export type InlineSelectProps = {
   /** Render selected value as a colored pill (uses `badgeClassName`). */
   asBadge?: boolean;
   placeholder?: string;
+  /** When set, overrides ResourceAccess context read-only (used by pipeline stage selector). */
+  readOnly?: boolean;
   /** Allow committing the value but stop event bubbling — used in table rows. */
   stopPropagation?: boolean;
 };
@@ -39,9 +41,12 @@ export function InlineSelect({
   ariaLabel,
   asBadge,
   placeholder = "Choose…",
+  readOnly: readOnlyOverride,
   stopPropagation,
 }: InlineSelectProps) {
-  const { readOnly, viewOnlyTooltip } = useResourceAccess();
+  const { readOnly: resourceReadOnly, viewOnlyTooltip } = useResourceAccess();
+  const readOnly =
+    readOnlyOverride !== undefined ? readOnlyOverride : resourceReadOnly;
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLSelectElement>(null);
   const { loading, error, justSaved, commit } = useInlineCommit();

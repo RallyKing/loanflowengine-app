@@ -2000,6 +2000,7 @@ function PipelineFileWorkspaceLoaded({
       fundingDisplay: fileDetailsBusFund?.display,
       stageId: pipelineRow.stageId,
       subStageId: pipelineRow.subStageId,
+      status: pipelineRow.status,
       archivedAt: pipelineRow.archivedAt,
       dealCommitRow,
       dealBacked: dealBackedForBus,

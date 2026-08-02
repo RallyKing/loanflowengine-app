@@ -132,8 +132,11 @@ export function DealCommandCenterHeader({
         <PipelineStageSelector
           stageId={stageId}
           subStageId={subStageId}
+          status={pipelineData.status}
           readOnly={fieldReadOnly}
+          canEditFile={canMutate}
           compact
+          stopPropagation
           onCommit={(next) =>
             onPatchField({
               id: fileId,

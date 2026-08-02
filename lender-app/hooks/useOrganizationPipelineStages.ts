@@ -101,7 +101,7 @@ export function useOrganizationPipelineStages() {
     loading: bundle === undefined,
     ...index,
     canManageStageArchitecture: can("settings.manage"),
-    canAssignStages: can("files.edit"),
+    canAssignStages: can("files.edit") || can("files.edit_all"),
   };
 }
 

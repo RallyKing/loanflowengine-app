@@ -22,6 +22,7 @@ export type GlobalBannerPipelineData = {
   fundingDisplay?: number;
   stageId?: Id<"organizationPipelineStages">;
   subStageId?: Id<"organizationPipelineSubStages">;
+  status?: string;
   archivedAt?: number | null;
   dealCommitRow: DealCommitRow | null;
   dealBacked: boolean;
@@ -68,6 +69,7 @@ export function GlobalBanner({
     fundingDisplay,
     stageId,
     subStageId,
+    status,
     archivedAt,
     dealCommitRow,
     dealBacked,
@@ -183,8 +185,11 @@ export function GlobalBanner({
             <PipelineStageSelector
               stageId={stageId}
               subStageId={subStageId}
+              status={status}
               readOnly={fieldReadOnly}
+              canEditFile={canMutate}
               compact
+              stopPropagation
               onCommit={(next) =>
                 onPatchField({
                   id: fileId,
