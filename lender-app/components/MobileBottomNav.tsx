@@ -101,19 +101,28 @@ export const MobileBottomNav = memo(function MobileBottomNav({
     (!navLocked && !domMountLock && focusModeFromStore);
 
   useLayoutEffect(() => {
+    /* SaaS hamburger open: clear pipeline locks so !important CSS cannot
+       force the white dock to paint a full-width strip under the green menu. */
+    const lockActive = navLocked && !forceHidden;
+    const domLockActive = domMountLock && !forceHidden;
     document.documentElement.toggleAttribute(
       "data-pipeline-bottom-nav-locked",
-      navLocked,
+      lockActive,
     );
     document.documentElement.toggleAttribute(
       PIPELINE_NAV_DOM_LOCK_HTML_ATTR,
-      domMountLock,
+      domLockActive,
+    );
+    document.documentElement.toggleAttribute(
+      "data-saas-menu-open",
+      forceHidden,
     );
     return () => {
       document.documentElement.removeAttribute("data-pipeline-bottom-nav-locked");
       document.documentElement.removeAttribute(PIPELINE_NAV_DOM_LOCK_HTML_ATTR);
+      document.documentElement.removeAttribute("data-saas-menu-open");
     };
-  }, [navLocked, domMountLock]);
+  }, [navLocked, domMountLock, forceHidden]);
 
   const [moreOpen, setMoreOpen] = useState(false);
   const navCtx = useNavigationConfigOptional();
@@ -197,15 +206,17 @@ export const MobileBottomNav = memo(function MobileBottomNav({
             ? {
                 transform: "translate3d(0, 0, 0)",
                 opacity: 1,
-                visibility: "visible",
+                visibility: "visible" as const,
                 display: "flex",
               }
             : forceHidden
               ? {
+                  /* display:none beats Phase 24.4J/L !important visibility locks */
+                  display: "none",
                   transform: "translate3d(0, 100%, 0)",
                   opacity: 0,
-                  visibility: "hidden",
-                  pointerEvents: "none",
+                  visibility: "hidden" as const,
+                  pointerEvents: "none" as const,
                 }
               : {}),
         }}

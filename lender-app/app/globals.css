@@ -711,22 +711,81 @@ html[data-reduce-motion="true"] [data-contacts-panel-scroll] {
   scroll-behavior: auto;
 }
 
-/* Phase 24.4J â€” pipeline bottom nav cannot slide off-screen (CSS override). */
-html[data-pipeline-bottom-nav-locked] nav[aria-label="Primary"] {
+/* Phase 24.4J — pipeline bottom nav cannot slide off-screen (CSS override).
+   Exception: SaaS hamburger open (data-saas-menu-covered) — white dock must
+   not paint a full-width strip under the green drawer / scrim. */
+html[data-pipeline-bottom-nav-locked]
+  nav[aria-label="Primary"]:not([data-saas-menu-covered="true"]) {
   transform: translate3d(0, 0, 0) !important;
   opacity: 1 !important;
   pointer-events: auto !important;
   visibility: visible !important;
 }
 
-/* Phase 24.4L â€” DOM mount lock: nav never display:none or translate off-screen on pipeline. */
+/* Phase 24.4L — DOM mount lock: nav never display:none or translate off-screen on pipeline.
+   Same SaaS-menu exception as 24.4J. */
 @media (max-width: 767px) {
-  html[data-pipeline-nav-dom-lock="true"] nav[aria-label="Primary"] {
+  html[data-pipeline-nav-dom-lock="true"]
+    nav[aria-label="Primary"]:not([data-saas-menu-covered="true"]) {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
     transform: translate3d(0, 0, 0) !important;
     pointer-events: auto !important;
+  }
+}
+
+/* SaaS mobile menu open — hard-hide bottom dock (beats any remaining lock CSS). */
+@media (max-width: 767px) {
+  nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"][data-saas-menu-covered="true"],
+  html[data-saas-menu-open]
+    nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translate3d(0, 100%, 0) !important;
+  }
+
+  /* Any subpixel gap under overlays paints dark, never page white. */
+  html[data-saas-menu-open],
+  html[data-saas-menu-open] body {
+    background-color: #000;
+  }
+
+  /*
+   * Mobile SaaS drawer: stretch with inset top/bottom only (no fixed 100dvh height
+   * that ignores bottom and leaves a white body gap in the home-indicator zone).
+   */
+  aside[data-saas-mobile-drawer="open"],
+  aside[data-saas-mobile-drawer="closed"] {
+    top: 0 !important;
+    bottom: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 100dvh;
+    min-height: 100svh;
+    min-height: -webkit-fill-available;
+  }
+
+  /* Scrim paints edge-to-edge including home-indicator zone. */
+  [data-saas-menu-scrim] {
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    height: auto !important;
+    min-height: 100dvh;
+    min-height: 100svh;
+    min-height: -webkit-fill-available;
+  }
+
+  /* Closed dock: continuous surface to the physical bottom (no orphan white under-bar). */
+  nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"]:not(
+      [data-saas-menu-covered="true"]
+    ) {
+    bottom: 0 !important;
+    background-color: rgb(var(--bg)) !important;
   }
 }
 

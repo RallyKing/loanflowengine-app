@@ -172,16 +172,15 @@ export function SaasSidebar({
           : cn(
               "w-64 min-w-64 max-w-64 border-r border-white/5",
               "max-md:w-[min(22rem,88vw)] max-md:max-w-[90vw] max-md:min-w-0",
-              /* Full visual viewport: paint under status bar + through home indicator.
-                 Middle nav scrolls; footer stays pinned (do not stretch with <main>). */
-              "max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-[100dvh]",
+              /* Mobile: stretch with top/bottom only — do NOT set height/max-height
+                 (those ignore bottom and leave a white body gap under 100dvh). */
               "md:sticky md:top-0 md:h-dvh md:max-h-dvh md:min-h-0 md:self-start md:shrink-0 md:translate-x-0 md:overflow-hidden",
               motionReady ? shellMotionTw.sidebarRailWidth : "md:transition-none",
               desktopExpanded
                 ? "md:w-64 md:min-w-64 md:max-w-64 md:opacity-100"
                 : "md:w-0 md:min-w-0 md:max-w-0 md:opacity-0 md:pointer-events-none md:border-transparent",
-              /** Mobile drawer: fixed full-bleed column above bottom nav + scrim. */
-              "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:overflow-hidden",
+              /** Mobile drawer: fixed full-bleed into home-indicator zone. */
+              "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:h-auto max-md:max-h-none max-md:min-h-0 max-md:overflow-hidden",
               shellMotionTw.drawerTranslate,
               mobileOpen
                 ? "max-md:translate-x-0"

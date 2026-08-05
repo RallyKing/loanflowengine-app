@@ -288,7 +288,7 @@ function AppChromeBody({
         {saasMenuOpen ? (
           <button
             type="button"
-            className="fixed inset-0 bg-black/50 md:hidden"
+            className="fixed inset-0 min-h-[100dvh] min-h-[100svh] bg-black/50 md:hidden"
             style={shellZIndexStyle("overlay")}
             aria-label="Close menu"
             data-saas-menu-scrim

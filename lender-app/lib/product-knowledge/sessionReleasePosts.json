@@ -1,4 +1,4 @@
-[
+﻿[
   {
     "slug": "2026-08-02-new-file-wizard-step3",
     "title": "New File wizard: templates & scrollable Step 3",
@@ -938,5 +938,16 @@
     ],
     "changeType": "fixed",
     "deploymentId": "dpl_EEcLQKXAfBrhyV33DBV7GVULgB1K"
+  },
+  {
+    "slug": "2026-08-04-mobile-eliminate-bottom-white-bar",
+    "title": "No more white strip under the mobile menu",
+    "summary": "Opening the green hamburger drawer on iPhone no longer leaves a full-width white bar above the home indicator — the menu and dimmer paint edge-to-edge.",
+    "body": [
+      "A prior safe-area ship hid the bottom tab bar when the menu opened, but pipeline layout locks used CSS !important to force that white dock back on — so you still saw a full-width white strip under the green drawer.",
+      "Those locks now clear while the menu is open, the dock is hard-hidden with display:none, and the green drawer plus scrim stretch with true top/bottom inset (not a fixed 100dvh height that stopped short of the physical bottom).",
+      "With the menu closed, the bottom nav still paints flush to the edge so an orphan white band cannot peek underneath."
+    ],
+    "changeType": "fixed"
   }
 ]
