@@ -1,4 +1,4 @@
-﻿[
+[
   {
     "slug": "2026-08-02-new-file-wizard-step3",
     "title": "New File wizard: templates & scrollable Step 3",
@@ -948,6 +948,7 @@
       "Those locks now clear while the menu is open, the dock is hard-hidden with display:none, and the green drawer plus scrim stretch with true top/bottom inset (not a fixed 100dvh height that stopped short of the physical bottom).",
       "With the menu closed, the bottom nav still paints flush to the edge so an orphan white band cannot peek underneath."
     ],
-    "changeType": "fixed"
+    "changeType": "fixed",
+    "deploymentId": "dpl_FKj7SFJFDfRBEvCjuXQbtZrnvofH"
   }
 ]

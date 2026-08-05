@@ -225,7 +225,9 @@ export const MobileBottomNav = memo(function MobileBottomNav({
         data-pipeline-static-bottom-nav={
           navVisibilityLocked ? "true" : undefined
         }
-        data-pipeline-nav-dom-lock={domMountLock ? "true" : undefined}
+        data-pipeline-nav-dom-lock={
+          domMountLock && !forceHidden ? "true" : undefined
+        }
         data-dlc-component="MobileBottomNav"
         data-saas-menu-covered={forceHidden ? "true" : undefined}
       >
