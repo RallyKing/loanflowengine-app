@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useId, useState } from "react";
 import { ChevronDown, Layers, PanelLeftClose, Settings, X } from "lucide-react";
 import { ColorSchemeToggle } from "@/components/ColorSchemeToggle";
+import { APP_HOME_HREF } from "@/lib/brandIdentity";
 import { cn } from "@/lib/cn";
 import { settingsHref } from "@/lib/settingsRegistry";
 import { useOrgBranding } from "@/lib/orgBrandingContext";
@@ -15,6 +16,7 @@ import {
   PIPELINE_SUB_ITEMS,
   isNavIconKey,
 } from "@/lib/navigation/navigationCatalog";
+import { shellZIndexStyle } from "@/lib/ui/layerTokens";
 import { shellMotionTw } from "@/lib/ui/motionTokens";
 import {
   isActivePath,
@@ -27,6 +29,7 @@ import {
   defaultResolvedConfig,
   resolveVisibleNavItems,
 } from "@/lib/navigation/navigationResolve";
+import { MOBILE_DRAWER_SAFE_TOP_PAD_CLASS } from "@/lib/ui/safeArea";
 
 const PIPELINE_LINKS: { href: string; label: string; tourId?: string }[] =
   PIPELINE_SUB_ITEMS.map((s) => ({
@@ -169,39 +172,53 @@ export function SaasSidebar({
           : cn(
               "w-64 min-w-64 max-w-64 border-r border-white/5",
               "max-md:w-[min(22rem,88vw)] max-md:max-w-[90vw] max-md:min-w-0",
-              /* Viewport-height column: middle scrolls, footer stays visible (do not
-                 stretch with the main content column, which pushed the footer off-screen). */
-              "max-md:h-dvh max-md:max-h-dvh",
+              /* Full visual viewport: paint under status bar + through home indicator.
+                 Middle nav scrolls; footer stays pinned (do not stretch with <main>). */
+              "max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-[100dvh]",
               "md:sticky md:top-0 md:h-dvh md:max-h-dvh md:min-h-0 md:self-start md:shrink-0 md:translate-x-0 md:overflow-hidden",
               motionReady ? shellMotionTw.sidebarRailWidth : "md:transition-none",
               desktopExpanded
                 ? "md:w-64 md:min-w-64 md:max-w-64 md:opacity-100"
                 : "md:w-0 md:min-w-0 md:max-w-0 md:opacity-0 md:pointer-events-none md:border-transparent",
-              /** Mobile drawer: fixed plane above bottom nav (z-50). */
-              "max-md:fixed max-md:bottom-0 max-md:top-0 max-md:z-50",
+              /** Mobile drawer: fixed full-bleed column above bottom nav + scrim. */
+              "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:overflow-hidden",
               shellMotionTw.drawerTranslate,
               mobileOpen
                 ? "max-md:translate-x-0"
                 : "max-md:-translate-x-full max-md:pointer-events-none",
             ),
       )}
-      style={{ zIndex: embedded ? undefined : narrow ? 50 : undefined }}
+      style={embedded ? undefined : shellZIndexStyle("modal")}
+      data-saas-mobile-drawer={
+        embedded ? undefined : mobileOpen ? "open" : "closed"
+      }
       aria-label="Primary navigation"
-      aria-hidden={!embedded && !desktopExpanded ? true : undefined}
+      aria-hidden={
+        embedded
+          ? undefined
+          : narrow
+            ? !mobileOpen
+              ? true
+              : undefined
+            : !desktopExpanded
+              ? true
+              : undefined
+      }
     >
       <div
         className={cn(
           "relative flex min-h-14 shrink-0 items-center border-b border-white/10 px-3 py-2 md:px-4",
+          !embedded && MOBILE_DRAWER_SAFE_TOP_PAD_CLASS,
         )}
       >
         {onCloseMobile ? (
           <button
             type="button"
             onClick={onCloseMobile}
-            className="absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-md text-white/80 hover:bg-white/10 md:hidden"
+            className="absolute right-1.5 top-1.5 inline-flex h-10 w-10 items-center justify-center rounded-md text-white/80 hover:bg-white/10 md:hidden"
             aria-label="Close menu"
           >
-            <X className="h-4 w-4" aria-hidden />
+            <X className="h-5 w-5" aria-hidden />
           </button>
         ) : null}
         {onCollapseDesktop ? (
@@ -216,7 +233,7 @@ export function SaasSidebar({
           </button>
         ) : null}
         <Link
-          href="/tasks"
+          href={APP_HOME_HREF}
           onClick={go}
           aria-label={`${headerTitle} home`}
           className="group flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1 pe-10 transition-opacity hover:opacity-95 md:pe-11"

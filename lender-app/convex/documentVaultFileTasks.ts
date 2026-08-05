@@ -12,17 +12,34 @@ import {
   assignedBlockEntryV,
   fileTaskPriorityV,
   fileTaskTypeV,
+  normalizeAssignedBlockEntriesFromDoc,
   persistAssignedBlocksPatch,
 } from "./documentVaultTaskTypes";
-import { isClientPortalAssignableBlock } from "../lib/documentVaultClientBlocks";
+import {
+  clientPortalBlockLabel,
+  isClientPortalAssignableBlock,
+} from "../lib/documentVaultClientBlocks";
 import { recordBrokerVaultReview } from "./documentVaultActivity";
 import {
   pipelineDealName,
   scheduleWebhookQueueEvent,
   webhookVaultContext,
 } from "./webhookEventHelpers";
+import {
+  clientTemplateAttachmentV,
+  deleteRemovedClientTemplateStorage,
+  taskTypeAllowsClientTemplateAttachments,
+  validateClientTemplateAttachments,
+  type ClientTemplateAttachment,
+} from "./clientTemplateAttachments";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
+
+function taskTypeAllowsClientTemplates(
+  taskType: Doc<"documentVaultFileTasks">["taskType"],
+): boolean {
+  return taskTypeAllowsClientTemplateAttachments(taskType);
+}
 
 function validateTaskConfig(args: {
   taskType: Doc<"documentVaultFileTasks">["taskType"];
@@ -249,6 +266,18 @@ export const batchCreate = mutation({
   },
 });
 
+export const generateUploadUrl = mutation({
+  args: {
+    pipelineFileId: v.id("pipeline"),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, { pipelineFileId, memberUserKey }) => {
+    const pipeline = await loadPipelineOrThrow(ctx, pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
 export const createWithConfig = mutation({
   args: {
     pipelineFileId: v.id("pipeline"),
@@ -258,6 +287,7 @@ export const createWithConfig = mutation({
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
     assignedBlockEntries: v.optional(v.array(assignedBlockEntryV)),
+    clientTemplateAttachments: v.optional(v.array(clientTemplateAttachmentV)),
     isRequired: v.optional(v.boolean()),
     isPortalVisible: v.optional(v.boolean()),
     dueDate: v.optional(v.number()),
@@ -289,6 +319,17 @@ export const createWithConfig = mutation({
         ? args.instructionUrl?.trim().slice(0, 2000) || undefined
         : undefined;
 
+    let clientTemplateAttachments: ClientTemplateAttachment[] | undefined;
+    if (
+      taskTypeAllowsClientTemplates(taskType) &&
+      (args.clientTemplateAttachments?.length ?? 0) > 0
+    ) {
+      clientTemplateAttachments = await validateClientTemplateAttachments(
+        ctx,
+        args.clientTemplateAttachments ?? [],
+      );
+    }
+
     const id = await ctx.db.insert("documentVaultFileTasks", {
       pipelineFileId: args.pipelineFileId,
       title: normalizeTitle(args.title),
@@ -298,6 +339,7 @@ export const createWithConfig = mutation({
       taskType,
       clientInstructionText: instruction,
       instructionUrl,
+      clientTemplateAttachments,
       ...blockPatch,
       isRequired: args.isRequired ?? true,
       isPortalVisible: portalVisibleForTaskType(taskType, args.isPortalVisible),
@@ -320,6 +362,7 @@ export const updateTaskConfig = mutation({
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
     assignedBlockEntries: v.optional(v.array(assignedBlockEntryV)),
+    clientTemplateAttachments: v.optional(v.array(clientTemplateAttachmentV)),
     title: v.optional(v.string()),
     description: v.optional(v.string()),
     isRequired: v.optional(v.boolean()),
@@ -386,6 +429,38 @@ export const updateTaskConfig = mutation({
     } else if (taskType !== "block_assignment") {
       patch.assignedBlockEntries = undefined;
       patch.assignedBlocks = undefined;
+    }
+
+    if (args.clientTemplateAttachments !== undefined) {
+      if (taskTypeAllowsClientTemplates(taskType)) {
+        const next =
+          args.clientTemplateAttachments.length > 0
+            ? await validateClientTemplateAttachments(
+                ctx,
+                args.clientTemplateAttachments,
+              )
+            : undefined;
+        await deleteRemovedClientTemplateStorage(
+          ctx,
+          task.clientTemplateAttachments,
+          next,
+        );
+        patch.clientTemplateAttachments = next;
+      } else {
+        await deleteRemovedClientTemplateStorage(
+          ctx,
+          task.clientTemplateAttachments,
+          undefined,
+        );
+        patch.clientTemplateAttachments = undefined;
+      }
+    } else if (!taskTypeAllowsClientTemplates(taskType)) {
+      await deleteRemovedClientTemplateStorage(
+        ctx,
+        task.clientTemplateAttachments,
+        undefined,
+      );
+      patch.clientTemplateAttachments = undefined;
     }
 
     const portalVisible = portalVisibleForTaskType(
@@ -877,6 +952,156 @@ export const clearRegistryAssignment = mutation({
       updatedAt: Date.now(),
     });
     return { ok: true as const };
+  },
+});
+
+/**
+ * Find or create a portal-visible `block_assignment` file task that contains
+ * exactly one atomic block (exclusive). Used by broker “Assign to client” and
+ * “Copy client fill link” actions on pipeline blocks.
+ */
+export async function ensureExclusiveBlockAssignmentTask(
+  ctx: MutationCtx,
+  args: {
+    pipelineFileId: Id<"pipeline">;
+    blockId: string;
+    memberUserKey?: string;
+    assignedContactId?: Id<"contacts">;
+    title?: string;
+  },
+): Promise<{
+  fileTaskId: Id<"documentVaultFileTasks">;
+  created: boolean;
+  blockId: string;
+  title: string;
+}> {
+  const blockPatch = persistAssignedBlocksPatch([
+    { blockId: args.blockId.trim(), sortOrder: 1000 },
+  ]);
+  const exclusive = blockPatch.assignedBlockEntries ?? [];
+  if (exclusive.length === 0) {
+    throw new Error("This block cannot be assigned to a client.");
+  }
+  const atomicBlockId = exclusive[0]!.blockId;
+  validateTaskConfig({
+    taskType: "block_assignment",
+    assignedBlockEntries: exclusive,
+  });
+
+  const title =
+    args.title?.trim().slice(0, MAX_TITLE_LEN) ||
+    `Complete: ${clientPortalBlockLabel(atomicBlockId)}`;
+
+  const rows = await ctx.db
+    .query("documentVaultFileTasks")
+    .withIndex("by_pipeline_sort", (q) =>
+      q.eq("pipelineFileId", args.pipelineFileId),
+    )
+    .collect();
+
+  const exclusiveMatch = rows.find((task) => {
+    if (task.isArchived) return false;
+    if (task.status === "complete") return false;
+    if ((task.taskType ?? "document_upload") !== "block_assignment") return false;
+    const assigned = normalizeAssignedBlockEntriesFromDoc(task);
+    return (
+      assigned.length === 1 && assigned[0]!.blockId === atomicBlockId
+    );
+  });
+
+  const key = args.memberUserKey?.trim() || "__system__";
+  const now = Date.now();
+
+  if (exclusiveMatch) {
+    const patch: Partial<Doc<"documentVaultFileTasks">> = {
+      updatedAt: now,
+    };
+    if (!exclusiveMatch.isPortalVisible) {
+      patch.isPortalVisible = true;
+    }
+    if (
+      args.assignedContactId &&
+      exclusiveMatch.assignedContactId !== args.assignedContactId
+    ) {
+      patch.assignedContactId = args.assignedContactId;
+      patch.assignedClientId = undefined;
+      patch.assignedLenderId = undefined;
+    }
+    if (Object.keys(patch).length > 1) {
+      await ctx.db.patch(exclusiveMatch._id, patch);
+      if (patch.isPortalVisible === true) {
+        await syncTaskPortalVisibilityToChildren(
+          ctx,
+          exclusiveMatch,
+          true,
+        );
+      }
+    }
+    return {
+      fileTaskId: exclusiveMatch._id,
+      created: false,
+      blockId: atomicBlockId,
+      title: exclusiveMatch.title,
+    };
+  }
+
+  const sortOrder = await nextSortOrder(ctx, args.pipelineFileId);
+  const id = await ctx.db.insert("documentVaultFileTasks", {
+    pipelineFileId: args.pipelineFileId,
+    title,
+    sortOrder,
+    status: "incomplete",
+    taskType: "block_assignment",
+    ...blockPatch,
+    isRequired: true,
+    isPortalVisible: true,
+    isArchived: false,
+    assignedContactId: args.assignedContactId,
+    createdByUserKey: key,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return {
+    fileTaskId: id,
+    created: true,
+    blockId: atomicBlockId,
+    title,
+  };
+}
+
+export const ensureBlockAssignmentTask = mutation({
+  args: {
+    pipelineFileId: v.id("pipeline"),
+    blockId: v.string(),
+    assignedContactId: v.optional(v.id("contacts")),
+    title: v.optional(v.string()),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, args) => {
+    const pipeline = await loadPipelineOrThrow(ctx, args.pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, args.memberUserKey);
+
+    if (args.assignedContactId) {
+      const contact = await ctx.db.get(args.assignedContactId);
+      if (!contact) throw new Error("Contact not found.");
+    }
+
+    const result = await ensureExclusiveBlockAssignmentTask(ctx, {
+      pipelineFileId: args.pipelineFileId,
+      blockId: args.blockId,
+      memberUserKey: args.memberUserKey,
+      assignedContactId: args.assignedContactId,
+      title: args.title,
+    });
+
+    return {
+      ok: true as const,
+      fileTaskId: result.fileTaskId,
+      created: result.created,
+      blockId: result.blockId,
+      title: result.title,
+    };
   },
 });
 

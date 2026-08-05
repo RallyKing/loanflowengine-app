@@ -27,6 +27,12 @@ export function portalPublicTaskRow(
   assignedBlocks: string[],
   blockSettings: Record<string, unknown>,
   blockPrefill: Record<string, Record<string, string>>,
+  clientTemplates: Array<{
+    fileName: string;
+    mimeType: string;
+    size: number;
+    url: string;
+  }> = [],
 ) {
   return {
     fileTaskId: task._id,
@@ -37,6 +43,7 @@ export function portalPublicTaskRow(
     clientInstructionText: task.clientInstructionText?.trim() || undefined,
     instructionUrl: task.instructionUrl?.trim() || undefined,
     rejectionNote: task.rejectionNote?.trim() || undefined,
+    clientTemplates: clientTemplates.length > 0 ? clientTemplates : undefined,
     assignedBlockEntries,
     assignedBlocks,
     blockSettings,

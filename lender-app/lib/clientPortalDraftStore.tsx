@@ -23,6 +23,7 @@ import {
   isAtomicPortalBlockId,
   type AtomicPortalBlockId,
 } from "@/lib/atomicPortalBlockRegistry";
+import { readPortalAccessProof } from "@/lib/portalAccessProof";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
 const REMOTE_SYNC_PAUSE_MS = 1500;
@@ -83,9 +84,10 @@ export function ClientPortalBlockSessionProvider({
   fileTaskId,
   children,
 }: ClientPortalBlockSessionProviderProps) {
+  const accessProof = readPortalAccessProof(bundleToken);
   const portalSheet = useQuery(
     api.documentVaultClientBundlePortal.getPortalDealSheet,
-    { bundleToken, fileTaskId },
+    { bundleToken, fileTaskId, accessProof },
   );
   const autosaveDraft = useMutation(
     api.documentVaultClientBundlePortal.autosaveClientBlockDraftFromBundle,
@@ -163,6 +165,7 @@ export function ClientPortalBlockSessionProvider({
           fileTaskId,
           blockId,
           formData,
+          accessProof: readPortalAccessProof(bundleToken),
         });
         setLocalDirty(false);
         if (result.pipelineUpdatedAt != null) {

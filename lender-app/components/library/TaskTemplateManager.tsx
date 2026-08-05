@@ -27,6 +27,10 @@ import {
   type FileTaskType,
 } from "@/lib/documentVaultTaskTypes";
 import {
+  taskTypeAllowsClientTemplates,
+  type FileTaskClientTemplateAttachment,
+} from "@/lib/fileTaskClientTemplates";
+import {
   folderRowsToTree,
   folderTreeToRows,
   type FolderTemplateNode,
@@ -64,6 +68,7 @@ const EMPTY_TEMPLATE_DRAFT = {
   dueOffsetDays: null as number | null,
   assignedBlockEntries: [] as AssignedBlockEntry[],
   folderTemplateNodes: [] as FolderTemplateNode[],
+  clientTemplateAttachments: [] as FileTaskClientTemplateAttachment[],
 };
 
 function templateDraftFromDoc(tpl: Doc<"documentTaskTemplates">) {
@@ -81,6 +86,14 @@ function templateDraftFromDoc(tpl: Doc<"documentTaskTemplates">) {
     dueOffsetDays: tpl.dueOffsetDays ?? null,
     assignedBlockEntries: normalizeAssignedBlockEntries(tpl),
     folderTemplateNodes: folderRowsToTree(tpl.folderTemplate ?? []),
+    clientTemplateAttachments: (tpl.clientTemplateAttachments ?? []).map(
+      (a) => ({
+        storageId: String(a.storageId),
+        fileName: a.fileName,
+        mimeType: a.mimeType,
+        size: a.size,
+      }),
+    ) as FileTaskClientTemplateAttachment[],
   };
 }
 
@@ -130,6 +143,9 @@ export function TaskTemplateManager({
   const [folderTemplateNodes, setFolderTemplateNodes] = useState<
     FolderTemplateNode[]
   >(EMPTY_TEMPLATE_DRAFT.folderTemplateNodes);
+  const [clientTemplateAttachments, setClientTemplateAttachments] = useState<
+    FileTaskClientTemplateAttachment[]
+  >(EMPTY_TEMPLATE_DRAFT.clientTemplateAttachments);
   const [busy, setBusy] = useState(false);
   const [didAutoSelectStack, setDidAutoSelectStack] = useState(false);
 
@@ -163,6 +179,7 @@ export function TaskTemplateManager({
     setDueOffsetDays(EMPTY_TEMPLATE_DRAFT.dueOffsetDays);
     setAssignedBlockEntries(EMPTY_TEMPLATE_DRAFT.assignedBlockEntries);
     setFolderTemplateNodes(EMPTY_TEMPLATE_DRAFT.folderTemplateNodes);
+    setClientTemplateAttachments(EMPTY_TEMPLATE_DRAFT.clientTemplateAttachments);
   }, []);
 
   const loadTemplateDraft = useCallback((tpl: Doc<"documentTaskTemplates">) => {
@@ -178,16 +195,23 @@ export function TaskTemplateManager({
     setDueOffsetDays(draft.dueOffsetDays);
     setAssignedBlockEntries(draft.assignedBlockEntries);
     setFolderTemplateNodes(draft.folderTemplateNodes);
+    setClientTemplateAttachments(draft.clientTemplateAttachments);
   }, []);
 
-  const handleTaskTypeChange = useCallback((next: FileTaskType) => {
-    setTaskType(next);
-    if (next === "internal_task") {
-      setIsPortalVisible(false);
-    } else if (!isPortalVisible) {
-      setIsPortalVisible(defaultPortalVisibleForTaskType(next));
-    }
-  }, [isPortalVisible]);
+  const handleTaskTypeChange = useCallback(
+    (next: FileTaskType) => {
+      setTaskType(next);
+      if (next === "internal_task") {
+        setIsPortalVisible(false);
+      } else if (!isPortalVisible) {
+        setIsPortalVisible(defaultPortalVisibleForTaskType(next));
+      }
+      if (!taskTypeAllowsClientTemplates(next)) {
+        setClientTemplateAttachments([]);
+      }
+    },
+    [isPortalVisible],
+  );
 
   const activeStack = useMemo(() => {
     if (stackSelection.mode !== "edit" || !library) return null;
@@ -371,6 +395,14 @@ export function TaskTemplateManager({
           taskType === "document_upload"
             ? folderTreeToRows(folderTemplateNodes)
             : undefined,
+        clientTemplateAttachments: taskTypeAllowsClientTemplates(taskType)
+          ? clientTemplateAttachments.map((a) => ({
+              storageId: a.storageId as Id<"_storage">,
+              fileName: a.fileName,
+              mimeType: a.mimeType,
+              size: a.size,
+            }))
+          : [],
         priority: priority || undefined,
         dueOffsetDays: dueOffsetDays ?? undefined,
       };
@@ -566,6 +598,15 @@ export function TaskTemplateManager({
                           <span className="block truncate text-sm font-medium">
                             {tpl.title}
                           </span>
+                          {(tpl.clientTemplateAttachments?.length ?? 0) > 0 ? (
+                            <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                              {tpl.clientTemplateAttachments!.length} client
+                              template
+                              {tpl.clientTemplateAttachments!.length === 1
+                                ? ""
+                                : "s"}
+                            </span>
+                          ) : null}
                         </button>
                       </li>
                     );
@@ -673,6 +714,15 @@ export function TaskTemplateManager({
                             onClick={() => handleSelectTemplate(tpl)}
                           >
                             {tpl.title}
+                            {(tpl.clientTemplateAttachments?.length ?? 0) >
+                            0 ? (
+                              <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                                · template file
+                                {tpl.clientTemplateAttachments!.length === 1
+                                  ? ""
+                                  : "s"}
+                              </span>
+                            ) : null}
                           </button>
                           <button
                             type="button"
@@ -721,6 +771,8 @@ export function TaskTemplateManager({
                 {templateSelection ? (
                   <TemplateEditorPanel
                     mode={templateSelection.mode}
+                    organizationId={organizationId}
+                    memberUserKey={memberUserKey}
                     title={templateTitle}
                     onTitleChange={setTemplateTitle}
                     description={templateDescription}
@@ -735,6 +787,10 @@ export function TaskTemplateManager({
                     onAssignedBlockEntriesChange={setAssignedBlockEntries}
                     folderTemplateNodes={folderTemplateNodes}
                     onFolderTemplateNodesChange={setFolderTemplateNodes}
+                    clientTemplateAttachments={clientTemplateAttachments}
+                    onClientTemplateAttachmentsChange={
+                      setClientTemplateAttachments
+                    }
                     isRequired={isRequired}
                     onRequiredChange={setIsRequired}
                     isPortalVisible={isPortalVisible}
@@ -765,6 +821,8 @@ export function TaskTemplateManager({
             {templateSelection ? (
               <TemplateEditorPanel
                 mode={templateSelection.mode}
+                organizationId={organizationId}
+                memberUserKey={memberUserKey}
                 title={templateTitle}
                 onTitleChange={setTemplateTitle}
                 description={templateDescription}
@@ -779,6 +837,8 @@ export function TaskTemplateManager({
                 onAssignedBlockEntriesChange={setAssignedBlockEntries}
                 folderTemplateNodes={folderTemplateNodes}
                 onFolderTemplateNodesChange={setFolderTemplateNodes}
+                clientTemplateAttachments={clientTemplateAttachments}
+                onClientTemplateAttachmentsChange={setClientTemplateAttachments}
                 isRequired={isRequired}
                 onRequiredChange={setIsRequired}
                 isPortalVisible={isPortalVisible}
@@ -873,6 +933,8 @@ export function TaskTemplateManager({
 
 function TemplateEditorPanel({
   mode,
+  organizationId,
+  memberUserKey,
   title,
   onTitleChange,
   description,
@@ -887,6 +949,8 @@ function TemplateEditorPanel({
   onAssignedBlockEntriesChange,
   folderTemplateNodes,
   onFolderTemplateNodesChange,
+  clientTemplateAttachments,
+  onClientTemplateAttachmentsChange,
   isRequired,
   onRequiredChange,
   isPortalVisible,
@@ -901,6 +965,8 @@ function TemplateEditorPanel({
   activeTemplateTitle,
 }: {
   mode: "new" | "edit";
+  organizationId: Id<"organizations">;
+  memberUserKey?: string;
   title: string;
   onTitleChange: (v: string) => void;
   description: string;
@@ -915,6 +981,10 @@ function TemplateEditorPanel({
   onAssignedBlockEntriesChange: (entries: AssignedBlockEntry[]) => void;
   folderTemplateNodes: FolderTemplateNode[];
   onFolderTemplateNodesChange: (nodes: FolderTemplateNode[]) => void;
+  clientTemplateAttachments: FileTaskClientTemplateAttachment[];
+  onClientTemplateAttachmentsChange: (
+    next: FileTaskClientTemplateAttachment[],
+  ) => void;
   isRequired: boolean;
   onRequiredChange: (v: boolean) => void;
   isPortalVisible: boolean;
@@ -959,6 +1029,8 @@ function TemplateEditorPanel({
       </div>
       <FileTaskTypeConfigurator
         variant="full"
+        organizationId={organizationId}
+        memberUserKey={memberUserKey}
         title={title}
         onTitleChange={onTitleChange}
         description={description}
@@ -973,6 +1045,8 @@ function TemplateEditorPanel({
         onAssignedBlockEntriesChange={onAssignedBlockEntriesChange}
         folderTemplateNodes={folderTemplateNodes}
         onFolderTemplateNodesChange={onFolderTemplateNodesChange}
+        clientTemplateAttachments={clientTemplateAttachments}
+        onClientTemplateAttachmentsChange={onClientTemplateAttachmentsChange}
         isRequired={isRequired}
         onRequiredChange={onRequiredChange}
         isPortalVisible={isPortalVisible}

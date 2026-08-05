@@ -37,6 +37,23 @@ export function mergePatchIntoDeal(
   return { ...base, ...cleaned };
 }
 
+/** True when every cleaned key (except updatedAt) already matches `deal`. */
+export function dealPatchIsNoOp(
+  deal: Record<string, unknown>,
+  cleaned: Record<string, unknown>,
+): boolean {
+  for (const [key, next] of Object.entries(cleaned)) {
+    if (key === "updatedAt") continue;
+    if (next === undefined) continue;
+    try {
+      if (JSON.stringify(deal[key]) !== JSON.stringify(next)) return false;
+    } catch {
+      if (deal[key] !== next) return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Shallow `cover` patches must merge into the existing coversheet so a client
  * can send only changed keys (e.g. table inline edit of `fundingAmount`) without

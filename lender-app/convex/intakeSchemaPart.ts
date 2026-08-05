@@ -79,6 +79,8 @@ const liabilityRow = v.object({
 });
 
 const workflowItem = v.object({
+  /** Stable id for automations / template sync — never reuse after delete. */
+  id: v.optional(v.string()),
   label: v.string(),
   done: v.boolean(),
   date: v.optional(v.string()),
@@ -515,6 +517,8 @@ export const intakeSheetsTable = defineTable({
     // Assets & Liabilities
     assets: v.array(assetRow),
     liabilities: v.array(liabilityRow),
+    /** Optional structured PFS (SBA-style); additive for older sheets. */
+    pfs: v.optional(v.any()),
 
     // Household
     dependentsCount: v.optional(v.string()),
@@ -522,6 +526,8 @@ export const intakeSheetsTable = defineTable({
 
     // Workflow checklist (intro email, EDU, scenario, needs list, OL & PD, Velocify, etc.)
     workflow: v.array(workflowItem),
+    /** Active org internal-workflow template applied to this file (optional). */
+    workflowTemplateId: v.optional(v.string()),
 
     // Notes
     primaryObjective: v.optional(v.string()),
@@ -568,6 +574,8 @@ export const intakeSheetsTable = defineTable({
     overviewTabLayout: v.optional(v.any()),
     /** Tab 5 Client Portal: section order / visibility (v1 object). */
     clientPortalTabLayout: v.optional(v.any()),
+    /** Portals & Progress: unified block order / visibility (v1 object). */
+    portalsProgressTabLayout: v.optional(v.any()),
 
     // Bookkeeping
     updatedAt: v.optional(v.number()),

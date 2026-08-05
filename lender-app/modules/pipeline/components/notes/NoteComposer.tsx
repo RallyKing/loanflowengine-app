@@ -55,7 +55,7 @@ export function NoteComposer({
   pipelineFileId,
   organizationId,
   memberUserKey,
-  rows = 4,
+  rows = 2,
 }: NoteComposerProps) {
   const { readOnly } = useResourceAccess();
   const fileInputId = useId();
@@ -224,7 +224,7 @@ export function NoteComposer({
   const busy = submitting || anyUploading;
 
   return (
-    <div className="space-y-2" data-testid="pipeline-file-notes-composer">
+    <div className="space-y-1.5" data-testid="pipeline-file-notes-composer">
       {readOnly ? (
         <p className="text-xs text-muted-foreground" role="status">
           You have view-only access to this file. Notes, links, and attachments
@@ -239,7 +239,10 @@ export function NoteComposer({
           disabled={readOnly || submitting}
           placeholder="Add a note to the audit log…"
           aria-label="Note body"
-          className={cn(OP_INLINE_TEXTAREA_CLASS, "resize-y")}
+          className={cn(
+            OP_INLINE_TEXTAREA_CLASS,
+            "min-h-10 resize-y py-2 leading-snug",
+          )}
         />
       </InlineFieldSync>
 
@@ -309,7 +312,7 @@ export function NoteComposer({
 
       {linkFormOpen ? (
         <div
-          className="space-y-2 rounded-dlc-md border border-border/80 bg-dlc-surface p-3"
+          className="space-y-1.5 rounded-dlc-md border border-border/80 bg-dlc-surface p-2.5"
           role="group"
           aria-label="Add link"
           data-testid="pipeline-note-link-form"
@@ -384,8 +387,8 @@ export function NoteComposer({
         </p>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5">
           <input
             ref={fileInputRef}
             id={fileInputId}
@@ -404,7 +407,7 @@ export function NoteComposer({
             variant="outline"
             size="sm"
             disabled={readOnly || busy}
-            className="gap-1.5"
+            className="h-10 min-h-10 gap-1.5"
             onClick={() => fileInputRef.current?.click()}
             aria-controls={fileInputId}
             data-testid="pipeline-note-add-file"
@@ -417,7 +420,7 @@ export function NoteComposer({
             variant="outline"
             size="sm"
             disabled={readOnly || busy || linkFormOpen}
-            className="gap-1.5"
+            className="h-10 min-h-10 gap-1.5"
             data-testid="pipeline-note-add-link"
             onClick={() => {
               setLinkFormOpen(true);
@@ -432,6 +435,7 @@ export function NoteComposer({
           type="button"
           size="sm"
           disabled={!canSubmit}
+          className="h-10 min-h-10"
           data-testid="pipeline-note-post"
           onClick={() => void handleSubmit()}
         >

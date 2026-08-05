@@ -35,6 +35,7 @@ import {
   useSettingsHashSection,
 } from "@/lib/useSettingsHashSection";
 import { ArrowLeft, SlidersHorizontal } from "lucide-react";
+import { APP_HOME_HREF } from "@/lib/brandIdentity";
 import { LenderContactMigrationValidationCard } from "@/components/LenderContactMigrationValidationCard";
 import { NavManager } from "@/components/navigation/NavManager";
 import type {
@@ -383,7 +384,7 @@ export function SettingsPageClient() {
   const hashSection = useSettingsHashSection();
   useScrollSettingsSectionIntoView(hashSection);
   const [stageStyleTarget, setStageStyleTarget] = useState<PipelineStatusValue>(
-    PIPELINE_STATUSES[0]!.value
+    () => PIPELINE_STATUSES[0]?.value ?? "confirm_interest",
   );
 
   const selectedStageStyle = useMemo(
@@ -434,7 +435,7 @@ export function SettingsPageClient() {
           </p>
         </div>
         <Link
-          href="/tasks"
+          href={APP_HOME_HREF}
           className={cn(
             "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border",
             "bg-background px-3 text-xs font-medium text-foreground hover:bg-muted hover:border-brand-accent/60",

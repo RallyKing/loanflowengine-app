@@ -113,7 +113,8 @@ export function ContactsCommandBar({
   return (
     <div
       className={cn(
-        "sticky top-0 z-40 shrink-0 border-b border-slate-200/90 bg-white/95 backdrop-blur-sm",
+        // Sticky above table rows only — must stay below overlay menus (CHROME_MENU / DROPDOWN).
+        "sticky top-0 z-[calc(var(--dlc-z-header,20)+1)] shrink-0 border-b border-slate-200/90 bg-white/95 backdrop-blur-sm",
         "dark:border-slate-700/80 dark:bg-dlc-surface-high/95",
       )}
       data-testid="contacts-command-bar"

@@ -235,13 +235,34 @@ function resolveMethodsFromArgs(args: {
   phone?: string;
   emails?: import("../lib/contact/contactMethods").ContactEmailEntry[];
   phones?: import("../lib/contact/contactMethods").ContactPhoneEntry[];
+  /** Arrays were explicitly provided (including empty clear). */
+  emailsExplicit?: boolean;
+  phonesExplicit?: boolean;
+  /** Scalar email/phone were explicitly provided. */
+  emailExplicit?: boolean;
+  phoneExplicit?: boolean;
 }) {
+  const emailsExplicit = args.emailsExplicit === true;
+  const phonesExplicit = args.phonesExplicit === true;
+  const emailExplicit = args.emailExplicit === true;
+  const phoneExplicit = args.phoneExplicit === true;
   return normalizeContactMethods(
     {
-      legacyEmail: args.email,
-      legacyPhone: args.phone,
+      // When arrays are explicit, do not resurrect methods from stale scalars.
+      legacyEmail: emailExplicit
+        ? args.email
+        : emailsExplicit
+          ? ""
+          : args.email,
+      legacyPhone: phoneExplicit
+        ? args.phone
+        : phonesExplicit
+          ? ""
+          : args.phone,
       emails: args.emails,
       phones: args.phones,
+      legacyIsExplicitScalar:
+        (emailExplicit && !emailsExplicit) || (phoneExplicit && !phonesExplicit),
     },
     (e) => normalizeEmailKey(e),
   );
@@ -539,6 +560,8 @@ export const update = mutation({
     crmTags: v.optional(v.array(v.string())),
     contactRoleId: v.optional(v.string()),
     contactRoleIds: v.optional(v.array(v.string())),
+    /** Org portal default template ids (at most one per portal type). */
+    portalDefaultIds: v.optional(v.array(v.id("portalDefaults"))),
     /** @deprecated Phase CRM-4 — use entityContactLinks via setIndividualPrimaryCompany. */
     companyName: v.optional(v.string()),
     ...contactPiiArgV,
@@ -561,11 +584,19 @@ export const update = mutation({
 
     let methodPatch: ReturnType<typeof contactMethodsToConvexFields> | undefined;
     if (methodsTouched) {
+      const emailsExplicit = rest.emails !== undefined;
+      const phonesExplicit = rest.phones !== undefined;
+      const emailExplicit = rest.email !== undefined;
+      const phoneExplicit = rest.phone !== undefined;
       const methods = resolveMethodsFromArgs({
-        email: rest.email !== undefined ? rest.email : row.email,
-        phone: rest.phone !== undefined ? rest.phone : row.phone,
-        emails: rest.emails !== undefined ? rest.emails : row.emails,
-        phones: rest.phones !== undefined ? rest.phones : row.phones,
+        email: emailExplicit ? rest.email : row.email,
+        phone: phoneExplicit ? rest.phone : row.phone,
+        emails: emailsExplicit ? rest.emails : row.emails,
+        phones: phonesExplicit ? rest.phones : row.phones,
+        emailsExplicit,
+        phonesExplicit,
+        emailExplicit,
+        phoneExplicit,
       });
       await assertNoDuplicateEmailsInOrg(
         ctx,
@@ -602,6 +633,19 @@ export const update = mutation({
       };
     }
 
+    let portalDefaultIdsPatch:
+      | { portalDefaultIds: Id<"portalDefaults">[] | undefined }
+      | undefined;
+    if (rest.portalDefaultIds !== undefined) {
+      const { sanitizePortalDefaultIdsForOrg } = await import("./portalDefaults");
+      const sanitized = await sanitizePortalDefaultIdsForOrg(
+        ctx,
+        row.organizationId,
+        rest.portalDefaultIds,
+      );
+      portalDefaultIdsPatch = { portalDefaultIds: sanitized };
+    }
+
     await ctx.db.patch(id, {
       ...(rest.name !== undefined ? { name: rest.name.trim() } : {}),
       ...(methodPatch ?? {}),
@@ -614,6 +658,7 @@ export const update = mutation({
           }
         : {}),
       ...(rolePatch ?? {}),
+      ...(portalDefaultIdsPatch ?? {}),
       ...contactPiiPatchFromArgs(rest),
       updatedAt: now,
     });

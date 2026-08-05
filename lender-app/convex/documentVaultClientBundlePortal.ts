@@ -25,6 +25,7 @@ import {
   normalizeToAtomicBlockIds,
 } from "../lib/atomicPortalBlockRegistry";
 import {
+  clientPortalBlockLabel,
   isClientPortalAssignableBlock,
   prefillValuesForPortalBlock,
 } from "../lib/documentVaultClientBlocks";
@@ -32,7 +33,9 @@ import {
   normalizeAssignedBlockEntriesFromDoc,
   resolveTaskTypeFromDoc,
 } from "./documentVaultTaskTypes";
+import { ensureExclusiveBlockAssignmentTask } from "./documentVaultFileTasks";
 import { embeddedDealPayloadIsSubstantive } from "../lib/file/embeddedDealPresence";
+import { fileTaskTitleForClientLinkEmail } from "../lib/fileTaskClientTemplates";
 import {
   portalBlockPrefillForTask,
   portalDealSheetDtoFromSources,
@@ -44,8 +47,8 @@ import {
   registerClientPortalLink,
   resolveCompanySlugForPipeline,
 } from "./clientPortalLinks";
+import { assertLinkAccessAllowed } from "./portalAccessVerification";
 import { recordClientVaultUpload } from "./documentVaultActivity";
-import { hasSubstantivePortalSubmission } from "../lib/clientPortalFormExtract";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 const BUNDLE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -74,9 +77,23 @@ async function loadBundleByPlain(
   ctx: QueryCtx | MutationCtx,
   plainToken: string,
   companySlug?: string,
+  accessProof?: string,
 ): Promise<
-  | { ok: true; row: Doc<"documentVaultClientBundleTokens">; link: Doc<"clientPortalLinks"> | null }
-  | { ok: false; reason: "invalid" | "revoked" | "expired" | "slug_mismatch" }
+  | {
+      ok: true;
+      row: Doc<"documentVaultClientBundleTokens">;
+      link: Doc<"clientPortalLinks"> | null;
+    }
+  | {
+      ok: false;
+      reason:
+        | "invalid"
+        | "revoked"
+        | "expired"
+        | "slug_mismatch"
+        | "verification_required";
+      verificationType?: "passcode" | "email_otp";
+    }
 > {
   const trimmed = normalizePortalToken(plainToken);
   if (!trimmed || trimmed.length > 128) {
@@ -103,6 +120,16 @@ async function loadBundleByPlain(
       return { ok: false, reason: "slug_mismatch" };
     }
   }
+  if (link) {
+    const gate = await assertLinkAccessAllowed(ctx, link, accessProof);
+    if (!gate.ok) {
+      return {
+        ok: false,
+        reason: "verification_required",
+        verificationType: gate.verificationType,
+      };
+    }
+  }
   return { ok: true, row, link };
 }
 
@@ -111,9 +138,15 @@ export const getPortalDealSheet = query({
   args: {
     bundleToken: v.string(),
     fileTaskId: v.id("documentVaultFileTasks"),
+    accessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId }) => {
-    const auth = await loadBundleByPlain(ctx, normalizePortalToken(bundleToken));
+  handler: async (ctx, { bundleToken, fileTaskId, accessProof }) => {
+    const auth = await loadBundleByPlain(
+      ctx,
+      normalizePortalToken(bundleToken),
+      undefined,
+      accessProof,
+    );
     if (!auth.ok) {
       return { status: auth.reason } as const;
     }
@@ -170,15 +203,22 @@ export const getBundleByToken = query({
   args: {
     token: v.string(),
     companySlug: v.optional(v.string()),
+    accessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { token, companySlug }) => {
+  handler: async (ctx, { token, companySlug, accessProof }) => {
     const trimmed = normalizePortalToken(token);
     if (!trimmed) return { status: "not_found" as const };
-    const auth = await loadBundleByPlain(ctx, trimmed, companySlug);
+    const auth = await loadBundleByPlain(ctx, trimmed, companySlug, accessProof);
     if (!auth.ok) {
       if (auth.reason === "expired") return { status: "expired" as const };
       if (auth.reason === "revoked") return { status: "revoked" as const };
       if (auth.reason === "slug_mismatch") return { status: "slug_mismatch" as const };
+      if (auth.reason === "verification_required") {
+        return {
+          status: "verification_required" as const,
+          verificationType: auth.verificationType ?? ("passcode" as const),
+        };
+      }
       return { status: "not_found" as const };
     }
     const row = auth.row;
@@ -205,7 +245,7 @@ export const getBundleByToken = query({
       ? (pipeline.dealData as Record<string, unknown>)
       : {};
 
-    const pushTask = (task: Doc<"documentVaultFileTasks">) => {
+    const pushTask = async (task: Doc<"documentVaultFileTasks">) => {
       const taskType = resolveTaskTypeFromDoc(task);
       if (taskType === "internal_task") return;
       const entries = normalizeAssignedBlockEntriesFromDoc(task);
@@ -217,22 +257,45 @@ export const getBundleByToken = query({
         }
       }
       const blockPrefill = portalBlockPrefillForTask(blockIds, dealPayload);
+      const clientTemplates: Array<{
+        fileName: string;
+        mimeType: string;
+        size: number;
+        url: string;
+      }> = [];
+      for (const att of task.clientTemplateAttachments ?? []) {
+        const url = await ctx.storage.getUrl(att.storageId);
+        if (!url) continue;
+        clientTemplates.push({
+          fileName: att.fileName,
+          mimeType: att.mimeType,
+          size: att.size,
+          url,
+        });
+      }
       tasks.push(
-        portalPublicTaskRow(task, entries, blockIds, blockSettings, blockPrefill),
+        portalPublicTaskRow(
+          task,
+          entries,
+          blockIds,
+          blockSettings,
+          blockPrefill,
+          clientTemplates,
+        ),
       );
     };
 
     for (const taskId of row.fileTaskIds) {
       const task = await ctx.db.get(taskId);
       if (!task || task.isArchived || !task.isPortalVisible) continue;
-      pushTask(task);
+      await pushTask(task);
     }
 
     if (tasks.length === 0 && row.fileTaskIds.length > 0) {
       for (const taskId of row.fileTaskIds) {
         const task = await ctx.db.get(taskId);
         if (!task) continue;
-        pushTask(task);
+        await pushTask(task);
       }
     }
 
@@ -245,6 +308,92 @@ export const getBundleByToken = query({
       fileLabel,
       mode: row.mode,
       tasks,
+    };
+  },
+});
+
+/**
+ * Ensure an exclusive block_assignment vault task for one atomic block, then
+ * issue a selective client-portal bundle registered in `clientPortalLinks`
+ * with linkKind `block_fill`. Client sees only that task / block.
+ */
+export const issueBlockFillLink = mutation({
+  args: {
+    pipelineFileId: v.id("pipeline"),
+    blockId: v.string(),
+    assignedContactId: v.optional(v.id("contacts")),
+    title: v.optional(v.string()),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, args) => {
+    const pipeline = await ctx.db.get(args.pipelineFileId);
+    if (!pipeline) throw new Error("Pipeline file not found.");
+    await assertCanMutatePipelineRow(ctx, pipeline, args.memberUserKey);
+
+    if (args.assignedContactId) {
+      const contact = await ctx.db.get(args.assignedContactId);
+      if (!contact) throw new Error("Contact not found.");
+    }
+
+    const ensured = await ensureExclusiveBlockAssignmentTask(ctx, {
+      pipelineFileId: args.pipelineFileId,
+      blockId: args.blockId,
+      memberUserKey: args.memberUserKey,
+      assignedContactId: args.assignedContactId,
+      title: args.title,
+    });
+
+    const task = await ctx.db.get(ensured.fileTaskId);
+    if (!task || task.isArchived || !task.isPortalVisible) {
+      throw new Error("Block vault task is not available for a client link.");
+    }
+
+    const now = Date.now();
+    const plainToken = randomHex(24);
+    const tokenHash = await sha256Hex(plainToken);
+    const key = args.memberUserKey?.trim() || "__system__";
+    const companySlug = await resolveCompanySlugForPipeline(ctx, pipeline);
+    const linkTitle =
+      args.title?.trim() ||
+      `Client fill: ${clientPortalBlockLabel(ensured.blockId)}`;
+
+    const bundleId = await ctx.db.insert("documentVaultClientBundleTokens", {
+      pipelineFileId: args.pipelineFileId,
+      fileTaskIds: [ensured.fileTaskId],
+      tokenHash,
+      status: "active",
+      mode: "selective",
+      readOnlyPreview: false,
+      brokerAgentCapable: false,
+      expiresAt: now + BUNDLE_TTL_MS,
+      createdByUserKey: key,
+      createdAt: now,
+    });
+
+    await registerClientPortalLink(ctx, {
+      pipelineFileId: args.pipelineFileId,
+      organizationId: pipeline.organizationId,
+      bundleTokenId: bundleId,
+      companySlug,
+      tokenHash,
+      title: linkTitle,
+      linkKind: "block_fill",
+      expiresAt: now + BUNDLE_TTL_MS,
+      createdByUserKey: key,
+      createdAt: now,
+      targetName: clientPortalBlockLabel(ensured.blockId),
+      issuedUrl: portalUrlForSlug(companySlug, plainToken),
+    });
+
+    return {
+      ok: true as const,
+      portalUrl: portalUrlForSlug(companySlug, plainToken),
+      companySlug,
+      token: plainToken,
+      fileTaskId: ensured.fileTaskId,
+      taskCreated: ensured.created,
+      blockId: ensured.blockId,
+      expiresAt: now + BUNDLE_TTL_MS,
     };
   },
 });
@@ -302,6 +451,15 @@ export const issueBundleToken = mutation({
       createdAt: now,
     });
 
+    const portalUrl = portalUrlForSlug(companySlug, plainToken);
+    const taskTitles = selected.map((id) => {
+      const task = allTasks.find((t) => t._id === id);
+      return fileTaskTitleForClientLinkEmail(
+        task?.title?.trim() || "Document request",
+        (task?.clientTemplateAttachments?.length ?? 0) > 0,
+      );
+    });
+
     await registerClientPortalLink(ctx, {
       pipelineFileId,
       organizationId: pipeline.organizationId,
@@ -313,15 +471,16 @@ export const issueBundleToken = mutation({
       expiresAt: now + BUNDLE_TTL_MS,
       createdByUserKey: key,
       createdAt: now,
+      issuedUrl: portalUrl,
     });
 
-    const portalUrl = portalUrlForSlug(companySlug, plainToken);
     return {
       ok: true as const,
       portalUrl,
       companySlug,
       token: plainToken,
       fileTaskCount: selected.length,
+      taskTitles,
       expiresAt: now + BUNDLE_TTL_MS,
     };
   },
@@ -387,6 +546,7 @@ export const issueViewAsClientPreview = mutation({
         createdAt: now,
       });
 
+      const previewUrl = portalUrlForSlug(companySlug, plainToken);
       await registerClientPortalLink(ctx, {
         pipelineFileId,
         organizationId: pipeline.organizationId,
@@ -398,9 +558,9 @@ export const issueViewAsClientPreview = mutation({
         expiresAt: now + PREVIEW_TTL_MS,
         createdByUserKey: key,
         createdAt: now,
+        issuedUrl: previewUrl,
       });
 
-      const previewUrl = portalUrlForSlug(companySlug, plainToken);
       return {
         ok: true as const,
         token: plainToken,
@@ -466,10 +626,19 @@ export const issueTaskUploadTokenForBundle = mutation({
   args: {
     bundleToken: v.string(),
     fileTaskId: v.id("documentVaultFileTasks"),
+    accessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId }) => {
-    const auth = await loadBundleByPlain(ctx, normalizePortalToken(bundleToken));
+  handler: async (ctx, { bundleToken, fileTaskId, accessProof }) => {
+    const auth = await loadBundleByPlain(
+      ctx,
+      normalizePortalToken(bundleToken),
+      undefined,
+      accessProof,
+    );
     if (!auth.ok) {
+      if (auth.reason === "verification_required") {
+        throw new Error("Additional verification is required for this portal link.");
+      }
       throw new Error(
         auth.reason === "expired"
           ? "This portal link has expired."
@@ -523,9 +692,18 @@ async function authorizeBundleTaskUpload(
   ctx: MutationCtx,
   bundleToken: string,
   fileTaskId: Id<"documentVaultFileTasks">,
+  accessProof?: string,
 ) {
-  const auth = await loadBundleByPlain(ctx, normalizePortalToken(bundleToken));
+  const auth = await loadBundleByPlain(
+    ctx,
+    normalizePortalToken(bundleToken),
+    undefined,
+    accessProof,
+  );
   if (!auth.ok) {
+    if (auth.reason === "verification_required") {
+      throw new Error("Additional verification is required for this portal link.");
+    }
     throw new Error(
       auth.reason === "expired"
         ? "This portal link has expired."
@@ -619,9 +797,15 @@ export const getBundleTaskUploadTree = query({
   args: {
     bundleToken: v.string(),
     fileTaskId: v.id("documentVaultFileTasks"),
+    accessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId }) => {
-    const auth = await loadBundleByPlain(ctx, normalizePortalToken(bundleToken));
+  handler: async (ctx, { bundleToken, fileTaskId, accessProof }) => {
+    const auth = await loadBundleByPlain(
+      ctx,
+      normalizePortalToken(bundleToken),
+      undefined,
+      accessProof,
+    );
     if (!auth.ok) {
       return { status: auth.reason } as const;
     }
@@ -695,12 +879,14 @@ export const markClientInstructionComplete = mutation({
   args: {
     bundleToken: v.string(),
     fileTaskId: v.id("documentVaultFileTasks"),
+    accessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId }) => {
+  handler: async (ctx, { bundleToken, fileTaskId, accessProof }) => {
     const { task, taskType } = await authorizeBundleTaskUpload(
       ctx,
       bundleToken,
       fileTaskId,
+      accessProof,
     );
     if (taskType !== "client_instruction") {
       throw new Error("This task is not a client instruction.");
@@ -718,12 +904,14 @@ export const generateBundleUploadUrl = mutation({
   args: {
     bundleToken: v.string(),
     fileTaskId: v.id("documentVaultFileTasks"),
+    accessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId }) => {
+  handler: async (ctx, { bundleToken, fileTaskId, accessProof }) => {
     const { taskType } = await authorizeBundleTaskUpload(
       ctx,
       bundleToken,
       fileTaskId,
+      accessProof,
     );
     assertTaskAllowsUpload(taskType);
     return await ctx.storage.generateUploadUrl();
@@ -739,12 +927,14 @@ export const ingestBundleUpload = mutation({
     fileName: v.string(),
     contentType: v.optional(v.string()),
     size: v.optional(v.number()),
+    accessProof: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { task, pipeline, taskType } = await authorizeBundleTaskUpload(
       ctx,
       args.bundleToken,
       args.fileTaskId,
+      args.accessProof,
     );
     assertTaskAllowsUpload(taskType);
 
@@ -863,12 +1053,14 @@ export const submitClientBlockFromBundle = mutation({
     fileTaskId: v.id("documentVaultFileTasks"),
     blockId: v.string(),
     formData: v.any(),
+    accessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId, blockId, formData }) => {
+  handler: async (ctx, { bundleToken, fileTaskId, blockId, formData, accessProof }) => {
     const { task, pipeline } = await authorizeBundleTaskUpload(
       ctx,
       bundleToken,
       fileTaskId,
+      accessProof,
     );
     const trimmedBlock = blockId.trim();
     if (!trimmedBlock) throw new Error("Block id is required.");
@@ -941,11 +1133,13 @@ export const submitClientBlockFromBundle = mutation({
       updatedAt: now,
     });
 
-    if (task.status === "incomplete") {
-      await ctx.db.patch(task._id, {
-        status: "pending_review",
-        updatedAt: now,
-      });
+    const wasIncomplete = task.status === "incomplete";
+    await ctx.db.patch(task._id, {
+      status: "pending_review",
+      rejectionNote: undefined,
+      updatedAt: now,
+    });
+    if (wasIncomplete) {
       await recordClientVaultUpload(ctx, {
         pipeline,
         task,
@@ -953,23 +1147,28 @@ export const submitClientBlockFromBundle = mutation({
       });
     }
 
-    return { ok: true as const };
+    return { ok: true as const, status: "pending_review" as const };
   },
 });
 
-/** Debounced / on-blur draft persistence — hydrates dealData without locking the task. */
+/**
+ * Debounced / on-blur draft persistence — hydrates dealData for live broker sync.
+ * Must NOT promote task status (Submit alone moves incomplete → pending_review).
+ */
 export const autosaveClientBlockDraftFromBundle = mutation({
   args: {
     bundleToken: v.string(),
     fileTaskId: v.id("documentVaultFileTasks"),
     blockId: v.string(),
     formData: v.any(),
+    accessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId, blockId, formData }) => {
+  handler: async (ctx, { bundleToken, fileTaskId, blockId, formData, accessProof }) => {
     const { task, pipeline } = await authorizeBundleTaskUpload(
       ctx,
       bundleToken,
       fileTaskId,
+      accessProof,
     );
     const trimmedBlock = blockId.trim();
     if (!trimmedBlock) throw new Error("Block id is required.");
@@ -1004,29 +1203,11 @@ export const autosaveClientBlockDraftFromBundle = mutation({
       await ctx.db.patch(refreshed._id, { updatedAt: now });
     }
 
-    const formRecord =
-      typeof formData === "object" && formData != null && !Array.isArray(formData)
-        ? (formData as Record<string, unknown>)
-        : {};
-    if (
-      task.status === "incomplete" &&
-      hasSubstantivePortalSubmission(atomicBlockId, formRecord)
-    ) {
-      await ctx.db.patch(task._id, {
-        status: "pending_review",
-        rejectionNote: undefined,
-        updatedAt: now,
-      });
-    }
-
     return {
       ok: true as const,
       pipelineUpdatedAt: now,
-      taskStatus:
-        task.status === "incomplete" &&
-        hasSubstantivePortalSubmission(atomicBlockId, formRecord)
-          ? ("pending_review" as const)
-          : task.status,
+      /** Unchanged by autosave — draft stays incomplete until explicit Submit. */
+      taskStatus: task.status,
     };
   },
 });

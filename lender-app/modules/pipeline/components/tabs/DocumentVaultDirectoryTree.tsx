@@ -29,7 +29,10 @@ import {
   Plus,
   Archive,
   ArchiveRestore,
+  Copy,
+  Download,
   Layers,
+  Loader2,
   Trash2,
   Upload,
   UserPlus,
@@ -51,6 +54,7 @@ import {
   type FolderTreeNode,
 } from "@/lib/library/documentVaultFolders";
 import {
+  collectFolderSubtreeIds,
   countFileTaskItems,
   countFolderItems,
   formatFolderItemBadge,
@@ -101,12 +105,23 @@ export type DocumentVaultExplorerFileHandlers = {
     fileName: string,
     contentType?: string,
   ) => void;
+  /** Float one document without floating the Document Vault block. */
+  onOpenInWindow?: (
+    documentId: Id<"libraryDocuments">,
+    versionId: Id<"libraryDocumentVersions">,
+    fileName: string,
+    contentType?: string,
+  ) => void;
   onToggleExpanded: (id: Id<"libraryDocuments">) => void;
   onMoveDoc: (row: LibraryDocumentListRow) => void;
+  onMoveCopyToFile?: (row: LibraryDocumentListRow) => void;
+  crossFileTransferEnabled?: boolean;
   onOpenProperties: (id: Id<"libraryDocuments">) => void;
   onSaveToContact: (row: LibraryDocumentListRow) => void;
   onAssignToRegistry: (row: LibraryDocumentListRow) => void;
+  onDownload: (row: LibraryDocumentListRow) => void;
   onDownloadAsPdf: (row: LibraryDocumentListRow) => void;
+  downloadingDocId: Id<"libraryDocuments"> | null;
   exportingPdfDocId: Id<"libraryDocuments"> | null;
   onRemoveLink: (
     documentId: Id<"libraryDocuments">,
@@ -158,6 +173,37 @@ export type DocumentVaultDirectoryTreeProps = {
   archivedFileTasks?: DocumentVaultFileTaskRow[];
   showArchived?: boolean;
   onToggleShowArchived?: () => void;
+  /** Download every downloadable vault file as one ZIP. */
+  onDownloadAll?: () => void;
+  /** Download currently selected files as a ZIP (file rows only). */
+  onDownloadSelected?: () => void;
+  /** Download one folder and all nested files as a ZIP (structure preserved). */
+  onDownloadFolder?: (
+    folderId: Id<"documentFolders">,
+    folderName: string,
+  ) => void;
+  downloadingFolderId?: Id<"documentFolders"> | null;
+  downloadBusy?: boolean;
+  bulkSelectedCount?: number;
+  downloadableCount?: number;
+  /**
+   * When true, folder / task / file rows offer Move / copy to another
+   * loan file (dialog shows empty state when no targets exist).
+   */
+  crossFileTransferEnabled?: boolean;
+  onMoveCopyFolder?: (
+    folderId: Id<"documentFolders">,
+    folderName: string,
+  ) => void;
+  onMoveCopyFileTask?: (
+    fileTaskId: Id<"documentVaultFileTasks">,
+    title: string,
+  ) => void;
+  /**
+   * Override row-open (defaults to vault `selectDocument` / modal).
+   * Pipeline file workspace uses this to open a floating document window.
+   */
+  onOpenDocument?: (id: Id<"libraryDocuments"> | null) => void;
 };
 
 type EditingType = "root" | "folder" | "document";
@@ -171,16 +217,16 @@ type EditingState = {
 };
 
 const ROOT_KEY = "__root__";
-const FOLDER_DEPTH_PX = 16;
+const FOLDER_DEPTH_PX = 14;
 
 function treeIndentPx(depth: number, compact = false): number {
-  return depth * FOLDER_DEPTH_PX + (compact ? 8 : 12);
+  return depth * FOLDER_DEPTH_PX + (compact ? 6 : 10);
 }
 
 function taskRootKey(fileTaskId: Id<"documentVaultFileTasks">): string {
   return `task:${fileTaskId}`;
 }
-const ROW_H = "h-8";
+const ROW_H = "h-7";
 
 type TreeDoc = VaultTreeDocument | LibraryDocumentListRow;
 
@@ -432,7 +478,7 @@ function FolderInlineRenameInput({
         onKeyDown={onKeyDown}
         onMouseDown={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
-        className="min-w-0 flex-1 rounded-dlc-sm border border-border/80 bg-dlc-surface px-1.5 py-0.5 text-xs outline-none ring-1 ring-primary/20 focus:ring-primary/40"
+        className="min-w-0 flex-1 rounded-dlc-sm border border-border/80 bg-dlc-surface px-1.5 py-0.5 text-base outline-none ring-1 ring-primary/20 focus:ring-primary/40 md:text-xs"
         aria-label="Rename folder"
         data-testid="document-vault-folder-rename-input"
       />
@@ -539,12 +585,32 @@ function DocumentTreeRow({
             );
           }
         }}
+        onOpenInWindow={
+          handlers.onOpenInWindow && row.latestVersionId
+            ? () => {
+                handlers.onOpenInWindow!(
+                  row._id,
+                  row.latestVersionId!,
+                  row.latestFileName ?? row.title,
+                  row.latestContentType,
+                );
+              }
+            : undefined
+        }
         onToggleExpanded={() => handlers.onToggleExpanded(row._id)}
         onMoveDoc={() => handlers.onMoveDoc(row)}
+        onMoveCopyToFile={
+          handlers.onMoveCopyToFile
+            ? () => handlers.onMoveCopyToFile!(row)
+            : undefined
+        }
+        crossFileTransferEnabled={handlers.crossFileTransferEnabled}
         onOpenProperties={() => handlers.onOpenProperties(row._id)}
         onSaveToContact={() => handlers.onSaveToContact(row)}
         onAssignToRegistry={() => handlers.onAssignToRegistry(row)}
+        onDownload={() => handlers.onDownload(row)}
         onDownloadAsPdf={() => handlers.onDownloadAsPdf(row)}
+        downloading={handlers.downloadingDocId === row._id}
         exportingPdf={handlers.exportingPdfDocId === row._id}
         onRemoveLink={() =>
           handlers.onRemoveLink(
@@ -574,8 +640,8 @@ function DocumentTreeRow({
     <li className="min-w-0">
       <div
         className={cn(
-          "group/doc flex min-w-0 items-center gap-0.5 border-b border-border/40 pr-1",
-          density === "compact" ? "min-h-7" : ROW_H,
+          "group/doc flex min-w-0 items-center gap-0.5 border-b border-border/40 py-0.5 pr-1",
+          density === "compact" ? "min-h-6" : ROW_H,
           isSelected && "bg-primary/10 text-primary",
         )}
         style={{ paddingLeft: `${treeIndentPx(depth, density === "compact")}px` }}
@@ -683,12 +749,18 @@ function TreeNode({
   rowById,
   onDeleteFolder,
   onNewSubfolder,
+  onDownloadFolder,
+  downloadingFolderId,
+  downloadBusy,
   folderDragVisual,
   osFileDropEnabled,
   onOsFilesDropped,
   organizationId,
   memberUserKey,
   folderCountById,
+  folderDownloadableCountById,
+  crossFileTransferEnabled = false,
+  onMoveCopyFolder,
 }: {
   node: FolderTreeNode;
   depth: number;
@@ -711,6 +783,12 @@ function TreeNode({
   onCancelEdit: () => void;
   onDeleteFolder: (folderId: Id<"documentFolders">, name: string) => void;
   onNewSubfolder?: (folderId: Id<"documentFolders">) => void;
+  onDownloadFolder?: (
+    folderId: Id<"documentFolders">,
+    folderName: string,
+  ) => void;
+  downloadingFolderId?: Id<"documentFolders"> | null;
+  downloadBusy?: boolean;
   folderDragVisual?: FolderDragVisualState;
   osFileDropEnabled?: boolean;
   onOsFilesDropped?: (
@@ -720,9 +798,22 @@ function TreeNode({
   organizationId?: Id<"organizations">;
   memberUserKey?: string;
   folderCountById?: Map<string, string>;
+  folderDownloadableCountById?: Map<string, number>;
+  crossFileTransferEnabled?: boolean;
+  onMoveCopyFolder?: (
+    folderId: Id<"documentFolders">,
+    folderName: string,
+  ) => void;
 }) {
   const id = node.folder._id;
   const folderItemBadge = folderCountById?.get(String(id));
+  const folderDownloadableCount =
+    folderDownloadableCountById?.get(String(id)) ?? 0;
+  const folderDownloading = downloadingFolderId === id;
+  const folderDownloadDisabled =
+    folderDownloadableCount === 0 ||
+    folderDownloading ||
+    Boolean(downloadBusy && !folderDownloading);
   const sortableId = vaultFolderSortableId(id);
   const isEditing =
     editing?.type === "folder" && editing.folderId === id;
@@ -764,7 +855,7 @@ function TreeNode({
         onOsFilesDrop={(files) => onOsFilesDropped?.(files, id)}
         className={cn(
           "group/folder flex min-w-0 items-center gap-0.5 pr-1",
-          compact ? "min-h-7 border-b border-border/40" : cn("rounded-dlc-sm", ROW_H),
+          compact ? "min-h-6 border-b border-border/40 py-0.5" : cn("rounded-dlc-sm", ROW_H),
           isSelected && "bg-primary/10 text-primary",
         )}
         style={{ paddingLeft: `${treeIndentPx(depth, compact)}px` }}
@@ -864,6 +955,69 @@ function TreeNode({
             <VaultItemCountBadge label={folderItemBadge} icon="folder" compact={compact} />
           ) : null}
         </button>
+        {!isEditing && onDownloadFolder ? (
+          <button
+            type="button"
+            className={cn(
+              "inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50",
+              compact
+                ? "opacity-100"
+                : "h-6 justify-center rounded-dlc-sm px-1 opacity-70 hover:bg-muted/60 hover:opacity-100",
+            )}
+            disabled={folderDownloadDisabled}
+            title={
+              folderDownloadableCount === 0
+                ? "This folder has no downloadable files"
+                : folderDownloading
+                  ? "Downloading folder…"
+                  : `Download ${node.folder.name} as ZIP`
+            }
+            aria-label={`Download folder ${node.folder.name} as ZIP`}
+            data-testid={`document-vault-folder-download-${id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onDownloadFolder(id, node.folder.name);
+            }}
+          >
+            {folderDownloading ? (
+              <Loader2
+                className={cn(
+                  "animate-spin",
+                  compact ? "h-2.5 w-2.5" : "h-3.5 w-3.5",
+                )}
+                aria-hidden
+              />
+            ) : (
+              <Download
+                className={cn(compact ? "h-2.5 w-2.5" : "h-3.5 w-3.5")}
+                aria-hidden
+              />
+            )}
+            {compact ? <span>Download</span> : null}
+          </button>
+        ) : null}
+        {canMutate &&
+        !isEditing &&
+        compact &&
+        crossFileTransferEnabled &&
+        onMoveCopyFolder ? (
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-muted-foreground opacity-100 hover:text-foreground"
+            title={`Move or copy ${node.folder.name} to another file`}
+            aria-label={`Move or copy folder ${node.folder.name} to another file`}
+            data-testid={`document-vault-folder-move-copy-${id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onMoveCopyFolder(id, node.folder.name);
+            }}
+          >
+            <Copy className="h-2.5 w-2.5" aria-hidden />
+            <span>Move</span>
+          </button>
+        ) : null}
         {canMutate && !isEditing ? (
           <>
             {onNewSubfolder ? (
@@ -926,6 +1080,26 @@ function TreeNode({
               }
               align="end"
             >
+              {onDownloadFolder ? (
+                <DropdownMenuItem
+                  disabled={folderDownloadDisabled}
+                  onClick={() => {
+                    if (folderDownloadDisabled) return;
+                    onDownloadFolder(id, node.folder.name);
+                  }}
+                >
+                  <Download className="h-4 w-4" aria-hidden />
+                  Download ZIP
+                </DropdownMenuItem>
+              ) : null}
+              {crossFileTransferEnabled && onMoveCopyFolder ? (
+                <DropdownMenuItem
+                  onClick={() => onMoveCopyFolder(id, node.folder.name)}
+                >
+                  <Copy className="h-4 w-4" aria-hidden />
+                  Move / copy to file…
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem
                 onClick={() =>
                   onStartEdit({
@@ -979,12 +1153,18 @@ function TreeNode({
                 rowById={rowById}
                 onDeleteFolder={onDeleteFolder}
                 onNewSubfolder={onNewSubfolder}
+                onDownloadFolder={onDownloadFolder}
+                downloadingFolderId={downloadingFolderId}
+                downloadBusy={downloadBusy}
                 folderDragVisual={folderDragVisual}
                 osFileDropEnabled={osFileDropEnabled}
                 onOsFilesDropped={onOsFilesDropped}
                 organizationId={organizationId}
                 memberUserKey={memberUserKey}
                 folderCountById={folderCountById}
+                folderDownloadableCountById={folderDownloadableCountById}
+                crossFileTransferEnabled={crossFileTransferEnabled}
+                onMoveCopyFolder={onMoveCopyFolder}
               />
             ))}
           {folderDocs.map((doc) => {
@@ -1069,6 +1249,17 @@ export function DocumentVaultDirectoryTree({
   archivedFileTasks,
   showArchived = false,
   onToggleShowArchived,
+  onDownloadAll,
+  onDownloadSelected,
+  onDownloadFolder,
+  downloadingFolderId = null,
+  downloadBusy = false,
+  bulkSelectedCount = 0,
+  downloadableCount = 0,
+  crossFileTransferEnabled = false,
+  onMoveCopyFolder,
+  onMoveCopyFileTask,
+  onOpenDocument,
 }: DocumentVaultDirectoryTreeProps) {
   const {
     currentFolderId,
@@ -1076,6 +1267,7 @@ export function DocumentVaultDirectoryTree({
     navigateToFolder,
     selectDocument,
   } = useDocumentVaultState();
+  const openDocument = onOpenDocument ?? selectDocument;
   const createFolder = useMutation(api.documentFolders.createFolder);
   const renameFolder = useMutation(api.documentFolders.renameFolder);
   const patchDocumentTitle = useMutation(api.libraryDocuments.patchDocumentTitle);
@@ -1210,6 +1402,29 @@ export function DocumentVaultDirectoryTree({
     }
     return map;
   }, [folders, vaultDocRefs]);
+
+  const folderDownloadableCountById = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!folders) return map;
+    for (const folder of folders) {
+      const subtree = collectFolderSubtreeIds(folders, folder._id);
+      let count = 0;
+      for (const doc of vaultDocRefs) {
+        if (!doc.folderId || !subtree.has(String(doc.folderId))) continue;
+        const row = rowById.get(String(doc._id));
+        if (row && row.latestVersionNumber > 0) {
+          count += 1;
+          continue;
+        }
+        if (!row && documentRows === undefined) {
+          // Fallback when only lightweight tree docs are provided.
+          count += 1;
+        }
+      }
+      map.set(String(folder._id), count);
+    }
+    return map;
+  }, [folders, vaultDocRefs, rowById, documentRows]);
 
   const taskCountById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1451,8 +1666,8 @@ export function DocumentVaultDirectoryTree({
       data-testid="document-vault-unified-explorer"
       aria-label="Document vault explorer"
     >
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-2">
-        <div className="flex items-center gap-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/60 px-2 py-1.5">
+        <div className="flex items-center gap-2">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Explorer
           </h3>
@@ -1543,12 +1758,60 @@ export function DocumentVaultDirectoryTree({
                 ) : null}
               </>
             ) : null}
+            {onDownloadAll || onDownloadSelected ? (
+              <>
+                {onDownloadAll ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-1.5 text-[10px] font-medium"
+                    onClick={onDownloadAll}
+                    disabled={downloadBusy || downloadableCount <= 0}
+                    data-testid="document-vault-download-all"
+                    title={
+                      downloadableCount <= 0
+                        ? "No downloadable documents"
+                        : "Download all documents as ZIP"
+                    }
+                  >
+                    <Download className="h-3 w-3" aria-hidden />
+                    <span className="hidden sm:inline">
+                      {downloadBusy ? "Downloading…" : "Download all"}
+                    </span>
+                  </Button>
+                ) : null}
+                {onDownloadSelected ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-1.5 text-[10px] font-medium"
+                    onClick={onDownloadSelected}
+                    disabled={downloadBusy || bulkSelectedCount <= 0}
+                    data-testid="document-vault-download-selected"
+                    title={
+                      bulkSelectedCount <= 0
+                        ? "Select one or more files to download"
+                        : `Download ${bulkSelectedCount} selected as ZIP`
+                    }
+                  >
+                    <Download className="h-3 w-3" aria-hidden />
+                    <span className="hidden sm:inline">
+                      {bulkSelectedCount > 0
+                        ? `Download selected (${bulkSelectedCount})`
+                        : "Download selected"}
+                    </span>
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </div>
       </div>
 
       <nav
-        className="min-w-0 px-1.5 pt-1.5 pb-0"
+        className="min-w-0 px-1 pt-1 pb-0"
         data-testid="document-vault-explorer-scroll"
       >
         {folders === undefined ? (
@@ -1562,7 +1825,7 @@ export function DocumentVaultDirectoryTree({
               <>
                 {orderedFileTasks.length > 0 ? (
                   <li className="min-w-0">
-                    <ul className="min-w-0 space-y-5">
+                    <ul className="min-w-0 space-y-2">
                       {orderedFileTasks.map((task) => {
                           const taskTree = buildFolderTree(
                             folders ?? [],
@@ -1656,6 +1919,13 @@ export function DocumentVaultDirectoryTree({
                               onOpenExecution={() => setExecutionFileTask(task)}
                               onOpenFullscreen={() => setExecutionFileTask(task)}
                               onOpenConfig={() => setConfigFileTask(task)}
+                              crossFileTransferEnabled={crossFileTransferEnabled}
+                              onMoveCopyToFile={
+                                crossFileTransferEnabled && onMoveCopyFileTask
+                                  ? () =>
+                                      onMoveCopyFileTask(task._id, task.title)
+                                  : undefined
+                              }
                               onNewFolder={() => {
                                 setNewFolderParentId(null);
                                 setNewFolderTaskId(task._id);
@@ -1723,7 +1993,7 @@ export function DocumentVaultDirectoryTree({
                                       }
                                       onCommitEdit={() => void commitEdit()}
                                       onCancelEdit={cancelEdit}
-                                      onSelect={() => selectDocument(docId)}
+                                      onSelect={() => openDocument(docId)}
                                     />
                                   );
                                 })}
@@ -1744,7 +2014,7 @@ export function DocumentVaultDirectoryTree({
                                     rowById={rowById}
                                     onToggleExpand={toggleExpand}
                                     onSelectFolder={navigateToFolder}
-                                    onSelectDocument={selectDocument}
+                                    onSelectDocument={openDocument}
                                     onStartEdit={setEditing}
                                     onEditChange={(v) =>
                                       setEditing((prev) =>
@@ -1755,12 +2025,22 @@ export function DocumentVaultDirectoryTree({
                                     onCancelEdit={cancelEdit}
                                     onDeleteFolder={handleDeleteFolder}
                                     onNewSubfolder={openNewSubfolder}
+                                    onDownloadFolder={onDownloadFolder}
+                                    downloadingFolderId={downloadingFolderId}
+                                    downloadBusy={downloadBusy}
                                     folderDragVisual={folderDragVisual}
                                     osFileDropEnabled={osFileDropEnabled}
                                     onOsFilesDropped={onOsFilesDropped}
                                     organizationId={organizationId}
                                     memberUserKey={memberUserKey}
                                     folderCountById={folderCountById}
+                                    folderDownloadableCountById={
+                                      folderDownloadableCountById
+                                    }
+                                    crossFileTransferEnabled={
+                                      crossFileTransferEnabled
+                                    }
+                                    onMoveCopyFolder={onMoveCopyFolder}
                                   />
                                 ))}
                               </ul>
@@ -1773,7 +2053,7 @@ export function DocumentVaultDirectoryTree({
 
                 <li className="min-w-0">
                   {orderedFileTasks.length > 0 ? (
-                    <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <div className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Unassigned
                     </div>
                   ) : null}
@@ -1854,7 +2134,7 @@ export function DocumentVaultDirectoryTree({
                           }
                           onCommitEdit={() => void commitEdit()}
                           onCancelEdit={cancelEdit}
-                          onSelect={() => selectDocument(docId)}
+                          onSelect={() => openDocument(docId)}
                         />
                       );
                     })}
@@ -1875,7 +2155,7 @@ export function DocumentVaultDirectoryTree({
                         rowById={rowById}
                         onToggleExpand={toggleExpand}
                         onSelectFolder={navigateToFolder}
-                        onSelectDocument={selectDocument}
+                        onSelectDocument={openDocument}
                         onStartEdit={setEditing}
                         onEditChange={(v) =>
                           setEditing((prev) =>
@@ -1886,17 +2166,25 @@ export function DocumentVaultDirectoryTree({
                         onCancelEdit={cancelEdit}
                         onDeleteFolder={handleDeleteFolder}
                         onNewSubfolder={openNewSubfolder}
+                        onDownloadFolder={onDownloadFolder}
+                        downloadingFolderId={downloadingFolderId}
+                        downloadBusy={downloadBusy}
                         folderDragVisual={folderDragVisual}
                         osFileDropEnabled={osFileDropEnabled}
                         onOsFilesDropped={onOsFilesDropped}
                         organizationId={organizationId}
                         memberUserKey={memberUserKey}
                             folderCountById={folderCountById}
+                            folderDownloadableCountById={
+                              folderDownloadableCountById
+                            }
+                            crossFileTransferEnabled={crossFileTransferEnabled}
+                            onMoveCopyFolder={onMoveCopyFolder}
                           />
                         ))}
                       </ul>
                       {canMutate ? (
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/30 px-3 pt-1.5 pb-2">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/30 px-2 pt-1 pb-1.5">
                           <input
                             ref={unassignedUploadInputRef}
                             type="file"
@@ -1957,7 +2245,7 @@ export function DocumentVaultDirectoryTree({
       </nav>
 
       {onToggleShowArchived ? (
-        <div className="border-t border-border/40 px-3 py-1.5">
+        <div className="border-t border-border/40 px-2 py-1">
           <button
             type="button"
             className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
@@ -1970,11 +2258,11 @@ export function DocumentVaultDirectoryTree({
               : ""}
           </button>
           {showArchived && archivedFileTasks && archivedFileTasks.length > 0 ? (
-            <ul className="mt-2 space-y-1">
+            <ul className="mt-1 space-y-0.5">
               {archivedFileTasks.map((task) => (
                 <li
                   key={task._id}
-                  className="flex items-center justify-between rounded-dlc-sm border border-border/50 bg-muted/20 px-2 py-1.5"
+                  className="flex items-center justify-between rounded-dlc-sm border border-border/50 bg-muted/20 px-2 py-1"
                 >
                   <span className="truncate text-xs text-muted-foreground">
                     {task.title}
@@ -2223,6 +2511,14 @@ export function DocumentVaultDirectoryTree({
               clientInstructionText: payload.clientInstructionText,
               instructionUrl: payload.instructionUrl,
               assignedBlockEntries: payload.assignedBlockEntries,
+              clientTemplateAttachments: payload.clientTemplateAttachments?.map(
+                (a) => ({
+                  storageId: a.storageId as Id<"_storage">,
+                  fileName: a.fileName,
+                  mimeType: a.mimeType,
+                  size: a.size,
+                }),
+              ),
               isRequired: payload.isRequired,
               isPortalVisible: payload.isPortalVisible,
               dueDate: payload.dueDate ?? null,

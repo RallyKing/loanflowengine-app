@@ -13,6 +13,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { cn } from "@/lib/cn";
+import { readPortalAccessProof } from "@/lib/portalAccessProof";
 import {
   buildFolderTree,
   type DocumentFolderRow,
@@ -323,6 +324,7 @@ export function ClientPortalFolderUploadTree({
   const treeData = useQuery(api.documentVaultClientBundlePortal.getBundleTaskUploadTree, {
     bundleToken,
     fileTaskId,
+    accessProof: readPortalAccessProof(bundleToken),
   });
 
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());

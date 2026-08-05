@@ -697,6 +697,22 @@ export function OrganizationSettingsPanel() {
 
       {orgScope && can("settings.manage") ? (
         <div className="rounded-lg border border-border/80 bg-muted/10 p-4 sm:p-5">
+          <h3 className="text-sm font-semibold text-foreground">Portal defaults</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Create reusable portal templates for clients, lenders, referrers, and
+            deal partners. Assign them on contacts for Portals &amp; Progress.
+          </p>
+          <Link
+            href="/settings/portal-defaults"
+            className="mt-3 inline-flex min-h-10 items-center rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/35 hover:bg-muted"
+          >
+            Open portal defaults editor
+          </Link>
+        </div>
+      ) : null}
+
+      {orgScope && can("settings.manage") ? (
+        <div className="rounded-lg border border-border/80 bg-muted/10 p-4 sm:p-5">
           <h3 className="text-sm font-semibold text-foreground">Task playbooks</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             Build reusable task groups with attachments for pipeline files.

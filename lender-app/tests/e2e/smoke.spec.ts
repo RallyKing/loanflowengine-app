@@ -228,28 +228,28 @@ describeSignedInOrSkip("app smoke — signed-in workspace", () => {
       .toMatch(/degraded|ready/);
   });
 
-  test("home redirects to tasks", async ({ page }) => {
+  test("home redirects to pipeline", async ({ page }) => {
     await page.goto("/", { waitUntil: "load" });
     await expect
       .poll(
         async () => {
           const path = new URL(page.url()).pathname;
-          if (path === "/tasks" || path === "/tasks/") return "tasks";
+          if (path === "/pipeline" || path === "/pipeline/") return "pipeline";
           if (
             await page
-              .getByRole("heading", { name: /Task/i })
+              .getByRole("heading", { name: /Pipeline/i })
               .isVisible()
               .catch(() => false)
           ) {
-            return "tasks";
+            return "pipeline";
           }
           return path;
         },
         { timeout: 30_000 },
       )
-      .toBe("tasks");
+      .toBe("pipeline");
     await expectWorkspaceRouteVisible(page, {
-      heading: /Task/i,
+      heading: /Pipeline/i,
       allowDegraded: true,
     });
     await expect(page.locator("main")).toBeVisible();

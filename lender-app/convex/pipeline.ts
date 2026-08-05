@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import {
   derivePrimaryFundingAmountFromDealPayload,
+  dealPatchIsNoOp,
   intakeRowToDealPayload,
   mergePartialCoverOnPatch,
   mergePartialSubjectPropertyOnPatch,
@@ -30,6 +31,7 @@ import { insertCollaborationActivityEvent } from "./activityEvents";
 import { isCurrentlySnoozed as pipelineIsCurrentlySnoozed } from "../lib/pipelineSnooze";
 import { resolvePipelineTableFundingAmount } from "../lib/pipeline/resolvePipelineTableFundingAmount";
 import { resolvePrimaryTableLender } from "../lib/pipeline/resolvePrimaryTableLender";
+import { buildPipelineDealPartySearchBlob } from "../lib/pipeline/pipelineDealPartySearch";
 import {
   normalizePipelineDrawerLayout,
   type PipelineDrawerLayoutV1,
@@ -64,7 +66,6 @@ import { collectPipelineWatcherUserKeys } from "./notificationRecipients";
 import { dispatchUserNotification } from "./notifications";
 import {
   assertCanMutatePipelineRow,
-  assertCanReadPipelineRow,
   assertLenderAttachableToPipeline,
   assertOrgMember,
   assertOrgScopeArgs,
@@ -72,6 +73,7 @@ import {
   assertCanManagePipelineDrawerLayout,
   filterPipelineByOrgScope,
   filterPipelineRowsForMember,
+  pipelineFileReadable,
   resolveMemberUserKey,
   resolveOrgPipelineFileAccessLevel,
   sessionKeyIsGlobalAdmin,
@@ -164,12 +166,29 @@ const preferencesAccountIdArg = {
    * When omitted, new files use only the global new-file template (system default).
    */
   preferencesAccountId: v.optional(v.string()),
+  /**
+   * Hub bulk actions historically pass `memberUserKey` (same identity as
+   * `preferencesAccountId`). Accept both so ArgumentValidationError does not
+   * mask deletes behind a generic “Couldn't save” client message.
+   */
+  memberUserKey: v.optional(v.string()),
 };
 
 /** Same id as preferences; required for org-scoped rows when mutating via some endpoints. */
 const memberUserKeyArg = {
   memberUserKey: v.optional(v.string()),
 };
+
+/** Prefer preferencesAccountId; fall back to memberUserKey alias. */
+function resolvePipelineActorKey(args: {
+  preferencesAccountId?: string;
+  memberUserKey?: string;
+}): string | undefined {
+  const fromPrefs = args.preferencesAccountId?.trim();
+  if (fromPrefs) return fromPrefs;
+  const fromMember = args.memberUserKey?.trim();
+  return fromMember || undefined;
+}
 
 const orgListScopeArgs = {
   organizationId: v.id("organizations"),
@@ -185,7 +204,11 @@ export const getDetail = query({
   handler: async (ctx, { id, memberUserKey }) => {
     const p = await ctx.db.get(id);
     if (!p) return null;
-    await assertCanReadPipelineRow(ctx, p, memberUserKey);
+    // Return null (not throw) for missing access — client already renders
+    // "Pipeline file not found" for `detail === null`; throws crash the page.
+    if (!(await pipelineFileReadable(ctx, p, memberUserKey))) {
+      return null;
+    }
     const board = resolvePipelineLenderBoard(p);
     const resolved: Array<Doc<"lenders">> = [];
     const primaryLender = board.primaryLenderId
@@ -697,6 +720,7 @@ function buildTablePreviewRow(
     p.fileName,
     p.status,
     buildSourceLabel(intake),
+    buildPipelineDealPartySearchBlob(intake),
     subjectAddressDisplay,
     fundingTypeDisplay,
     fundingProgramDisplay,
@@ -945,6 +969,7 @@ export const listTablePreview = query({
           previewCore.searchText,
           clientDisplayName,
           projectDisplayTitle,
+          ...h.linkedClients.map((c) => c.displayName),
         ]
           .filter(Boolean)
           .join(" ")
@@ -1001,7 +1026,9 @@ export const getById = query({
   handler: async (ctx, { id, memberUserKey }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
-    await assertCanReadPipelineRow(ctx, row, memberUserKey);
+    if (!(await pipelineFileReadable(ctx, row, memberUserKey))) {
+      return null;
+    }
     return row;
   },
 });
@@ -1019,7 +1046,9 @@ export const getDealForEditor = query({
   handler: async (ctx, { fileId, memberUserKey }) => {
     const p = await ctx.db.get(fileId);
     if (!p) return null;
-    await assertCanReadPipelineRow(ctx, p, memberUserKey);
+    if (!(await pipelineFileReadable(ctx, p, memberUserKey))) {
+      return null;
+    }
     const linked =
       p.intakeSheetId != null ? await ctx.db.get(p.intakeSheetId) : null;
     const embedded = embeddedDealPayloadIsSubstantive(p.dealData)
@@ -1138,6 +1167,10 @@ export const patchDeal = mutation({
         cleaned.subjectProperty,
       );
       if (mergedSp !== undefined) cleaned.subjectProperty = mergedSp;
+    }
+    /** Skip DB write / activity / updatedAt bump when values are unchanged. */
+    if (dealPatchIsNoOp(deal, cleaned)) {
+      return { ok: true as const };
     }
     const mergedDeal = mergePatchIntoDeal(deal, {
       ...cleaned,
@@ -2653,10 +2686,12 @@ export const setProjected = mutation({
  */
 export const archive = mutation({
   args: { id: v.id("pipeline"), ...preferencesAccountIdArg },
-  handler: async (ctx, { id, preferencesAccountId }) => {
+  handler: async (ctx, args) => {
+    const { id } = args;
+    const actorKey = resolvePipelineActorKey(args);
     const row = await ctx.db.get(id);
     if (!row) throw new Error("Pipeline not found");
-    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, row, actorKey);
     const now = Date.now();
     await ctx.db.patch(id, {
       archivedAt: now,
@@ -2682,10 +2717,12 @@ export const archive = mutation({
  */
 export const unarchive = mutation({
   args: { id: v.id("pipeline"), ...preferencesAccountIdArg },
-  handler: async (ctx, { id, preferencesAccountId }) => {
+  handler: async (ctx, args) => {
+    const { id } = args;
+    const actorKey = resolvePipelineActorKey(args);
     const row = await ctx.db.get(id);
     if (!row) throw new Error("Pipeline not found");
-    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, row, actorKey);
     if (row.archivedAt == null) return { id, archivedAt: null };
     await ctx.db.patch(id, {
       archivedAt: undefined,
@@ -3494,10 +3531,12 @@ export const clearOtherLenders = mutation({
  */
 export const remove = mutation({
   args: { id: v.id("pipeline"), ...preferencesAccountIdArg },
-  handler: async (ctx, { id, preferencesAccountId }) => {
+  handler: async (ctx, args) => {
+    const { id } = args;
+    const actorKey = resolvePipelineActorKey(args);
     const row = await ctx.db.get(id);
     if (!row) return { ok: false as const };
-    await assertCanDeletePipelineRow(ctx, row, preferencesAccountId);
+    await assertCanDeletePipelineRow(ctx, row, actorKey);
     await deletePipelineGraph(ctx, id);
     return { ok: true as const };
   },

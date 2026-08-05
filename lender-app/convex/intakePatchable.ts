@@ -23,6 +23,7 @@ import {
   weightedInterestRow,
   workflowItem,
 } from "./intakeSchemaPart";
+import { personalFinancialStatementV } from "./pfsStatementValidators";
 
 /**
  * Top-level fields allowed on intake-shaped documents (standalone `intakeSheets`
@@ -57,9 +58,12 @@ export const intakePatchableFields = {
   incomeRows: v.optional(v.array(incomeRow)),
   assets: v.optional(v.array(assetRow)),
   liabilities: v.optional(v.array(liabilityRow)),
+  /** SBA-style Personal Financial Statement (pipeline PFS block). */
+  pfs: v.optional(personalFinancialStatementV),
   dependentsCount: v.optional(v.string()),
   dependentsAges: v.optional(v.string()),
   workflow: v.optional(v.array(workflowItem)),
+  workflowTemplateId: v.optional(v.string()),
   primaryObjective: v.optional(v.string()),
   additionalNotes: v.optional(v.string()),
 
@@ -102,6 +106,8 @@ export const intakePatchableFields = {
   overviewTabLayout: v.optional(v.any()),
   /** Tab 5 Client Portal: section order / visibility (v1 object). */
   clientPortalTabLayout: v.optional(v.any()),
+  /** Portals & Progress: unified block order / visibility (v1 object). */
+  portalsProgressTabLayout: v.optional(v.any()),
 };
 
 /**

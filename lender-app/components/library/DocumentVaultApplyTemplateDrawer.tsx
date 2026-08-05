@@ -238,6 +238,12 @@ export function DocumentVaultApplyTemplateDrawer({
                       onChange={() => toggleTemplate(String(tpl._id))}
                     />
                     <span className="text-sm">{tpl.title}</span>
+                    {(tpl.clientTemplateAttachments?.length ?? 0) > 0 ? (
+                      <span className="text-[10px] text-muted-foreground">
+                        Template file
+                        {tpl.clientTemplateAttachments!.length === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
                     {tpl.isRequired ? (
                       <span className="text-[10px] text-amber-700">Required</span>
                     ) : null}

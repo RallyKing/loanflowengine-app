@@ -146,7 +146,7 @@ export function PipelineStageSelector({
     return (
       <span
         className={cn(
-          "inline-flex max-w-full items-center rounded-full border px-2.5 py-0.5 font-medium",
+          "inline-flex max-w-full cursor-default items-center rounded-full border px-2.5 py-0.5 font-medium opacity-70",
           compact ? "text-[11px]" : "text-xs",
         )}
         style={
@@ -157,7 +157,12 @@ export function PipelineStageSelector({
               }
             : undefined
         }
-        title={displayLabel}
+        title={
+          readOnly || !mayAssign
+            ? `${displayLabel} (view only)`
+            : displayLabel
+        }
+        aria-label={`${ariaLabel}: ${displayLabel}`}
       >
         <span className="truncate">{displayLabel}</span>
       </span>
@@ -167,7 +172,10 @@ export function PipelineStageSelector({
   const selectValue = currentStage ? String(currentStage._id) : "";
 
   return (
-    <div className={cn("flex min-w-0 flex-wrap items-center gap-1.5", compact && "gap-1")}>
+    <div
+      className={cn("flex min-w-0 flex-wrap items-center gap-1.5", compact && "gap-1")}
+      data-testid="pipeline-stage-selector"
+    >
       <InlineSelect
         value={selectValue}
         options={parentOptions}
@@ -202,7 +210,7 @@ export function PipelineStageSelector({
           }}
         />
       )}
-      {canManageStageArchitecture && currentStage && !creatingSub && (
+      {canManageStageArchitecture && currentStage && !creatingSub && !compact && (
         <Button
           type="button"
           variant="ghost"
@@ -213,7 +221,7 @@ export function PipelineStageSelector({
           + Sub
         </Button>
       )}
-      {creatingSub && currentStage && activeOrganizationId && (
+      {creatingSub && currentStage && activeOrganizationId && !compact && (
         <div className="flex min-w-0 items-center gap-1">
           <Input
             value={newSubName}

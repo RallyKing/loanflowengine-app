@@ -5,6 +5,12 @@
 
 node_modules/
 .next/
+.next-local/
+.next-deliver-lender/
+.next-assoc-contacts/
+.next-vault-tasks/
+.next-build/
+.next*/
 .convex/
 .vercel/
 .git/
@@ -29,3 +35,16 @@ Thumbs.db
 # `.gitignore`. The Next.js build imports `@/convex/_generated/api` and there
 # is no Convex backend reachable from the Vercel build sandbox to regenerate
 # it during `next build`.
+
+# Explicit local Next build output dirs (oversized webpack caches)
+.next-offdrive/
+.next-chrome/
+.next-iwf-agent/
+.next-notes-ux/
+.next-pfs-contrast/
+.next-wiw-vault-qa/
+dlc-next-chrome-menu/
+dlc-next*/
+
+
+.next-iwf-solo/

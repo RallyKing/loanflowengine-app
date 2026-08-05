@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/cn";
 import { ContactRoleMultiSelect } from "@/components/contacts/ContactRoleMultiSelect";
 import { ContactMethodsEditor } from "@/components/contacts/ContactMethodsEditor";
+import { ContactPortalDefaultsAssign } from "@/components/contacts/ContactPortalDefaultsAssign";
 import { ContactRelationshipsTab } from "@/components/contacts/ContactRelationshipsTab";
 import { ContactFinancialsTab } from "@/components/contacts/ContactFinancialsTab";
 import { ContactDealsTab } from "@/components/contacts/ContactDealsTab";
@@ -75,6 +76,16 @@ export type IndividualHubDetailPanelProps = {
   contactRoles: ContactRole[];
   editorDraft: IndividualHubDraft;
   onPatchDraft: (patch: Partial<IndividualHubDraft>) => void;
+  onPatchEmails: (
+    next:
+      | ContactEmailEntry[]
+      | ((prev: ContactEmailEntry[]) => ContactEmailEntry[]),
+  ) => void;
+  onPatchPhones: (
+    next:
+      | ContactPhoneEntry[]
+      | ((prev: ContactPhoneEntry[]) => ContactPhoneEntry[]),
+  ) => void;
   onOpenEntityProfile: (entityId: Id<"clients">) => void;
   onOpenEntityInHub: (entityId: Id<"clients">) => void;
   hiddenByListFilters?: boolean;
@@ -98,6 +109,8 @@ export function IndividualHubDetailPanel({
   contactRoles,
   editorDraft,
   onPatchDraft,
+  onPatchEmails,
+  onPatchPhones,
   onOpenEntityProfile,
   onOpenEntityInHub,
   hiddenByListFilters = false,
@@ -306,8 +319,8 @@ export function IndividualHubDetailPanel({
         emails={editorDraft.emails}
         phones={editorDraft.phones}
         disabled={saving}
-        onEmailsChange={(emails) => onPatchDraft({ emails })}
-        onPhonesChange={(phones) => onPatchDraft({ phones })}
+        onEmailsChange={onPatchEmails}
+        onPhonesChange={onPatchPhones}
       />
       <Label htmlFor="hub-contact-role">
         CRM contact roles
@@ -320,6 +333,18 @@ export function IndividualHubDetailPanel({
           aria-label="CRM contact roles"
         />
       </Label>
+      {!isNew && contactId ? (
+        <ContactPortalDefaultsAssign
+          contactId={contactId}
+          organizationId={organizationId}
+          memberUserKey={memberUserKey}
+          contactRoleIds={editorDraft.contactRoleIds}
+          assignedIds={
+            (selectedDoc as Doc<"contacts"> | null)?.portalDefaultIds ?? null
+          }
+          disabled={saving || !canUseHub}
+        />
+      ) : null}
       <Label htmlFor="hub-contact-notes" hint="Optional context or follow-ups.">
         Notes
         <Textarea
@@ -464,7 +489,7 @@ export function IndividualHubDetailPanel({
 
   const stickyCommandCenterHeader =
     layoutMode === "commandCenter" ? (
-      <div className="sticky top-0 z-50 border-b border-border/60 bg-dlc-surface/90 shadow-sm backdrop-blur-md">
+      <div className="sticky top-0 z-[calc(var(--dlc-z-header,20)+1)] border-b border-border/60 bg-dlc-surface/90 shadow-sm backdrop-blur-md">
         <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-5">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <Link

@@ -188,7 +188,7 @@ function LoanStackRow({
         "group/loan-row flex flex-col gap-1 rounded-md border-2 border-border/60 bg-background px-3 py-2 shadow-sm transition-colors",
         stackTotal > 1 && "ml-4 border-l-2 border-l-primary/25 pl-3",
         focused && "ring-2 ring-brand-accent/40",
-        fileHighlight && "pr-28",
+        fileHighlight && "md:pr-28",
       )}
       badgeClassName="top-1.5"
     >
@@ -207,6 +207,7 @@ function LoanStackRow({
           type="button"
           className="flex w-full min-w-0 items-start gap-1.5 text-left"
           onClick={onOpen}
+          aria-label={`Open file ${row.fileName}`}
         >
           <PipelineFileArchivedIndicator
             archivedAt={row.archivedAt}
@@ -218,7 +219,7 @@ function LoanStackRow({
         </button>
         <div
           className={cn(
-            "flex w-full flex-wrap items-center gap-2",
+            "flex w-full min-w-0 flex-wrap items-center gap-2",
             mobileHierarchySecondaryInsetClass,
           )}
         >
@@ -243,19 +244,22 @@ function LoanStackRow({
             />
             <TaskRollupBadge counts={fileTaskCounts} />
           </div>
-          {organizationId && memberUserKey ? (
+        </div>
+        {organizationId && memberUserKey ? (
+          <div className="flex w-full justify-end">
             <HubHierarchyLoanRowActions
               row={row}
               organizationId={organizationId}
               memberUserKey={memberUserKey}
               onOpen={onOpen}
               onDuplicated={onFileDuplicated}
+              compactMobile
             />
-          ) : null}
-          {row.ownership ? (
-            <ResourceOwnershipLine presentation={row.ownership} compact />
-          ) : null}
-        </div>
+          </div>
+        ) : null}
+        {row.ownership ? (
+          <ResourceOwnershipLine presentation={row.ownership} compact />
+        ) : null}
         {(row.linkedClients?.length ?? 0) > 1 ? (
           <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
         ) : null}
@@ -320,7 +324,7 @@ function LoanStackRow({
         </div>
       </div>
       <div
-        className="flex flex-wrap items-center gap-2"
+        className="flex flex-wrap items-center gap-2 max-md:gap-y-2"
         onClick={(e) => e.stopPropagation()}
       >
         <PipelineStageSelector
@@ -422,7 +426,7 @@ function ProjectSection({
     >
       <HubTriageHighlightFrame
         highlight={projectHighlight}
-        className={cn(projectHighlight && "pr-28")}
+        className={cn(projectHighlight && "md:pr-28")}
         badgeClassName="top-1"
       >
       <RowShell
@@ -680,7 +684,7 @@ function ClientSection({
     >
       <HubTriageHighlightFrame
         highlight={clientHighlight}
-        className={cn(clientHighlight && "pr-28")}
+        className={cn(clientHighlight && "md:pr-28")}
         badgeClassName="top-1"
       >
       <RowShell

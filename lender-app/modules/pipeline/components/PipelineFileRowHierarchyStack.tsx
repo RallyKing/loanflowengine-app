@@ -31,40 +31,56 @@ export function PipelineFileRowHierarchyStack({
 
   return (
     <div
-      className={cn("flex min-w-0 flex-col gap-1", className)}
+      className={cn(
+        "flex w-full min-w-0 flex-1 flex-col gap-1 opacity-100",
+        className,
+      )}
       data-testid="pipeline-file-row-hierarchy"
     >
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+      <div className="flex w-full min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
         {fileTitleSlot ?? (
-          <span className="min-w-0 truncate text-sm font-medium leading-snug text-slate-900 dark:text-slate-100">
+          <span
+            className="block min-w-0 text-sm font-semibold leading-snug text-foreground max-md:w-full max-md:whitespace-normal max-md:break-words max-md:[overflow-wrap:anywhere] md:max-w-full md:truncate"
+            title={staticPrimaryTitle}
+            data-testid="pipeline-file-row-title"
+          >
             {staticPrimaryTitle}
           </span>
         )}
         {fileTitleSlot && clientLabel ? (
           <>
             <span
-              className="shrink-0 text-sm font-medium text-slate-400"
+              className="shrink-0 text-sm font-medium text-muted-foreground"
               aria-hidden
             >
               ·
             </span>
-            <span className="min-w-0 truncate text-sm font-medium leading-snug text-slate-900 dark:text-slate-100">
+            <span
+              className="min-w-0 text-sm font-semibold leading-snug text-foreground max-md:whitespace-normal max-md:break-words md:truncate"
+              data-testid="pipeline-file-row-client"
+            >
               {clientLabel}
             </span>
           </>
         ) : null}
       </div>
-      <p className="truncate text-xs leading-snug text-slate-500 dark:text-slate-400">
+      <p
+        className="w-full min-w-0 text-xs leading-snug text-muted-foreground opacity-100 max-md:whitespace-normal max-md:break-words max-md:[overflow-wrap:anywhere] md:truncate"
+        title={projectLabel}
+        data-testid="pipeline-file-row-project"
+      >
         {projectLabel}
       </p>
       {primaryLender ? (
         <p
           className={cn(
-            "flex min-w-0 items-center gap-1 truncate text-[11px] font-medium uppercase leading-snug tracking-wide",
+            "flex min-w-0 items-center gap-1 text-[11px] font-medium uppercase leading-snug tracking-wide opacity-100",
+            "max-md:flex-wrap md:truncate",
             primaryLender.source === "selected"
               ? "text-primary/85"
               : "text-slate-400 dark:text-slate-500",
           )}
+          data-testid="pipeline-file-row-lender"
         >
           {primaryLender.source === "selected" ? (
             <Star
@@ -72,7 +88,9 @@ export function PipelineFileRowHierarchyStack({
               aria-hidden
             />
           ) : null}
-          <span className="truncate normal-case">{primaryLender.company}</span>
+          <span className="min-w-0 normal-case max-md:whitespace-normal max-md:break-words md:truncate">
+            {primaryLender.company}
+          </span>
         </p>
       ) : null}
     </div>

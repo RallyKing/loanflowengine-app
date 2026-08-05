@@ -2,7 +2,11 @@
 
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import Link from "next/link";
-import { APP_DISPLAY_NAME, APP_MONOGRAM } from "@/lib/brandIdentity";
+import {
+  APP_DISPLAY_NAME,
+  APP_HOME_HREF,
+  APP_MONOGRAM,
+} from "@/lib/brandIdentity";
 import { Menu } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -64,7 +68,7 @@ export function MobileTopNav({
       </button>
       {compactBrand ? (
         <Link
-          href="/tasks"
+          href={APP_HOME_HREF}
           className={cn(
             "min-w-0 shrink-0 overflow-hidden md:hidden",
             "max-md:col-start-2 max-md:row-start-1 max-md:flex max-md:justify-center",

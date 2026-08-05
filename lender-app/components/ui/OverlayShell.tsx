@@ -88,7 +88,7 @@ export function OverlayShell({
       <button
         type="button"
         className={cn(
-          "absolute inset-0 cursor-default backdrop-blur-[2px]",
+          "absolute inset-0 cursor-default",
           overlayScrimClass(),
           scrimClassName,
         )}
@@ -115,9 +115,11 @@ export function OverlayShell({
       ) : (
         <div
           className={cn(
-            "relative mx-auto w-full shrink-0",
+            "relative mx-auto flex w-full min-h-0 shrink-0 flex-col",
             contentClassName ?? "max-w-[min(100%,28rem)]",
-            align === "bottom-sheet" && "max-md:max-h-[min(92dvh,720px)]",
+            // Bound height so custom panels can pin header/footer and scroll the body.
+            align === "bottom-sheet" &&
+              "max-h-[min(90dvh,720px)] overflow-hidden",
           )}
           onClick={(e) => e.stopPropagation()}
         >

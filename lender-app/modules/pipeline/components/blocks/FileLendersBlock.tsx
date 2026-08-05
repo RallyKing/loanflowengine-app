@@ -71,10 +71,10 @@ function LenderRepSelect({
   }
 
   return (
-    <label className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+    <label className="inline-flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
       Representative
       <select
-        className="h-8 max-w-[14rem] rounded-md border border-border bg-background px-2 text-xs"
+        className="h-9 min-h-[40px] max-w-[14rem] rounded-dlc-sm border border-border bg-background px-2 text-xs sm:h-8 sm:min-h-0"
         value={contactRepId ?? ""}
         onChange={(e) => {
           const v = e.currentTarget.value;
@@ -83,7 +83,7 @@ function LenderRepSelect({
         aria-label="Lender representative"
         data-testid="lender-rep-select"
       >
-        <option value="">â€” None â€”</option>
+        <option value="">— None —</option>
         {(reps ?? [])
           .filter((r) => r.contact)
           .map((r) => (
@@ -166,7 +166,7 @@ function LenderGuidelinesInline({ lenderId }: { lenderId: Id<"lenders"> }) {
     <div>
       <button
         type="button"
-        className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+        className="inline-flex min-h-[40px] items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground sm:min-h-0"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         data-testid="lender-guidelines-toggle"
@@ -180,16 +180,16 @@ function LenderGuidelinesInline({ lenderId }: { lenderId: Id<"lenders"> }) {
       </button>
       {open ? (
         attachments === undefined ? (
-          <p className="mt-1 text-xs text-muted-foreground" role="status">
-            Loadingâ€¦
+          <p className="mt-0.5 text-xs text-muted-foreground" role="status">
+            Loading…
           </p>
         ) : attachments.length === 0 ? (
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             No guideline documents on this lender yet. Upload them from the
             lender drawer.
           </p>
         ) : (
-          <ul className="mt-1 space-y-1">
+          <ul className="mt-0.5 space-y-0.5">
             {attachments.map((a) => (
               <li key={a._id}>
                 {a.url ? (
@@ -287,75 +287,151 @@ export function FileLendersBlock({
     return "border-border/60 bg-muted/10";
   };
 
-  const renderLenderDetails = (
+  const renderBoardRow = (
     l: Doc<"lenders">,
     boardRole: LenderBoardRole,
   ) => {
     const lenderLink = linkByLenderId.get(String(l._id));
     const isDeclined = lenderLink?.relationshipType === "declined";
     const declineReason = lenderLink?.rejectionReason;
+    const chosenProgram = (l.programList ?? []).find(
+      (prog) => prog.name === lenderLink?.selectedProgramName,
+    );
 
     return (
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium text-foreground">{l.company || "â€”"}</span>
-          <span
-            className={cn(
-              "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
-              boardRole === "primary"
-                ? "border border-primary/40 bg-primary/15 text-primary"
-                : boardRole === "secondary"
-                  ? "bg-muted text-muted-foreground"
-                  : "border border-dashed border-border bg-background text-muted-foreground",
-            )}
-          >
-            {roleLabel(boardRole)}
-          </span>
-          {isDeclined ? (
-            <span
-              className="inline-flex items-center rounded-full border border-destructive/40 bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive"
-              title={declineReason ? `Reason: ${declineReason}` : undefined}
-            >
-              Rejected
+      <li
+        key={l._id}
+        className={cn(
+          "rounded-dlc-sm border px-2.5 py-2",
+          rowSurface(boardRole),
+        )}
+        data-testid={`lender-board-row-${l._id}`}
+      >
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="text-sm font-medium text-foreground">
+              {l.company || "—"}
             </span>
-          ) : null}
+            <span
+              className={cn(
+                "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                boardRole === "primary"
+                  ? "border border-primary/40 bg-primary/15 text-primary"
+                  : boardRole === "secondary"
+                    ? "bg-muted text-muted-foreground"
+                    : "border border-dashed border-border bg-background text-muted-foreground",
+              )}
+            >
+              {roleLabel(boardRole)}
+            </span>
+            {isDeclined ? (
+              <span
+                className="inline-flex items-center rounded-full border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+                title={declineReason ? `Reason: ${declineReason}` : undefined}
+              >
+                Rejected
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+            {!readOnly ? (
+              <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <span className="sr-only sm:not-sr-only">Board</span>
+                <select
+                  className="h-9 min-h-[40px] max-w-[9.5rem] rounded-dlc-sm border border-border bg-background px-2 text-xs sm:h-8 sm:min-h-0"
+                  value={boardRole}
+                  disabled={settingBoardRoleId === l._id}
+                  onChange={(e) =>
+                    onSetBoardRole(
+                      l._id,
+                      e.currentTarget.value as LenderBoardRole,
+                    )
+                  }
+                  aria-label={`Board role for ${l.company || "lender"}`}
+                  data-testid={`lender-board-role-${l._id}`}
+                >
+                  {BOARD_ROLE_OPTIONS.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {isDeclined && !readOnly ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-9 min-h-[40px] shrink-0 px-2 text-xs sm:h-8 sm:min-h-0"
+                disabled={restoring === l._id}
+                onClick={() => void onRestoreLender(l._id)}
+              >
+                {restoring === l._id ? "Restoring…" : "Bring Back"}
+              </Button>
+            ) : null}
+            {!isDeclined && !readOnly ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                className="h-9 min-h-[40px] shrink-0 px-2 text-xs sm:h-8 sm:min-h-0"
+                disabled={rejecting === l._id}
+                onClick={() => onOpenRejectModal(l._id)}
+              >
+                Rejected
+              </Button>
+            ) : null}
+            {!readOnly ? (
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 min-h-[40px] min-w-[40px] items-center justify-center rounded-dlc-sm text-muted-foreground hover:bg-muted hover:text-destructive sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0"
+                disabled={removingFromFileId === l._id}
+                onClick={() => onRemoveFromFile(l._id)}
+                aria-label={`Remove ${l.company || "lender"} from file`}
+                data-testid={`lender-remove-from-file-${l._id}`}
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            ) : null}
+          </div>
         </div>
+
         {isDeclined && declineReason ? (
           <p className="mt-1 text-xs text-muted-foreground">
             <span className="font-medium text-foreground/80">Reason:</span>{" "}
             {declineReason}
           </p>
         ) : null}
+
         {(l.contactName || l.phone || l.email) && (
-          <div className="mt-1 text-sm text-muted-foreground">
+          <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5 text-xs text-muted-foreground">
             {l.contactName ? (
-              <div className="text-foreground">{l.contactName}</div>
+              <span className="font-medium text-foreground">{l.contactName}</span>
             ) : null}
-            <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-              {l.phone ? <span>{l.phone}</span> : null}
-              {l.email ? <span>{l.email}</span> : null}
-            </div>
+            {l.phone ? <span>{l.phone}</span> : null}
+            {l.email ? <span className="truncate">{l.email}</span> : null}
           </div>
         )}
 
         {!isDeclined ? (
-          <div className="mt-2 space-y-2 border-t border-border/50 pt-2">
-            <LenderRepSelect
-              lenderId={l._id}
-              contactRepId={lenderLink?.contactRepId}
-              readOnly={readOnly}
-              onSetRep={
-                onSetLenderRep
-                  ? (repId) => onSetLenderRep(l._id, repId)
-                  : undefined
-              }
-            />
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="mt-1.5 space-y-1 border-t border-border/50 pt-1.5">
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+              <LenderRepSelect
+                lenderId={l._id}
+                contactRepId={lenderLink?.contactRepId}
+                readOnly={readOnly}
+                onSetRep={
+                  onSetLenderRep
+                    ? (repId) => onSetLenderRep(l._id, repId)
+                    : undefined
+                }
+              />
               {onSetLenderRole && !readOnly ? (
-                <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                   Role
                   <select
-                    className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                    className="h-9 min-h-[40px] rounded-dlc-sm border border-border bg-background px-2 text-xs sm:h-8 sm:min-h-0"
                     value={
                       ASSIGNABLE_ROLE_OPTIONS.some(
                         (o) => o.id === lenderLink?.relationshipType,
@@ -383,10 +459,10 @@ export function FileLendersBlock({
               {onSetLenderProgram &&
               (l.programList?.length ?? 0) > 0 &&
               !readOnly ? (
-                <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                   Program
                   <select
-                    className="h-8 max-w-[14rem] rounded-md border border-border bg-background px-2 text-xs"
+                    className="h-9 min-h-[40px] max-w-[14rem] rounded-dlc-sm border border-border bg-background px-2 text-xs sm:h-8 sm:min-h-0"
                     value={lenderLink?.selectedProgramName ?? ""}
                     onChange={(e) =>
                       onSetLenderProgram(
@@ -406,36 +482,30 @@ export function FileLendersBlock({
                   </select>
                 </label>
               ) : lenderLink?.selectedProgramName ? (
-                <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                   Program: {lenderLink.selectedProgramName}
                 </span>
               ) : null}
             </div>
 
-            {(() => {
-              const chosenProgram = (l.programList ?? []).find(
-                (prog) => prog.name === lenderLink?.selectedProgramName,
-              );
-              if (!chosenProgram) return null;
-              return (
-                <div
-                  className="rounded-md bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground"
-                  data-testid="lender-program-details"
-                >
-                  <span className="font-medium text-foreground/80">
-                    {chosenProgram.name}
-                  </span>
-                  {chosenProgram.minFico ? (
-                    <span> Â· Min FICO {chosenProgram.minFico}</span>
-                  ) : null}
-                  {chosenProgram.requirements ? (
-                    <p className="mt-0.5 whitespace-pre-wrap">
-                      {chosenProgram.requirements}
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })()}
+            {chosenProgram ? (
+              <div
+                className="rounded-dlc-sm bg-muted/30 px-2 py-1 text-xs text-muted-foreground"
+                data-testid="lender-program-details"
+              >
+                <span className="font-medium text-foreground/80">
+                  {chosenProgram.name}
+                </span>
+                {chosenProgram.minFico ? (
+                  <span> · Min FICO {chosenProgram.minFico}</span>
+                ) : null}
+                {chosenProgram.requirements ? (
+                  <p className="mt-0.5 whitespace-pre-wrap">
+                    {chosenProgram.requirements}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             <LenderGuidelinesInline lenderId={l._id} />
 
@@ -446,98 +516,16 @@ export function FileLendersBlock({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-7 px-2 text-xs"
+                className="h-9 min-h-[40px] px-2 text-xs sm:h-7 sm:min-h-0"
                 onClick={() => onApplyLenderPlaybook(l._id)}
                 data-testid="lender-playbook-apply"
               >
-                Apply â€œ{lenderPlaybookNameById.get(String(l._id))}â€ task
+                Apply “{lenderPlaybookNameById.get(String(l._id))}” task
                 playbook
               </Button>
             ) : null}
           </div>
         ) : null}
-      </div>
-    );
-  };
-
-  const renderBoardRow = (
-    l: Doc<"lenders">,
-    boardRole: LenderBoardRole,
-  ) => {
-    const lenderLink = linkByLenderId.get(String(l._id));
-    const isDeclined = lenderLink?.relationshipType === "declined";
-
-    return (
-      <li
-        key={l._id}
-        className={cn(
-          "flex items-start justify-between gap-3 rounded-md border p-3",
-          rowSurface(boardRole),
-        )}
-        data-testid={`lender-board-row-${l._id}`}
-      >
-        {renderLenderDetails(l, boardRole)}
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
-          {!readOnly ? (
-            <label className="inline-flex flex-col items-end gap-1 text-xs text-muted-foreground">
-              Board role
-              <select
-                className="h-8 max-w-[10rem] rounded-md border border-border bg-background px-2 text-xs"
-                value={boardRole}
-                disabled={settingBoardRoleId === l._id}
-                onChange={(e) =>
-                  onSetBoardRole(l._id, e.currentTarget.value as LenderBoardRole)
-                }
-                aria-label={`Board role for ${l.company || "lender"}`}
-                data-testid={`lender-board-role-${l._id}`}
-              >
-                {BOARD_ROLE_OPTIONS.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <div className="flex flex-wrap items-center justify-end gap-1">
-            {isDeclined && !readOnly ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="min-h-[40px] shrink-0 sm:min-h-0"
-                disabled={restoring === l._id}
-                onClick={() => void onRestoreLender(l._id)}
-              >
-                {restoring === l._id ? "Restoringâ€¦" : "Bring Back"}
-              </Button>
-            ) : null}
-            {!isDeclined && !readOnly ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="danger"
-                className="min-h-[40px] shrink-0 sm:min-h-0"
-                disabled={rejecting === l._id}
-                onClick={() => onOpenRejectModal(l._id)}
-              >
-                Rejected
-              </Button>
-            ) : null}
-            {!readOnly ? (
-              <button
-                type="button"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
-                disabled={removingFromFileId === l._id}
-                onClick={() => onRemoveFromFile(l._id)}
-                aria-label={`Remove ${l.company || "lender"} from file`}
-                data-testid={`lender-remove-from-file-${l._id}`}
-              >
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            ) : null}
-          </div>
-        </div>
       </li>
     );
   };
@@ -551,10 +539,10 @@ export function FileLendersBlock({
     if (lenders.length === 0) return null;
     return (
       <section aria-label={title}>
-        <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           {title} ({lenders.length})
         </h4>
-        <ul className="space-y-2" data-testid={testId}>
+        <ul className="space-y-1.5" data-testid={testId}>
           {lenders.map((l) => renderBoardRow(l, role))}
         </ul>
       </section>
@@ -564,9 +552,9 @@ export function FileLendersBlock({
   const nonPrimaryCount = secondaryLenders.length + consideringLenders.length;
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-2.5">
       {lenderCount > 0 && !readOnly ? (
-        <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-1.5">
+        <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-1">
           {confirmClear ? (
             <>
               <span className="text-xs text-muted-foreground">
@@ -578,6 +566,7 @@ export function FileLendersBlock({
                 type="button"
                 size="sm"
                 variant="danger"
+                className="h-9 min-h-[40px] sm:h-8 sm:min-h-0"
                 disabled={clearing}
                 onClick={() =>
                   onClearLenders(
@@ -585,12 +574,13 @@ export function FileLendersBlock({
                   )
                 }
               >
-                {clearing ? "Clearingâ€¦" : "Confirm"}
+                {clearing ? "Clearing…" : "Confirm"}
               </Button>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
+                className="h-9 min-h-[40px] sm:h-8 sm:min-h-0"
                 onClick={() => onConfirmClearChange(null)}
               >
                 Cancel
@@ -603,6 +593,7 @@ export function FileLendersBlock({
                   type="button"
                   size="sm"
                   variant="outline"
+                  className="h-9 min-h-[40px] sm:h-8 sm:min-h-0"
                   onClick={() => onConfirmClearChange("selected")}
                   title="Remove every lender except primary"
                 >
@@ -614,7 +605,7 @@ export function FileLendersBlock({
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="text-muted-foreground hover:text-destructive"
+                className="h-9 min-h-[40px] text-muted-foreground hover:text-destructive sm:h-8 sm:min-h-0"
                 onClick={() => onConfirmClearChange("all")}
                 title="Remove every lender from this file"
               >
@@ -628,7 +619,7 @@ export function FileLendersBlock({
 
       {narrow ? (
         <div
-          className="flex rounded-xl border border-border/70 bg-muted/25 p-1"
+          className="flex rounded-dlc-md border border-border/70 bg-muted/25 p-0.5"
           role="tablist"
           aria-label="Lender workflow"
         >
@@ -637,9 +628,9 @@ export function FileLendersBlock({
             role="tab"
             aria-selected={mobileLenderPanel === "find"}
             className={cn(
-              "min-h-[44px] flex-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+              "min-h-[40px] flex-1 rounded-dlc-sm px-2 text-xs font-semibold transition-colors duration-dlc-short ease-dlc-standard",
               mobileLenderPanel === "find"
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-dlc-1"
                 : "text-muted-foreground",
             )}
             onClick={() => setMobileLenderPanel("find")}
@@ -651,9 +642,9 @@ export function FileLendersBlock({
             role="tab"
             aria-selected={mobileLenderPanel === "onFile"}
             className={cn(
-              "min-h-[44px] flex-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+              "min-h-[40px] flex-1 rounded-dlc-sm px-2 text-xs font-semibold transition-colors duration-dlc-short ease-dlc-standard",
               mobileLenderPanel === "onFile"
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-dlc-1"
                 : "text-muted-foreground",
             )}
             onClick={() => setMobileLenderPanel("onFile")}
@@ -678,16 +669,16 @@ export function FileLendersBlock({
 
       <div
         className={cn(
-          "flex min-w-0 flex-col gap-4",
+          "flex min-w-0 flex-col gap-2",
           narrow && mobileLenderPanel !== "onFile" && "hidden",
         )}
       >
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Lender board
         </h3>
 
         {lenderCount === 0 ? (
-          <p className="rounded-md border border-dashed p-3 text-center text-sm text-muted-foreground">
+          <p className="rounded-dlc-sm border border-dashed px-2.5 py-2 text-center text-xs text-muted-foreground">
             No lenders on this file yet. Search above and use + Add to File.
           </p>
         ) : (
@@ -699,7 +690,7 @@ export function FileLendersBlock({
               "lender-primary-card",
             )}
             {!primaryLender ? (
-              <p className="rounded-md border border-dashed border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
+              <p className="rounded-dlc-sm border border-dashed border-primary/30 bg-primary/5 px-2.5 py-2 text-xs text-muted-foreground">
                 No primary lender yet. Promote a lender from Considering or
                 Secondary using the board role dropdown.
               </p>

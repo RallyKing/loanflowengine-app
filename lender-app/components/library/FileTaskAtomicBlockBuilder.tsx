@@ -131,6 +131,7 @@ function SortableStagingCard({
         density="compact"
         headerLeading={dragHandle}
         headerRight={removeBtn}
+        clientAssignBlockId={false}
       >
         <p className="text-xs text-muted-foreground">
           Live preview requires an open pipeline file. Clients will see the full{" "}

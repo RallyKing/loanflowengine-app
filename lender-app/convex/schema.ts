@@ -793,6 +793,28 @@ export default defineSchema({
     .index("by_organization_updated", ["organizationId", "updatedAt"]),
 
   /**
+   * Org-scoped internal underwriting workflow checklists (Portals & Progress).
+   * Applied onto `dealData.workflow[]` — does not replace portal status steps.
+   */
+  internalWorkflowTemplates: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    steps: v.array(
+      v.object({
+        id: v.string(),
+        label: v.string(),
+      }),
+    ),
+    archivedAt: v.optional(v.number()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_updated", ["organizationId", "updatedAt"]),
+
+  /**
    * Candidate lenders surfaced by the AI Discovery feature.
    * Users review, edit and either accept (converts to a real `lenders` row)
    * or dismiss each candidate.
@@ -856,7 +878,35 @@ export default defineSchema({
     contentType: v.optional(v.string()),
     size: v.optional(v.number()),
     label: v.optional(v.string()),
+    /** Free-form notation on the document. */
+    notes: v.optional(v.string()),
+    /** Optional folder/group label for organizing docs in the lender profile. */
+    groupName: v.optional(v.string()),
+    /** Preview zoom preference (0.5–2). Viewer UX only. */
+    previewScale: v.optional(v.number()),
     createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_lender", ["lenderId"])
+    .index("by_organization", ["organizationId"])
+    .index("by_lender_group", ["lenderId", "groupName"]),
+
+  /**
+   * Partner-portal login vault for a lender (URL + username/password).
+   * Password/username sealed via AES-GCM when `CLIENT_PORTAL_FIELD_ENCRYPTION_KEY`
+   * is set; otherwise stored under org-auth-only Convex access (never logged).
+   */
+  lenderPortalCredentials: defineTable({
+    lenderId: v.id("lenders"),
+    organizationId: v.id("organizations"),
+    portalUrl: v.optional(v.string()),
+    /** Sealed or org-gated username. */
+    usernameEnc: v.optional(v.string()),
+    /** Sealed or org-gated password — never returned unless revealPassword=true. */
+    passwordEnc: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    updatedAt: v.number(),
+    updatedByUserKey: v.optional(v.string()),
   })
     .index("by_lender", ["lenderId"])
     .index("by_organization", ["organizationId"]),
@@ -2495,6 +2545,13 @@ export default defineSchema({
     lastInteractionAt: v.optional(v.number()),
     crmTags: v.optional(v.array(v.string())),
 
+    /**
+     * Org portal default templates assigned to this contact (additive).
+     * At most one id per portal type is enforced in mutations; Portals & Progress
+     * resolves these when the contact is linked to a pipeline file.
+     */
+    portalDefaultIds: v.optional(v.array(v.id("portalDefaults"))),
+
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2848,6 +2905,20 @@ export default defineSchema({
     clientInstructionText: v.optional(v.string()),
     /** External URL for client_instruction tasks (payment portal, etc.). */
     instructionUrl: v.optional(v.string()),
+    /**
+     * Broker-attached template / reference files for client-visible requests
+     * (document_upload / client_instruction). Stored in Convex `_storage`.
+     */
+    clientTemplateAttachments: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          fileName: v.string(),
+          mimeType: v.string(),
+          size: v.number(),
+        }),
+      ),
+    ),
     assignedContactId: v.optional(v.id("contacts")),
     assignedClientId: v.optional(v.id("clients")),
     assignedLenderId: v.optional(v.id("lenders")),
@@ -2912,6 +2983,21 @@ export default defineSchema({
     ),
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
+    /**
+     * Broker-attached template / reference files for client-visible request
+     * templates (document_upload / client_instruction). Carried onto live
+     * `documentVaultFileTasks` when the template is applied.
+     */
+    clientTemplateAttachments: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          fileName: v.string(),
+          mimeType: v.string(),
+          size: v.number(),
+        }),
+      ),
+    ),
     assignedBlockEntries: v.optional(
       v.array(
         v.object({
@@ -2963,6 +3049,144 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_org_kind", ["organizationId", "kind"]),
+
+  /**
+   * Org-scoped portal default templates (Settings → Portal defaults).
+   * Contact assignment via `contacts.portalDefaultIds`; file surface via
+   * `contactFileLinks` → Portals & Progress. Does not replace live
+   * `clientPortalLinks` / grants / lender delivery tokens.
+   * Page composition: `config.sections` promoted from `portalDefaultVersions`.
+   */
+  portalDefaults: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    portalType: v.union(
+      v.literal("client"),
+      v.literal("lender"),
+      v.literal("referrer"),
+      v.literal("deal_partner"),
+    ),
+    config: v.object({
+      welcomeMessage: v.optional(v.string()),
+      permission: v.optional(
+        v.union(v.literal("view"), v.literal("view_upload")),
+      ),
+      linkExpiresPreset: v.optional(
+        v.union(
+          v.literal("1h"),
+          v.literal("24h"),
+          v.literal("7d"),
+          v.literal("30d"),
+        ),
+      ),
+      grantExpiresPreset: v.optional(
+        v.union(
+          v.literal("never"),
+          v.literal("30d"),
+          v.literal("90d"),
+        ),
+      ),
+      checklistId: v.optional(v.string()),
+      requestChecklist: v.optional(
+        v.array(
+          v.object({
+            title: v.string(),
+            description: v.optional(v.string()),
+            folderName: v.optional(v.string()),
+          }),
+        ),
+      ),
+      lenderPermission: v.optional(
+        v.union(v.literal("view_only"), v.literal("downloadable")),
+      ),
+      includeAllDocumentsByDefault: v.optional(v.boolean()),
+      showDealSummary: v.optional(v.boolean()),
+      allowMessaging: v.optional(v.boolean()),
+      statusVisibility: v.optional(
+        v.union(v.literal("basic"), v.literal("detailed")),
+      ),
+      sections: v.optional(
+        v.array(
+          v.object({
+            instanceId: v.string(),
+            sectionId: v.string(),
+            enabled: v.optional(v.boolean()),
+            /** Sanitized in portalDefaults / lib/portalSectionConfig. */
+            props: v.optional(v.any()),
+            layout: v.optional(
+              v.object({
+                colSpan: v.optional(v.number()),
+                order: v.optional(v.number()),
+              }),
+            ),
+          }),
+        ),
+      ),
+      chrome: v.optional(v.any()),
+    }),
+    /** Version currently promoted into `config.sections` (live default). */
+    activeVersionId: v.optional(v.id("portalDefaultVersions")),
+    archivedAt: v.optional(v.number()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization_updated", ["organizationId", "updatedAt"])
+    .index("by_organization_type", ["organizationId", "portalType", "updatedAt"]),
+
+  /**
+   * Draft / published page compositions under a portal default.
+   * Promote copies `sections` (+ chrome) onto the parent `portalDefaults.config`.
+   */
+  portalDefaultVersions: defineTable({
+    organizationId: v.id("organizations"),
+    portalDefaultId: v.id("portalDefaults"),
+    name: v.string(),
+    sections: v.array(
+      v.object({
+        instanceId: v.string(),
+        sectionId: v.string(),
+        enabled: v.optional(v.boolean()),
+        /** Sanitized in portalDefaults / lib/portalSectionConfig. */
+        props: v.optional(v.any()),
+        layout: v.optional(
+          v.object({
+            colSpan: v.optional(v.number()),
+            order: v.optional(v.number()),
+          }),
+        ),
+      }),
+    ),
+    /** Sidebar / top / layout chrome for this version. */
+    chrome: v.optional(v.any()),
+    status: v.union(v.literal("draft"), v.literal("published")),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_portal_default", ["portalDefaultId", "updatedAt"])
+    .index("by_organization", ["organizationId", "updatedAt"]),
+
+  /**
+   * Portal viewer progress on custom status-bar checklist steps.
+   * Stable `stepId` + completion timestamps enable future automations.
+   */
+  portalSectionStepProgress: defineTable({
+    organizationId: v.id("organizations"),
+    pipelineFileId: v.id("pipeline"),
+    portalDefaultId: v.optional(v.id("portalDefaults")),
+    sectionInstanceId: v.string(),
+    stepId: v.string(),
+    completedAt: v.number(),
+    /** emailKey, session subject, or "__preview__" for builder. */
+    completedByKey: v.string(),
+    /** Last event type written (stable for automation subscribers). */
+    eventType: v.literal("portal.status_step.completed"),
+  })
+    .index("by_file_section", ["pipelineFileId", "sectionInstanceId"])
+    .index("by_file_step", ["pipelineFileId", "stepId"])
+    .index("by_organization", ["organizationId", "completedAt"]),
 
   documentVaultClientBundleTokens: defineTable({
     pipelineFileId: v.id("pipeline"),
@@ -3019,10 +3243,17 @@ export default defineSchema({
         v.literal("lender_delivery"),
         v.literal("task_upload"),
         v.literal("portal_grant"),
+        /** Selective client portal link scoped to one block_assignment file task. */
+        v.literal("block_fill"),
       ),
     ),
     /** True when the live URL still uses `/lender-delivery/{token}` instead of slug URLs. */
     legacyPath: v.optional(v.boolean()),
+    /**
+     * Last issued absolute URL (token plaintext only stored here for operator copy).
+     * Rotates on regenerate; never exposed on public portal queries.
+     */
+    issuedUrl: v.optional(v.string()),
     requiresVerification: v.optional(v.boolean()),
     verificationType: v.optional(
       v.union(v.literal("passcode"), v.literal("email_otp")),
@@ -4869,6 +5100,8 @@ export default defineSchema({
     ),
     publishedAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
+    /** Optional Vercel deployment id (e.g. dpl_…) for ship traceability. */
+    deploymentId: v.optional(v.string()),
     visibility: v.optional(
       v.object({
         orgPlans: v.optional(

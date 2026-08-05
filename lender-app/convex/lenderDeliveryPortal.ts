@@ -392,7 +392,14 @@ export const getDeliveryDocumentUrl = query({
       return { status: auth.reason } as const;
     }
     const row = auth.row;
-    if (!row.includedDocumentIds.some((id) => String(id) === String(documentId))) {
+    const allowed = await resolveIncludedDocuments(
+      ctx,
+      row.pipelineFileId,
+      row.includedDocumentIds,
+      row.includedFolderIds,
+      row.includedFileTaskIds,
+    );
+    if (!allowed.some((id) => String(id) === String(documentId))) {
       return { status: "not_found" as const };
     }
 
@@ -482,6 +489,7 @@ export const issueDeliveryToken = mutation({
       expiresAt,
       createdByUserKey: key,
       createdAt: now,
+      issuedUrl: buildClientPortalUrl(companySlug, plainToken),
     });
 
     const deliveryUrl = buildClientPortalUrl(companySlug, plainToken);

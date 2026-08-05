@@ -190,7 +190,7 @@ export const PIPELINE_BLOCKS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        rows: { type: "integer", default: 4, minimum: 2, maximum: 24 },
+        rows: { type: "integer", default: 2, minimum: 2, maximum: 24 },
       },
     },
   },
@@ -413,7 +413,7 @@ export const PIPELINE_BLOCKS = [
     name: "Personal financial statement",
     label: "Personal financial statement",
     description:
-      "Spreadsheet-style assets/liabilities grid over the borrower's sticky financial profile, with computed net worth.",
+      "SBA-style personal financial statement (assets, liabilities, schedules, net worth) matching the standard PFS spreadsheet.",
     category: "deal",
     parentTab: "financials",
     isDefault: false,
@@ -421,7 +421,14 @@ export const PIPELINE_BLOCKS = [
     componentReference: "components/pipeline/blocks/PfsBlock.tsx",
     component: null,
     uiSurface: "drawer",
-    discoveryTags: ["pfs", "net worth", "assets", "liabilities"],
+    discoveryTags: [
+      "pfs",
+      "personal financial statement",
+      "net worth",
+      "assets",
+      "liabilities",
+      "guarantor",
+    ],
     settingsSchema: null,
   },
 ] as const satisfies readonly PipelineBlockDefinition[];

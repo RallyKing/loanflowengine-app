@@ -10,6 +10,7 @@ import {
   normalizeToAtomicBlockIds,
   type AtomicPortalBlockId,
 } from "../lib/atomicPortalBlockRegistry";
+import { buildPfsDealPatchFromPortalSubmission } from "../lib/pfs/personalFinancialStatementModel";
 import { SECTION_KEYS } from "./shareSections";
 
 type SubmissionValues = Record<string, unknown>;
@@ -351,23 +352,12 @@ async function hydratePfsStatementBlock(
   values: SubmissionValues,
 ): Promise<void> {
   const deal = await resolveDealBaseForPipelinePatch(ctx, file);
-  const prior = asRecord(deal.pfs);
-  const patch = pickKeys(values, [
-    "notes",
-    "clientPortalNotes",
-    "totalAssets",
-    "totalLiabilities",
-    "netWorth",
-    "liquidAssets",
-    "annualIncome",
-  ]);
-  const assetPatch = pickKeys(values, ["assets", "liabilities"]);
-  const merged: Record<string, unknown> = { ...prior, ...patch };
-  if (Object.keys(assetPatch).length > 0) {
-    Object.assign(merged, assetPatch);
-  }
-  if (Object.keys(merged).length === 0) return;
-  await patchPipelineDealData(ctx, file, { pfs: merged });
+  // Merge structured `values.pfs` (header phones, city/state/zip, schedules…)
+  // into dealData.pfs. Prior bug ignored `pfs` and nested legacy row arrays
+  // under the statement document, so residence/business phone never synced.
+  const dealPatch = buildPfsDealPatchFromPortalSubmission(deal.pfs, values);
+  if (!dealPatch) return;
+  await patchPipelineDealData(ctx, file, dealPatch);
 }
 
 /**

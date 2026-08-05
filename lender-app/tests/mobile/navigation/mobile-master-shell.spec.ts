@@ -60,13 +60,15 @@ test.describe("Navigation — SaaS mobile master shell (11.8.1)", () => {
 
     const header = page.getByTestId("app-masterpage-chrome");
     await expect(header).toBeVisible({ timeout: 30_000 });
-    const headerHeight = await header.evaluate((el) => {
+    // Content row only — exclude iOS safe-area padding (status bar / notch).
+    const headerContentHeight = await header.evaluate((el) => {
       const r = el.getBoundingClientRect();
-      return r.height;
+      const padTop = Number.parseFloat(getComputedStyle(el).paddingTop) || 0;
+      return r.height - padTop;
     });
     expect(
-      headerHeight,
-      "master header height clamp (single row)",
+      headerContentHeight,
+      "master header content-row height clamp (single row)",
     ).toBeLessThanOrEqual(58);
 
     await menuBtn.click();
@@ -74,7 +76,38 @@ test.describe("Navigation — SaaS mobile master shell (11.8.1)", () => {
       name: "Primary navigation",
     });
     await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveAttribute("data-saas-mobile-drawer", "open");
     await expect(drawer.getByRole("link", { name: "Tasks", exact: true })).toBeVisible();
+
+    // Brand header must clear status bar; green column paints full viewport height.
+    const drawerMetrics = await drawer.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const header = el.querySelector(":scope > div");
+      const headerPad =
+        header instanceof HTMLElement
+          ? Number.parseFloat(getComputedStyle(header).paddingTop) || 0
+          : 0;
+      const r = el.getBoundingClientRect();
+      return {
+        top: r.top,
+        bottom: r.bottom,
+        height: r.height,
+        vh: window.innerHeight,
+        headerPadTop: headerPad,
+        zIndex: Number.parseInt(style.zIndex, 10) || 0,
+      };
+    });
+    expect(drawerMetrics.top).toBeLessThanOrEqual(1);
+    expect(Math.abs(drawerMetrics.height - drawerMetrics.vh)).toBeLessThanOrEqual(2);
+    expect(drawerMetrics.zIndex).toBeGreaterThanOrEqual(50);
+
+    const bottomNav = page.locator(
+      'nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"]',
+    );
+    if (await bottomNav.count()) {
+      await expect(bottomNav).toHaveAttribute("data-saas-menu-covered", "true");
+      await expect(bottomNav).toHaveAttribute("aria-hidden", "true");
+    }
 
     await page.keyboard.press("Escape");
     await expect(menuBtn).toHaveAttribute("aria-expanded", "false");

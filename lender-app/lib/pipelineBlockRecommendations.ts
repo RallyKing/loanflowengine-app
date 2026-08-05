@@ -151,6 +151,16 @@ export function computeRuleBasedDrawerBlockSuggestions(args: {
     );
   }
 
+  if (cand.has("pfs")) {
+    pushSuggestion(
+      out,
+      seen,
+      "pfs",
+      "Personal financial statement is available on every file — add it for guarantor / borrower net worth.",
+      "rules",
+    );
+  }
+
   if (cand.has("scenarioMatch") && args.lenderCount >= 2) {
     pushSuggestion(
       out,

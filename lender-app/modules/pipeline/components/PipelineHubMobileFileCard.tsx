@@ -75,6 +75,7 @@ export function PipelineHubMobileFileCard({
         archived && "opacity-65",
         selected &&
           "ring-2 ring-brand-accent/40 ring-offset-2 ring-offset-background",
+        fileHighlight && "md:pr-28",
       )}
       badgeClassName="top-2 right-2"
     >
@@ -97,7 +98,7 @@ export function PipelineHubMobileFileCard({
           </div>
           <Link
             href={pipelineDealEditorHref(r._id)}
-            className="min-w-0 flex-1 text-left"
+            className="min-w-0 w-full flex-1 text-left"
             onClick={onOpen}
             aria-label={`Open file ${r.fileName}`}
             prefetch={false}

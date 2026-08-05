@@ -74,14 +74,14 @@ export function ChangeFileProjectControl({
 
   return (
     <div
-      className="rounded-md border border-border/70 bg-muted/20 p-2"
+      className="w-full min-w-0 rounded-dlc-md border border-border/70 bg-muted/20 p-2"
       data-testid="change-file-project"
     >
       <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         Project assignment
       </p>
       <select
-        className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+        className="h-9 w-full min-w-0 rounded-dlc-md border border-border bg-background px-2 text-sm max-md:min-h-11"
         value={selectedProjectId}
         onChange={(e) => setSelectedProjectId(e.target.value)}
         disabled={busy}

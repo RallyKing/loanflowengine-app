@@ -342,6 +342,23 @@ export function scrollTargetForDrawerBlock(
   );
 }
 
+/**
+ * CollapsibleBlock `id` / FloatingBlockWindow detach key for a pipeline drawer
+ * block. Favorites and “Open in window” must use the same key so WiW state
+ * stays shared across tabs.
+ */
+export function floatingBlockKeyForPipelineBlock(
+  sid: PipelineDrawerSectionId,
+): string | null {
+  return (
+    settingsAnchorForDrawerBlock(sid) ??
+    overviewAnchorForDrawerBlock(sid) ??
+    dealInfoAnchorForDrawerBlock(sid) ??
+    dealWorkspaceAnchorForDrawerBlock(sid) ??
+    null
+  );
+}
+
 /** Scroll target when a deal tab is migrated to the Deal Info file tab. */
 export function scrollTargetForDealTab(
   tabId: DealTabId,

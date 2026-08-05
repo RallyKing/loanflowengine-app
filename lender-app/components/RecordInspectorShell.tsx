@@ -223,7 +223,7 @@ export function RecordInspectorShell({
     >
       <div
         className={cn(
-          "min-h-0 flex-1 bg-dlc-scrim backdrop-blur-sm",
+          "min-h-0 flex-1 bg-dlc-scrim",
           scrimCloseEnabled ? "cursor-pointer" : "cursor-default",
         )}
         onClick={() => {

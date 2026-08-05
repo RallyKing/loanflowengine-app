@@ -10,6 +10,7 @@ import {
 } from "./pipelineBlockRegistry";
 import {
   DEFAULT_PIPELINE_DRAWER_ORDER,
+  OPTIONAL_PIPELINE_DRAWER_BLOCK_IDS,
   normalizePipelineDrawerLayout,
   type PipelineDrawerLayoutV1,
 } from "./pipelineDrawerLayoutStorage";
@@ -461,13 +462,19 @@ export function applyPipelineFileTemplatePayloadToLayout(
     visible.add(id);
   }
 
-  /** Full drawer order (visible + hidden); `hidden` marks blocks not in `includedBlocks`. */
+  /**
+   * Full drawer order (visible + hidden). Include optional registry blocks so
+   * `normalizePipelineDrawerLayout` does not force-hide ones listed in
+   * `includedBlocks` (older bug: optionals missing from `blockOrder` were always
+   * appended as hidden, so PFS never appeared even when the template included it).
+   */
   const order = mergeBlockOrder(
     [...template.blockOrder],
-    [...DEFAULT_PIPELINE_DRAWER_ORDER],
+    [...DEFAULT_PIPELINE_DRAWER_ORDER, ...OPTIONAL_PIPELINE_DRAWER_BLOCK_IDS],
   );
 
-  const hidden = DEFAULT_PIPELINE_DRAWER_ORDER.filter((id) => !visible.has(id));
+  /** Hide every registry block not in the template (or effective mandatory) set. */
+  const hidden = PIPELINE_BLOCK_IDS.filter((id) => !visible.has(id));
 
   let settingsOut: PipelineDrawerLayoutV1["settings"] = undefined;
   if (base.settings && Object.keys(base.settings).length > 0) {

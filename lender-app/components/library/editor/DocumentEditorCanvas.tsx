@@ -93,6 +93,7 @@ export type DocumentEditorCanvasProps = {
   onClosePreview?: () => void;
   onToggleFullscreen?: () => void;
   previewFullscreen?: boolean;
+  onOpenInWindow?: () => void;
   onOpenProperties?: () => void;
   /** When set, manipulation + editor action chrome portals here (modal toolbar slot). */
   toolbarSlot?: HTMLElement | null;
@@ -198,6 +199,7 @@ export function DocumentEditorCanvas({
   onClosePreview,
   onToggleFullscreen,
   previewFullscreen,
+  onOpenInWindow,
   onOpenProperties,
   toolbarSlot = null,
 }: DocumentEditorCanvasProps) {
@@ -666,6 +668,7 @@ export function DocumentEditorCanvas({
       onClosePreview={onClosePreview}
       onToggleFullscreen={onToggleFullscreen}
       previewFullscreen={previewFullscreen}
+      onOpenInWindow={onOpenInWindow}
       onOpenProperties={onOpenProperties}
       fileName={fileName}
       onCancelEditMode={onCancelEditMode}

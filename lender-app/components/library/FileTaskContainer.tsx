@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Circle,
   Clock,
+  Copy,
   Eye,
   EyeOff,
   FolderPlus,
@@ -93,6 +94,9 @@ export type FileTaskContainerProps = {
   onOpenExecution?: () => void;
   onOpenFullscreen?: () => void;
   onOpenConfig?: () => void;
+  /** Move / copy this task (and its docs/folders) to a sibling project file. */
+  onMoveCopyToFile?: () => void;
+  crossFileTransferEnabled?: boolean;
   pipelineFileId?: Id<"pipeline">;
   organizationId?: Id<"organizations">;
   onNewFolder?: () => void;
@@ -170,6 +174,8 @@ export function FileTaskContainer({
   onOpenExecution,
   onOpenFullscreen,
   onOpenConfig,
+  onMoveCopyToFile,
+  crossFileTransferEnabled = false,
   pipelineFileId: _pipelineFileId,
   organizationId,
   onNewFolder,
@@ -432,7 +438,7 @@ export function FileTaskContainer({
     <li
       ref={setSortRef}
       style={sortStyle}
-      className={cn("mb-5 min-w-0 list-none last:mb-0", isDragging && "opacity-60")}
+      className={cn("min-w-0 list-none", isDragging && "opacity-60")}
       data-testid={`file-task-container-${fileTask._id}`}
     >
       <div
@@ -444,7 +450,7 @@ export function FileTaskContainer({
           osDragOver && expanded && "ring-1 ring-inset ring-emerald-500/30",
         )}
       >
-        <div className="px-3 py-2">
+        <div className="px-2.5 py-1.5">
           <div className="flex min-w-0 items-center gap-1">
             <button
               type="button"
@@ -570,7 +576,7 @@ export function FileTaskContainer({
           </div>
 
           {(canMutate || canManageLifecycle) ? (
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 pl-[calc(1rem+1.25rem)]">
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 pl-[calc(1rem+1.25rem)]">
               {canMutate ? (
                 <>
               {onToggleRequired ? (
@@ -630,6 +636,14 @@ export function FileTaskContainer({
                 icon={Pencil}
                 onClick={() => onOpenConfig?.()}
               />
+              {crossFileTransferEnabled && onMoveCopyToFile ? (
+                <MicroAction
+                  label="Move / copy"
+                  icon={Copy}
+                  onClick={onMoveCopyToFile}
+                  title="Move or copy this task to another loan file"
+                />
+              ) : null}
               {isBlockAssignment && onOpenFullscreen ? (
                 <MicroAction
                   label="Fullscreen"
@@ -744,7 +758,7 @@ export function FileTaskContainer({
             <div className="min-w-0">{children}</div>
 
             {canMutate ? (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/30 px-3 pt-1.5 pb-3">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/30 px-2 pt-1 pb-1.5">
                 <input
                   ref={uploadInputRef}
                   type="file"

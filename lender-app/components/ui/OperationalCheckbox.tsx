@@ -1,6 +1,6 @@
 "use client";
 
-import type { InputHTMLAttributes } from "react";
+import { forwardRef, type InputHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 import {
   OP_MICRO_CONTROL_CLASS,
@@ -18,13 +18,13 @@ type OperationalCheckboxProps = Omit<
 /**
  * Touch-safe checkbox — visual control + expanded hit area.
  */
-export function OperationalCheckbox({
-  className,
-  bare = false,
-  ...props
-}: OperationalCheckboxProps) {
+export const OperationalCheckbox = forwardRef<
+  HTMLInputElement,
+  OperationalCheckboxProps
+>(function OperationalCheckbox({ className, bare = false, ...props }, ref) {
   const input = (
     <input
+      ref={ref}
       type="checkbox"
       className={cn(OP_MICRO_CONTROL_CLASS, className)}
       {...props}
@@ -32,4 +32,4 @@ export function OperationalCheckbox({
   );
   if (bare) return input;
   return <span className={OP_MICRO_CONTROL_WRAP_CLASS}>{input}</span>;
-}
+});

@@ -122,6 +122,23 @@ export const getPortalByToken = query({
       pipeline.propertyAddress?.trim() ||
       "Loan file";
 
+    const clientTemplates: Array<{
+      fileName: string;
+      mimeType: string;
+      size: number;
+      url: string;
+    }> = [];
+    for (const att of task.clientTemplateAttachments ?? []) {
+      const url = await ctx.storage.getUrl(att.storageId);
+      if (!url) continue;
+      clientTemplates.push({
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        size: att.size,
+        url,
+      });
+    }
+
     return {
       status: "ok" as const,
       taskTitle: task.title,
@@ -130,6 +147,8 @@ export const getPortalByToken = query({
       workspaceName,
       pipelineFileId: task.pipelineFileId,
       fileTaskId: task._id,
+      clientTemplates:
+        clientTemplates.length > 0 ? clientTemplates : undefined,
     };
   },
 });
@@ -173,6 +192,8 @@ export const issueUploadToken = mutation({
       uploadCount: 0,
     });
 
+    const uploadUrl = `${portalOrigin()}/upload/${encodeURIComponent(plainToken)}`;
+
     await registerTaskUploadPortalLink(ctx, {
       pipelineFileId: task.pipelineFileId,
       organizationId: pipeline.organizationId,
@@ -183,9 +204,9 @@ export const issueUploadToken = mutation({
       expiresAt,
       createdByUserKey: key,
       createdAt: now,
+      issuedUrl: uploadUrl,
     });
 
-    const uploadUrl = `${portalOrigin()}/upload/${encodeURIComponent(plainToken)}`;
     return {
       ok: true as const,
       uploadUrl,

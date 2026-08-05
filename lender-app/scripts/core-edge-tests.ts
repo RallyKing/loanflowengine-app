@@ -40,8 +40,10 @@ import { mergeIntakeDraftWithServer } from "../lib/share/mergeIntakeDraftWithSer
 import { embeddedDealPayloadIsSubstantive } from "../lib/file/embeddedDealPresence";
 import {
   buildVaultDocumentZipPath,
+  buildVaultFolderSubtreeZipPath,
   sanitizeZipPathSegment,
 } from "../lib/library/vaultZipPaths";
+import { dedupeZipPath } from "../lib/library/downloadVaultDocumentsZip";
 import JSZip from "jszip";
 import { isDealBackedPipelineRow } from "../lib/pipeline/dealBackedRow";
 import {
@@ -51,7 +53,16 @@ import {
 import { buildSubjectAddressDisplay } from "../lib/pipeline/subjectAddressDisplay";
 import { resolvePipelineTableFundingAmount } from "../lib/pipeline/resolvePipelineTableFundingAmount";
 import { convexHttpActionsBaseUrl, parseConvexPublicUrl } from "../lib/convexPublicUrl";
-import { normalizeFileSharedStateFromPipeline } from "../lib/fileSharedFields";
+import {
+  materializeFileSharedStateOnPatch,
+  normalizeFileSharedStateFromPipeline,
+} from "../lib/fileSharedFields";
+import {
+  isTermOptionsOnlyPipelinePatch,
+  patchWithConflictRetry,
+} from "../modules/pipeline/lib/core/patchWithConflictRetry";
+import { convexClientErrorMessage } from "../lib/ui/convexErrorMessage";
+import { revenueTotalsFromPipelineRow } from "../lib/fileRevenue";
 import {
   getActivePipelineBlockIdsForFile,
   sanitizeActivePipelineBlockIdsForRender,
@@ -900,6 +911,207 @@ test("normalizeFileSharedState: sparse pipeline-like row (multiple data states)"
   assert.equal(c.updatedAt, 400);
 });
 
+test("normalizeFileSharedState: heals bus stuck at 0 when top-level mirror is set", () => {
+  const healed = normalizeFileSharedStateFromPipeline({
+    fundingAmount: 7_500_000,
+    rate: 7.25,
+    term: "30 yr fixed",
+    notes: "note",
+    commission: 12_000,
+    netRevenue: 9_500,
+    updatedAt: 100,
+    fileSharedState: {
+      fundingAmount: 0,
+      interestRate: 0,
+      term: "",
+      notes: "",
+      commission: 0,
+      netRevenue: 0,
+      updatedAt: 50,
+    },
+  });
+  assert.equal(healed.fundingAmount, 7_500_000);
+  assert.equal(healed.interestRate, 7.25);
+  assert.equal(healed.term, "30 yr fixed");
+  assert.equal(healed.notes, "note");
+  assert.equal(healed.commission, 12_000);
+  assert.equal(healed.netRevenue, 9_500);
+});
+
+test("materializeFileSharedStateOnPatch: in-flight top-level mirrors beat stale bus", () => {
+  const existingBus = {
+    fundingAmount: 0,
+    interestRate: 0,
+    term: "",
+    notes: "",
+    commission: 0,
+    netRevenue: 0,
+    updatedAt: 10,
+  };
+  const patch: {
+    fundingAmount?: number;
+    rate?: number;
+    commission?: number;
+    netRevenue?: number;
+    term?: string;
+    fileSharedState?: {
+      fundingAmount?: number;
+      interestRate?: number;
+      term?: string;
+      notes?: string;
+      commission?: number;
+      netRevenue?: number;
+      updatedAt: number;
+    };
+  } = {
+    fundingAmount: 7_500_000,
+    rate: 7.25,
+    commission: 12_000,
+    netRevenue: 9_500,
+    term: "30 yr fixed",
+  };
+  const merged = {
+    fundingAmount: patch.fundingAmount,
+    rate: patch.rate!,
+    term: patch.term!,
+    notes: "",
+    commission: patch.commission,
+    netRevenue: patch.netRevenue,
+    updatedAt: 99,
+    fileSharedState: existingBus,
+  };
+  materializeFileSharedStateOnPatch(patch, merged, 500);
+  assert.ok(patch.fileSharedState);
+  assert.equal(patch.fileSharedState!.fundingAmount, 7_500_000);
+  assert.equal(patch.fileSharedState!.interestRate, 7.25);
+  assert.equal(patch.fileSharedState!.commission, 12_000);
+  assert.equal(patch.fileSharedState!.netRevenue, 9_500);
+  assert.equal(patch.fileSharedState!.term, "30 yr fixed");
+  assert.equal(patch.fileSharedState!.updatedAt, 500);
+
+  const revenue = revenueTotalsFromPipelineRow({
+    ...merged,
+    fileSharedState: patch.fileSharedState,
+  });
+  assert.equal(revenue.fundingAmount, 7_500_000);
+  assert.equal(revenue.commission, 12_000);
+  assert.equal(revenue.netRevenue, 9_500);
+});
+
+test("patchWithConflictRetry: retries once without expectedUpdatedAt", async () => {
+  let calls = 0;
+  const result = await patchWithConflictRetry(
+    { id: "p1", term: "30", expectedUpdatedAt: 100 },
+    async (args) => {
+      calls += 1;
+      if (calls === 1) {
+        assert.equal(args.expectedUpdatedAt, 100);
+        throw new Error(
+          "[CONVEX M(pipeline:patch)] [Request ID: 7bfb56523352ca45] Server Error\nUncaught Error: CONFLICT_DATA_CHANGED\n",
+        );
+      }
+      assert.equal(args.expectedUpdatedAt, undefined);
+      assert.equal(args.term, "30");
+      return { ok: true as const };
+    },
+  );
+  assert.equal(calls, 2);
+  assert.equal(result.ok, true);
+});
+
+test("patchWithConflictRetry: does not retry non-conflict errors", async () => {
+  await assert.rejects(
+    () =>
+      patchWithConflictRetry({ id: "p1", expectedUpdatedAt: 1 }, async () => {
+        throw new Error("fundingAmount must be a non-negative number");
+      }),
+    /fundingAmount must be a non-negative number/,
+  );
+});
+
+test("isTermOptionsOnlyPipelinePatch", () => {
+  assert.equal(
+    isTermOptionsOnlyPipelinePatch({
+      id: "x",
+      termOptions: [],
+      preferencesAccountId: "a",
+    }),
+    true,
+  );
+  assert.equal(
+    isTermOptionsOnlyPipelinePatch({ id: "x", term: "30", termOptions: [] }),
+    false,
+  );
+});
+
+test("convexClientErrorMessage: extracts CONFLICT_DATA_CHANGED", () => {
+  const msg = convexClientErrorMessage(
+    new Error(
+      "[CONVEX M(pipeline:patch)] [Request ID: 7bfb56523352ca45] Server Error\nUncaught Error: CONFLICT_DATA_CHANGED\nCalled by client",
+    ),
+  );
+  assert.match(msg, /updated elsewhere/i);
+});
+
+test("convexClientErrorMessage: extracts ArgumentValidationError", () => {
+  const msg = convexClientErrorMessage(
+    new Error(
+      "[CONVEX M(pipeline:remove)] [Request ID: abc] Server Error\nArgumentValidationError: Object contains extra field `memberUserKey` that is not in the validator.\nCalled by client",
+    ),
+  );
+  assert.match(msg, /memberUserKey/i);
+  assert.doesNotMatch(msg, /Couldn't save/i);
+});
+
+test("convexClientErrorMessage: extracts ownership delete denial", () => {
+  const msg = convexClientErrorMessage(
+    new Error(
+      "[CONVEX M(pipeline:remove)] [Request ID: abc] Server Error\nUncaught Error: Only the file owner can delete this file.\nCalled by client",
+    ),
+  );
+  assert.match(msg, /Only the file owner/i);
+});
+
+test("materializeFileSharedStateOnPatch: preserves untouched bus fields", () => {
+  const patch: {
+    rate?: number;
+    fileSharedState?: {
+      fundingAmount?: number;
+      interestRate?: number;
+      term?: string;
+      notes?: string;
+      commission?: number;
+      netRevenue?: number;
+      updatedAt: number;
+    };
+  } = { rate: 6.5 };
+  materializeFileSharedStateOnPatch(
+    patch,
+    {
+      fundingAmount: 100_000,
+      rate: 6.5,
+      term: "15 yr",
+      notes: "keep",
+      commission: 1_000,
+      netRevenue: 800,
+      updatedAt: 20,
+      fileSharedState: {
+        fundingAmount: 250_000,
+        interestRate: 0,
+        term: "15 yr",
+        notes: "keep",
+        commission: 1_000,
+        netRevenue: 800,
+        updatedAt: 15,
+      },
+    },
+    30,
+  );
+  assert.equal(patch.fileSharedState!.interestRate, 6.5);
+  assert.equal(patch.fileSharedState!.fundingAmount, 250_000);
+  assert.equal(patch.fileSharedState!.commission, 1_000);
+});
+
 // ---------- Customization system (preferences, block template, sync flags) ----------
 
 const MIN_NEW_FILE_PIPELINE_BODY = {
@@ -1347,6 +1559,44 @@ console.log("vault zip path hierarchy");
   );
   assert.equal(path, "Tax Returns/2024/W-2s/john-w2.pdf");
   assert.equal(sanitizeZipPathSegment('bad/name'), "bad_name");
+
+  assert.equal(
+    buildVaultFolderSubtreeZipPath(
+      folders as Parameters<typeof buildVaultFolderSubtreeZipPath>[0],
+      "f1" as Parameters<typeof buildVaultFolderSubtreeZipPath>[1],
+      "f3" as Parameters<typeof buildVaultFolderSubtreeZipPath>[2],
+      "john-w2.pdf",
+    ),
+    "Tax Returns/2024/W-2s/john-w2.pdf",
+  );
+  assert.equal(
+    buildVaultFolderSubtreeZipPath(
+      folders as Parameters<typeof buildVaultFolderSubtreeZipPath>[0],
+      "f2" as Parameters<typeof buildVaultFolderSubtreeZipPath>[1],
+      "f3" as Parameters<typeof buildVaultFolderSubtreeZipPath>[2],
+      "john-w2.pdf",
+    ),
+    "2024/W-2s/john-w2.pdf",
+  );
+  assert.equal(
+    buildVaultFolderSubtreeZipPath(
+      folders as Parameters<typeof buildVaultFolderSubtreeZipPath>[0],
+      "f1" as Parameters<typeof buildVaultFolderSubtreeZipPath>[1],
+      "f1" as Parameters<typeof buildVaultFolderSubtreeZipPath>[2],
+      "summary.pdf",
+    ),
+    "Tax Returns/summary.pdf",
+  );
+
+  const used = new Set<string>();
+  assert.equal(dedupeZipPath("a.pdf", used), "a.pdf");
+  assert.equal(dedupeZipPath("a.pdf", used), "a (1).pdf");
+  assert.equal(dedupeZipPath("a.pdf", used), "a (2).pdf");
+  assert.equal(dedupeZipPath("Tax Returns/a.pdf", used), "Tax Returns/a.pdf");
+  assert.equal(
+    dedupeZipPath("Tax Returns/a.pdf", used),
+    "Tax Returns/a (1).pdf",
+  );
 
   const zip = new JSZip();
   zip.file("Tax Returns/2024/doc-a.pdf", "a");

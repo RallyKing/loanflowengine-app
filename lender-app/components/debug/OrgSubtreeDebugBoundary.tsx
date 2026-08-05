@@ -2,7 +2,11 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
-import { appendPriorityDebugClientLog, debugAgentLogPostUrl } from "@/lib/debugClientLog";
+import {
+  appendPriorityDebugClientLog,
+  isDebugAgentRemoteEnabled,
+  postDebugAgentRemote,
+} from "@/lib/debugClientLog";
 
 type Props = {
   children: ReactNode;
@@ -44,25 +48,9 @@ export class OrgSubtreeDebugBoundary extends Component<Props, S> {
     };
     appendPriorityDebugClientLog(payload);
     // #region agent log
-    const body = JSON.stringify(payload);
-    void fetch(debugAgentLogPostUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    }).catch(() => {});
-    void fetch(
-      "http://127.0.0.1:7412/ingest/32d854df-a7db-4c6f-bb28-ee2545e32c91",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "f25461",
-        },
-        body,
-      },
-    ).catch(() => {});
+    postDebugAgentRemote(payload);
     // #endregion
-    if (process.env.NODE_ENV === "development") {
+    if (isDebugAgentRemoteEnabled()) {
       console.warn("[OrgSubtreeDebugBoundary]", err.message, info.componentStack);
     }
   }

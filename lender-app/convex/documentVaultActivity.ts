@@ -137,6 +137,7 @@ async function issueRevisionPortalUrl(
     expiresAt: now + BUNDLE_TTL_MS,
     createdByUserKey: "__revision_notify__",
     createdAt: now,
+    issuedUrl: buildClientPortalUrl(companySlug, plainToken),
   });
 
   return buildClientPortalUrl(companySlug, plainToken);

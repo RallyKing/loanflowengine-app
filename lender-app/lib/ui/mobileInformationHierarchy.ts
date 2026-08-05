@@ -5,7 +5,7 @@
 
 /** Full-width primary label — no truncation on mobile. */
 export const mobilePrimaryTitleClass =
-  "w-full max-md:truncate-none max-md:overflow-visible max-md:whitespace-normal break-words [overflow-wrap:anywhere] text-sm font-semibold leading-snug text-foreground";
+  "w-full min-w-0 max-md:overflow-visible max-md:whitespace-normal max-md:break-words max-md:[overflow-wrap:anywhere] md:truncate text-sm font-semibold leading-snug text-foreground";
 
 /** Tier-2 control strip beneath a full-width title. */
 export const mobileSecondaryTierClass =

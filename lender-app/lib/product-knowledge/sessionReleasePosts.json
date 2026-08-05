@@ -1,0 +1,942 @@
+[
+  {
+    "slug": "2026-08-02-new-file-wizard-step3",
+    "title": "New File wizard: templates & scrollable Step 3",
+    "summary": "Pick a file template when creating a loan, and Step 3 stays fully usable on short screens.",
+    "body": [
+      "Step 3 of the New File wizard now lists file templates so you can start from a prepared layout instead of a blank file.",
+      "The modal keeps the title and Cancel / Back / Create actions visible while the middle content scrolls inside the panel ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â no more clipped footer on phones or short laptop screens."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_DwpKoMJrHVZEUPjqwwgpqyKARZey",
+    "publishedAt": 1785748320000
+  },
+  {
+    "slug": "2026-08-02-pfs-sba-remodel",
+    "title": "Personal Financial Statement matches the SBA spreadsheet",
+    "summary": "PFS now mirrors the full spreadsheet layout and calculations, and you can add it on any file ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â including older ones.",
+    "body": [
+      "The Personal Financial Statement block was remodeled to match the SBA Personal Financial Statement spreadsheet: sections, roll-ups, and net worth formulas.",
+      "Optional blocks that were previously hard to surface on older files can be enabled from Financials ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Add section (and from layout / favorites settings).",
+      "Saving preserves in-progress edits so remote refreshes do not wipe what you are typing."
+    ],
+    "changeType": "redesigned",
+    "deploymentId": "dpl_EKJrjtuh3FDNhfUXGLwW7e18gad1",
+    "publishedAt": 1785748860000
+  },
+  {
+    "slug": "2026-08-02-block-vault-assign-fill-link",
+    "title": "Assign blocks to clients & send fill links",
+    "summary": "From a pipeline block, create a Document Vault client assignment or a logged one-block fill link.",
+    "body": [
+      "Reusable block actions let you add a block (starting with Personal Financial Statement) into a Document Vault task so a client can complete it as an assignment.",
+      "You can also generate a direct fill link for just that block. Links are created and managed in the existing client link repository (same revoke / extend / regenerate controls as other portal links).",
+      "Fill links use the new block_fill link kind and selective client bundles ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â no parallel link system."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_81gvB7Sn2hMdJjxktaMkScvWERgp",
+    "publishedAt": 1785749880000
+  },
+  {
+    "slug": "2026-08-02-floating-window-no-blur",
+    "title": "Open any block in a floating window; overlays stay clear",
+    "summary": "Detach a block into a draggable, resizable window and keep working elsewhere ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â backdrop blur is gone so you can still read whatÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢s behind.",
+    "body": [
+      "Every modular pipeline block has an ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“Open in windowÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â control. The floating panel can be dragged, resized, and left open while you click other sections of the file or app.",
+      "Floating windows do not use a scrim ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the workspace stays fully interactive underneath.",
+      "Modals, shortcuts, and inspectors no longer apply heavy backdrop blur, and scrim opacity is lighter so background information stays readable."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_DFN31UZ161LxkuBQmPRurQcR5YNm",
+    "publishedAt": 1785750480000
+  },
+  {
+    "slug": "2026-08-02-rich-document-preview",
+    "title": "Rich document preview in Documents & lender delivery",
+    "summary": "Preview Excel, Word, PDF, and more in the Documents explorer ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â and lender delivery preview works again.",
+    "body": [
+      "The Documents tab now supports first-class in-app preview for common uploads: PDF, Excel/CSV, Word (.docx), images, text, and HTML.",
+      "Lender delivery preview was broken when PDFs loaded inside a sandboxed iframe pointed at Convex storage. Preview now uses a shared rich viewer (PDF via same-origin blob) so lenders can view without download-only friction.",
+      "Legacy .doc / .xls still offer open/download when inline preview is not available."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_eRL1h1Ec6B7QVJst22ciznBo2Pe7",
+    "publishedAt": 1785750600000
+  },
+  {
+    "slug": "2026-08-03-product-updates-expandable-log",
+    "title": "Product Updates: expandable work log",
+    "summary": "The Updates bell now shows title + summary with click-to-expand details so you can see what shipped and when.",
+    "body": [
+      "Open Updates (sparkles) in the masterpage header to see the newest product changes first, with readable timestamps.",
+      "Each entry shows a short summary up front; tap Show details for the full description.",
+      "Agents and admins publish entries through the existing productReleasePosts feed (operator mutation or Settings ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Product knowledge) whenever user-facing work ships."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_87He6RNaCtzwbtQJJnicTASjKUfp",
+    "publishedAt": 1785752100000
+  },
+  {
+    "slug": "portal-defaults-editor-2026-08-03",
+    "title": "Portal defaults editor (client, lender, referrer, deal partner)",
+    "summary": "Create org portal templates, assign them on contacts, and see them under Portals & Progress when that contact is on a file.",
+    "body": [
+      "Settings at /settings/portal-defaults (also Organization ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Portal defaults).",
+      "Four portal default types: client, lender, referrer, and deal partner.",
+      "Assign templates on a contact under Profile ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Portal defaults.",
+      "On a file, Portals & Progress shows contact portal defaults from linked contacts.",
+      "Existing invite and delivery flows are unchanged ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â this is additive on clientPortalLinks.",
+      "Deployment: dpl_5RuM8ZZE9i4uzFr69kkNfu9fbi7R"
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_5RuM8ZZE9i4uzFr69kkNfu9fbi7R",
+    "publishedAt": 1785752160000
+  },
+  {
+    "slug": "floating-windows-across-file-tabs-2026-08-03",
+    "title": "Floating windows stay open across file tabs",
+    "summary": "Detached block windows now survive switching Overview, Documents, and other file tabs instead of closing when you leave the tab.",
+    "body": [
+      "FloatingBlockWindowProvider hosts detach state at PipelineFileWorkspace (per file)",
+      "Switching file tabs no longer unmounts the floating window",
+      "Drag/resize/Return/Escape unchanged; no scrim",
+      "Deployment: dpl_6udU1iXFshhvSnuoLz5Ms1UaRhEt"
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_6udU1iXFshhvSnuoLz5Ms1UaRhEt",
+    "publishedAt": 1785735117531
+  },
+  {
+    "slug": "portal-block-autosave-submit-revise-2026-08-03",
+    "title": "Client block forms: autosave without locking; Submit and Revise",
+    "summary": "Filling one field no longer locks the portal form. Edits autosave live; the client submits when ready and can revise until you mark the task complete.",
+    "body": [
+      "Root cause: autosave was promoting the vault task to pending_review, which disabled the form.",
+      "Autosave now only updates deal/block data.",
+      "Submit sets pending_review; Revise keeps editing until broker Complete.",
+      "Deployment: dpl_wDuH1EB3dFXTsJtsAW9feWtgeWmg"
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_wDuH1EB3dFXTsJtsAW9feWtgeWmg",
+    "publishedAt": 1785735172292
+  },
+  {
+    "slug": "vault-assign-every-block-2026-08-03",
+    "title": "Document Vault assign on every pipeline block",
+    "summary": "Assign-to-client and fill-link actions now appear on shared block chrome across the fileÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ânot only Personal Financial Statement.",
+    "body": [
+      "ClientBlockAssignProvider + CollapsibleBlock compose Assign / Copy fill link before other header actions",
+      "Mapped deal/overview/calculator/PFS/construction blocks get assign + fill-link when in the atomic portal registry",
+      "Settings, vault, underwriting chrome opted out",
+      "Deployment: dpl_FpNEuVEvfFF5iSCeruaYxoqLrEN7"
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_FpNEuVEvfFF5iSCeruaYxoqLrEN7",
+    "publishedAt": 1785735273236
+  },
+  {
+    "slug": "portal-defaults-page-builder-2026-08-03",
+    "title": "Portal defaults page builder",
+    "summary": "Compose portal pages from premade sections, save versions, publish as a default, and assign to contacts ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â client and lender portals render the composition.",
+    "body": [
+      "Settings ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Portal defaults ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Page builder: add, remove, and drag-reorder premade sections (status bar, chat, primary contact, outstanding documents, start a new loan, deal summary, document package, welcome).",
+      "Create named versions, then Set as default to promote a version onto the assignable portal default.",
+      "Assign defaults on contacts as before; Portals & Progress shows section summaries and links to the builder.",
+      "Client bundle and lender delivery portals render the composed page when a linked contact has a published default with sections; otherwise the previous layout is unchanged.",
+      "Chat uses a polished placeholder unless session messaging is available ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no second messaging system."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_GoJxf3Dr2kyCAhrLB2J6JHywS33Q",
+    "publishedAt": 1785753000000
+  },
+  {
+    "slug": "workspace-org-switcher-fix-2026-08-03",
+    "title": "Settings workspace switcher restored",
+    "summary": "GodMode tenant switching no longer white-screens Settings; debug ingest noise is gated off in production.",
+    "body": [
+      "Root cause: listAllOrganizations required organizationMembers rows and could throw when that table failed schema reads ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â useQuery then crashed the signed-in shell as Workspace UI error.",
+      "The query now authorizes via platform GodMode only, never throws to the client, and returns a validated org list (with a primary-org fallback if a full collect fails).",
+      "The tenant switcher uses non-throwing useQueries so a failure shows an inline message instead of blanking the workspace.",
+      "Agent debug POSTs to /api/debug-agent-log and 127.0.0.1:7412 are development-only, so production CSP is no longer hammered.",
+      "Deployment: dpl_Ax7ARKxhKnnYhY5Jsqso7R7M1DMc"
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_Ax7ARKxhKnnYhY5Jsqso7R7M1DMc",
+    "publishedAt": 1785753600000
+  },
+  {
+    "slug": "patchdeal-write-storm-fix-2026-08-03",
+    "title": "Pipeline file idle write storm stopped",
+    "summary": "Deal autosave no longer retries patchDeal forever on conflicts or errors, which was burning Convex quota on open files.",
+    "body": [
+      "Root cause: useDealWorkspaceEditor flush re-armed every 500ms after CONFLICT_DATA_CHANGED or thrown errors without adopting serverUpdatedAt or backing off.",
+      "Fix: adopt serverUpdatedAt on conflict, exponential backoff with a retry cap, skip no-op pending keys client-side, and skip unchanged deal patches server-side (no updatedAt/activity bump).",
+      "Write-storm console warnings ignore short measurement windows so a single early write no longer reports thousands/min.",
+      "Deployment: dpl_6cFpLc2jTsMUMsZBQdxZyvCTZUUo"
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_6cFpLc2jTsMUMsZBQdxZyvCTZUUo",
+    "publishedAt": 1785753900000
+  },
+  {
+    "slug": "portal-defaults-canvas-builder-2026-08-03",
+    "title": "Portal defaults: visual page builder",
+    "summary": "Build portal templates on a live canvas with drag-and-drop, desktop/mobile preview, versions, and Set as default ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â without white-screening on open.",
+    "body": [
+      "Settings ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Portal defaults ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Page builder is now a web-style builder: sticky top bar (Back, autosave, desktop/mobile, Preview, Versions, Save, Set as default), left section palette, and a center live canvas.",
+      "Drag sections from the palette onto the canvas or reorder existing cards; Preview mode shows a read-only page composition.",
+      "Hardened null config / empty version Select paths so opening or filling a portal default no longer crashes with ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œCannot read properties of null (reading 'value').ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â",
+      "Still saves to portalDefaults / portalDefaultVersions ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no second portal system."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_9T7TyJreRXK4ppAQY2V7hNX35Dar",
+    "publishedAt": 1785754800000
+  },
+  {
+    "slug": "portal-defaults-null-value-fix-2-2026-08-03",
+    "title": "Portal defaults form no longer crashes while typing",
+    "summary": "Filling out portal default invite settings no longer white-screens with ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œCannot read properties of null (reading 'value').ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â",
+    "body": [
+      "Root cause: name/description/checklist fields read e.currentTarget.value inside a setState updater. React clears currentTarget after the event handler, so concurrent/batched updates threw null.value.",
+      "Fix: capture the input string before setState in PortalDefaultsManager (list + create/edit form). Also hardened Settings pipeline stage style useState init.",
+      "Page builder version/welcome fields were already safe (eager reads)."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_Cb1PhJ3zTQnB7MuwuhQN7cMhVjYt",
+    "publishedAt": 1785756000000
+  },
+  {
+    "slug": "portal-defaults-chrome-grid-builder-2026-08-03",
+    "title": "Portal defaults builder: sidebar, header, and multi-column layout",
+    "summary": "Build partner-style portals with a customizable sidebar, top header, and responsive multi-column section gridÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ânot just a single-column stack.",
+    "body": [
+      "Layout chrome: configure sidebar brand, nav items (label, icon, route), welcome/search/notifications toggles, and an optional floating action button.",
+      "Content grid: each section has a column span (3/4/6/8/12) so you can place stat cards, activity feeds, banners, and document widgets side-by-side like professional partner portals.",
+      "New section widgets: stat cards, notifications banner, search bar, activity feed, and pipeline cardsÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ârole-filtered for client, lender, referrer, and deal partner.",
+      "Runtime: assigned portal defaults render chrome + grid on client and lender portals; links without an assigned default keep the previous layout.",
+      "Also includes the portal-defaults null.value typing crash fix (capture input values before setState)."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_DL7vXhGV5MW1X1CruCcTYU5yx8x2",
+    "publishedAt": 1785757200000
+  },
+  {
+    "slug": "lender-profile-tabs-2026-08-03",
+    "title": "Lender profile: Overview, Programs, Templates, Docs",
+    "summary": "Lender profiles now use four tabsÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Âcontact & portal credentials, programs CRUD, lender task playbooks, and a fuller document vaultÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Âwithout duplicate template systems.",
+    "body": [
+      "Overview: website, partner-portal URL with saved login credentials (org-scoped; encrypted at rest when CLIENT_PORTAL_FIELD_ENCRYPTION_KEY is set), linked contacts/reps, notes, deal parameters, and merge.",
+      "Programs: specialty summary plus structured programList create/edit/delete (same fields scenario matching already uses).",
+      "Templates: create lender-bound playbook groups and task templates (with optional template docs) via the existing taskTemplateLibrary; apply them to pipeline files with Apply playbook as before.",
+      "Docs: retitle, annotate, group, preview zoom, and full CRUD on lenderAttachments.",
+      "Enrich / Edit / Delete header actions stay on the profile chrome."
+    ],
+    "changeType": "redesigned",
+    "deploymentId": "dpl_AD5ph2mxXaSz5xbHubpQLs26x1Se",
+    "publishedAt": 1785759000000
+  },
+  {
+    "slug": "file-header-primary-borrower-2026-08-03",
+    "title": "File header follows primary borrower",
+    "summary": "The teal label next to the deal title now shows live primary borrower entity and individual names from Borrowers & GuarantorsÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ânot the create-time client name.",
+    "body": [
+      "On a pipeline file, the header subtitle (top-right of the title row) updates when you set a primary borrower or entity in Borrowers & Guarantors.",
+      "Format is entity Ãƒâ€šÃ‚Â· individual when both exist (for example Acme LLC Ãƒâ€šÃ‚Â· Jordan Lee). Co-borrowers are not listed there.",
+      "If no primary borrower is set yet, the previous hierarchy client name is used as a fallback; otherwise it shows No primary borrower.",
+      "The label links to the primary borrower's contact hub when available."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_7UR1rxEUPnKAp4FL6GzNV956V9wR",
+    "publishedAt": 1785760500000
+  },
+  {
+    "slug": "favorites-open-floating-window-2026-08-03",
+    "title": "Favorites open in a floating window",
+    "summary": "Pinned blocks on the file favorites bar now open in a draggable window-in-window instead of the right-side slide-out panel.",
+    "body": [
+      "Clicking a favorited block (File notes, Tasks, PFS, and other standalone pins) opens the existing floating window ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â drag, resize, keep working across file tabs, with no scrim.",
+      "Use Go to section on the window chrome to jump to the block in the file layout, or Return / Escape to dismiss.",
+      "Other pinned blocks (for example Pipeline File Access) open via the same Open in window detach path once their tab is mounted."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_8Jz93awvZANDiShi2ShUzmCtFuhV",
+    "publishedAt": 1785812629148
+  },
+  {
+    "slug": "2026-08-03-link-repository-and-client-email-copy",
+    "title": "Link repository fixes & client-link email copy",
+    "summary": "See and copy full portal URLs, extend/security controls work reliably, and Generate Client Link gives an email-ready paste block.",
+    "body": [
+      "Link repository now shows the full absolute URL for each issued link (with Copy), and regenerating saves that URL on the row so you can retrieve it later.",
+      "Extend (+7 / +14 / +30 days), Security passcode / email OTP, and Kill / Regenerate / Reactivate are wired through for client, lender, and access links. Client portal links now enforce security gates before the portal loads.",
+      "After Generate Client Link, you get a selectable email-ready block: bullets for every included task, the secure-upload sentence, and the full portal URL ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â plus one-click Copy."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_7UR1rxEUPnKAp4FL6GzNV956V9wR",
+    "publishedAt": 1785812689148
+  },
+  {
+    "slug": "2026-08-03-file-task-client-templates",
+    "title": "Attach downloadable templates on client document tasks",
+    "summary": "When creating or editing a Document upload or Client instruction task, attach template files the client can download in the portal.",
+    "body": [
+      "Create / Edit file task now includes a Client template attach control for document upload and client instruction requests (up to five files, using existing Convex storage).",
+      "Templates appear as download links on that task in the client portal while the client completes the upload or instruction.",
+      "Generate Client Link email copy appends ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ(see attached template)ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â on task titles that have templates."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_FfyAgK5CGe8KTkNroVbk68XDnrpV",
+    "publishedAt": 1785812749148
+  },
+  {
+    "slug": "2026-08-03-lender-docs-download-bulk",
+    "title": "Download lender documents ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â one file or a ZIP of many",
+    "summary": "In a lenderÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s Docs tab, download any file, or multi-select and download selected files as a ZIP.",
+    "body": [
+      "Each document card now has a Download control next to Preview and Open.",
+      "Checkboxes let you select multiple documents; use Select all for the current group filter, then Download ZIP to save them together (grouped files keep their folder path inside the archive).",
+      "Downloads use the same Convex storage URLs already shown for Open/Preview ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no new attachment system."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_BvfDWwQtbpv7C6wPndqEq7Prq5HW",
+    "publishedAt": 1785812809148
+  },
+  {
+    "slug": "2026-08-03-pipeline-file-hooks-hotfix",
+    "title": "Pipeline file open crash fixed",
+    "summary": "Opening a pipeline file no longer hits a React hooks error that showed ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œSomething went wrong.ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â",
+    "body": [
+      "A favorites floating-window helper was registered with a React hook after the loading early-return, which violated the Rules of Hooks when file data finished loading.",
+      "That helper is now a plain function after the loaded path, so the file workspace mounts cleanly again."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_6EhoNTED9dqRt8mR72n8LPZWmqXc",
+    "publishedAt": 1785812869148
+  },
+  {
+    "slug": "2026-08-03-task-template-client-attachments",
+    "title": "Task templates: attach client downloadable templates",
+    "summary": "Manage Templates now supports the same client template / reference file attach as vault file tasks ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â and applying a stack or individual template carries those files onto the live tasks.",
+    "body": [
+      "In Manage Templates (individual or stack tasks), Document upload and Client instruction templates include the Client template attach control (same upload UI as Create/Edit file task).",
+      "When you Apply templates to a Document Vault file, any attached reference sheets are copied onto the created file tasks so clients can download them in the portal.",
+      "Switching a template away from a client-visible type clears attachments and folder/block fields that no longer apply, so stale config does not linger."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_A7PSP1JCArzPZgLMrCPpNzmveCDz",
+    "publishedAt": 1785812929148
+  },
+  {
+    "slug": "2026-08-03-pipeline-hub-titles-borrower-search",
+    "title": "Pipeline list: titles stay visible & search finds borrowers",
+    "summary": "Loan file titles no longer disappear on phones or narrow screens, and hub search matches borrower and entity names.",
+    "body": [
+      "On the Pipeline loan file list, every row keeps its title in the top-left at mobile and narrow widths. Long titles can still truncate with an ellipsis on larger screens, but the title always renders.",
+      "Search loan files now also matches borrower first/last names, guarantors, and entity legal name / DBA from the deal ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â in addition to existing file title and client/project matching."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_9ujwM6RwYw7fg9v5HJncD6Abvska",
+    "publishedAt": 1785812989148
+  },
+  {
+    "slug": "2026-08-03-contact-email-keystroke-rows",
+    "title": "Contact emails: one row while typing",
+    "summary": "Typing an email on a contact profile no longer creates a new email entry for every letter.",
+    "body": [
+      "Contact Profile Info emails (and phones) now edit the same row until you Add email/phone or Save. Progressive junk like ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œMÃƒÂ¢Ã¢â€šÂ¬Ã‚Â, ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œMPÃƒÂ¢Ã¢â€šÂ¬Ã‚Â, ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œMPuÃƒÂ¢Ã¢â€šÂ¬Ã‚Â collapses to the full address when the profile loads or saves.",
+      "Clearing all emails and saving actually clears them. Deal sync and inspector scalar edits update the primary method in place instead of appending each keystroke.",
+      "Add Email / Add Phone still adds a blank row once for intentional multi-value contacts."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_A4RMZd9TnniyaCQ5ZCvLP7KCaJaY",
+    "publishedAt": 1785813049148
+  },
+  {
+    "slug": "2026-08-03-link-repo-expiry-and-onetime-url",
+    "title": "Link repository: edit expiry & clear one-time URL",
+    "summary": "Document Vault Link repository rows now let you increase or decrease expiry (or set an exact date/time), and the green one-time URL banner no longer sticks after you close the modal.",
+    "body": [
+      "Active and expired client, lender, and access links have AdjustÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ (+/ÃƒÂ¢Ã‹â€ Ã¢â‚¬â„¢ 7/14/30 days) and Set expiry (date/time picker). Changes save to Convex and sync related portal sessions.",
+      "Revoked links still require Reactivate before expiry can be changed ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â same pattern as before.",
+      "After you regenerate a portal link, the one-time secure URL still shows for that open modal session. Closing the modal clears the banner so reopen starts clean; the URL remains on the link row when saved."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_JBfYYiJKXWgLDa5tpQFkxkkmtJp5",
+    "publishedAt": 1785813109148
+  },
+  {
+    "slug": "2026-08-03-file-details-shared-fields-save",
+    "title": "File Details: funding, rate & revenue save correctly",
+    "summary": "Rate, funding (normalized), commission, and net revenue in File Details now persist instead of snapping back to $0 / 0%.",
+    "body": [
+      "Editing shared File Details fields (rate, funding amount, commission, net revenue, term) was writing the top-level value but re-saving an outdated shared snapshot ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â so the UI looked stuck at zero after refresh.",
+      "Saves now keep the shared data layer in sync with what you enter. Existing files that already showed $0 while the cover funding was set heal automatically when values are read or when you edit any shared field again."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_D4mS2wJzqeEk4mNmiD3eQRSByA72",
+    "publishedAt": 1785813169148
+  },
+  {
+    "slug": "2026-08-03-portal-builder-interactive-view-as",
+    "title": "Portal page builder: View as + real section setup",
+    "summary": "Click around the portal preview as each audience, and configure Welcome, Status, Chat, Contact, Documents, and more against real platform systems.",
+    "body": [
+      "Settings ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Portal page builder Preview is interactive: View as Client, Lender, Referrer, or Deal partner, then use sidebar, tabs, and cards to walk the experience (desktop/mobile width still toggles).",
+      "Click a section on the canvas to configure it. Status can link to org pipeline stages or use custom check-off steps with stable IDs for future automations. Chat uses the loan file Messages system (not a separate inbox). Primary contact can be organization, file owner, or custom name/email/phone.",
+      "Welcome supports {{workspaceName}} / {{fileLabel}} tokens. Outstanding documents still come from Document Vault tasks. Start a new loan accepts an intake/apply URL. Save and Set as default still publish the version to assigned contacts."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_B33KvAW2rHhndNWdniiWXBC6vL7h",
+    "publishedAt": 1785813229148
+  },
+  {
+    "slug": "2026-08-03-product-updates-local-tz-complete-feed",
+    "title": "Product Updates: local times & complete ship log",
+    "summary": "Update timestamps now show your local timezone (with zone label), and small fixes are no longer dropped from the feed.",
+    "body": [
+      "Timestamps in the Updates bell are formatted with your browser locale and local timezone (for example CDT), not UTC displayed as if it were local.",
+      "Seed/publish no longer accepts publishedAt: 0, which was burying recent posts at the bottom of the list as 1969/1970.",
+      "The feed shows more recent entries so every shipped change ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â including small fixes ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â can appear. Agents re-publish sessionReleasePosts.json safely by stable slug."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_3PHCdVWd1k5ETr6nhnT4fTBAnx23",
+    "publishedAt": 1785813229148
+  },
+  {
+    "slug": "2026-08-03-associated-contacts-header-modals",
+    "title": "Associated Contacts: denser cards & link modals",
+    "summary": "Deal Info Associated Contacts is tighter: link/create live in header buttons with modals, not tall always-visible forms.",
+    "body": [
+      "Link existing and Create new are header actions next to the Associated Contacts title. Each opens a modal with the same fields and mutations as before ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â choose contact, role, optional notes, then link or create.",
+      "Contact cards use less padding, single-line notes instead of large empty textareas, compact role and borrower actions, and a clear Linked count / empty state.",
+      "Modals scroll inside the panel so the pipeline file workspace scroll owner is unchanged."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_4zGLG5bLJtBx6nx3Eo7ejhrdcjA7",
+    "publishedAt": 1785814000000
+  },
+  {
+    "slug": "2026-08-03-document-vault-toolbar-tasks",
+    "title": "Document Vault: + Tasks next to Create",
+    "summary": "Add file tasks from the Document Vault action row ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â same flow as ExplorerÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s + Tasks.",
+    "body": [
+      "On a pipeline file ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Documents, the Document Vault toolbar now includes + Tasks to the left of + Create.",
+      "It opens the same file-task batch create flow as the Explorer header + Tasks control (no second system).",
+      "ExplorerÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s + Tasks remains available; the command bar wraps on narrow screens so the extra action stays usable on mobile."
+    ],
+    "changeType": "improved",
+    "deploymentId": ""
+  },
+  {
+    "slug": "2026-08-03-deliver-to-lender-picker-recipients",
+    "title": "Deliver to Lender: full lender list & quick recipients",
+    "summary": "Search every lender in the directory from Deliver to Lender, or add a directory lender / one-time recipient without leaving the modal.",
+    "body": [
+      "The Deliver to Lender picker no longer capped results at 30 registry rows. It searches the full lender directory (type to reach anyone beyond the recent browse list).",
+      "Add lender saves into the existing lender directory and selects them for the package. One-time recipient creates an org-scoped custom firm/rep for this delivery without polluting the shared catalog.",
+      "Create Link stays disabled until a lender and at least one vault asset are selected. The modal scrolls inside its panel so pipeline file scroll ownership is unchanged."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_DBypW8p2SW6w3mbNuBsh7EbzGjry"
+  },
+  {
+    "slug": "2026-08-03-document-vault-floating-window-provider",
+    "title": "Document Vault floating window no longer crashes",
+    "summary": "Opening Document Vault in a floating window works again ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â shared vault state stays available outside the Documents tab.",
+    "body": [
+      "Open in window on Document Vault previously crashed with a missing DocumentVaultStateProvider error because the floating host sits above tab panels.",
+      "Vault navigation state now lives on the file workspace shell (one provider shared by the Documents tab and floating windows), so detach, browse, and return work without resetting into a second store.",
+      "Pipeline file scroll ownership is unchanged; floating panels remain overlays and do not introduce a competing page scroll."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-03-portals-progress-block-reorder",
+    "title": "Portals & Progress: drag to reorder every block",
+    "summary": "Scenarios, underwriting, contact defaults, and client portal blocks on Portals & Progress are now reorderable with drag handles ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â same system as Deal Info.",
+    "body": [
+      "On a pipeline file ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Portals & Progress, every stacked block (Scenarios & Lender Match, Financial metrics, Action queue, Lender track, Internal workflow, Contact portal defaults, and client portal sections) shows a drag handle.",
+      "Order and visibility persist on the deal sheet via portalsProgressTabLayout, using the existing SortableSectionList pattern (no second reorder system). Layout gear menu can hide/show blocks or reset defaults.",
+      "Mobile keeps the Deal Info drag pattern (pointer distance activation) so vertical pans still scroll [data-pipeline-workspace-scroll]."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_9G2EkobktymJpxcCe96GYAAC8vrP"
+  },
+  {
+    "slug": "2026-08-03-document-vault-explorer-downloads",
+    "title": "Document Vault Explorer: download all, selected, or one file",
+    "summary": "From Explorer, download the whole vault as a ZIP, zip only checked files, or download a single document from its row.",
+    "body": [
+      "Explorer toolbar now includes Download all (one ZIP of every downloadable file, preserving folder paths) and Download selected (ZIP of checked file rows). Download selected stays disabled until you check at least one file.",
+      "Each file row has a Download action next to View that uses the same signed storage URL path as preview. Compact Explorer rows also show selection checkboxes so multi-select download works on mobile.",
+      "Downloads reuse the existing vault ZIP helper with progress toasts for larger packs ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no second zip pipeline."
+    ],
+    "changeType": "added"
+  },
+  {
+    "slug": "2026-08-03-product-updates-panel-front",
+    "title": "Product Updates panel stays in front of the header",
+    "summary": "Opening Updates no longer tucks behind the top chrome ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the panel stacks above the header, search, and page content.",
+    "body": [
+      "The Updates dropdown (and the Alerts inbox, which shares the same portal panel) now mounts into the appÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s global overlay root so transformed header chrome and overflow clipping cannot cover it.",
+      "Panel position is still fixed to the bell; only the stacking mount changed. Mobile scroll ownership is unchanged ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the list inside the panel scrolls locally with overscroll containment."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-03-product-updates-above-contacts-bar",
+    "title": "Product Updates stays above Contacts filters bar",
+    "summary": "On Contacts (and other list pages), the Updates panel no longer gets sliced by the sticky Search / Filters / Columns toolbar.",
+    "body": [
+      "Root cause: the Contacts command bar used sticky z-40 (and similar hubs use z-50), which painted over the Updates dropdown at the older dropdown tier (38).",
+      "Updates and Alerts now use the canonical CHROME_MENU overlay layer (above sticky list toolbars) and still portal to document.body with fixed positioning.",
+      "The Contacts sticky filter bar was also lowered to sit just above page content so it no longer competes with overlay menus. Scroll ownership is unchanged."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-03-internal-workflow-interactive-templates",
+    "title": "Internal Workflow: checkboxes, edit steps, templates",
+    "summary": "Portals & Progress Internal Workflow is now interactive ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â check steps, edit the checklist, and switch or create org templates.",
+    "body": [
+      "The Internal Workflow block on Portals & Progress was a read-only timeline with misaligned status dots. It is now a dense, clickable checklist that saves to dealData.workflow (same store as Deal Info).",
+      "Check or uncheck mileposts with ~40px touch targets; progress (e.g. 3/13) updates live. Add, rename, reorder, or remove steps on the file.",
+      "Save the current checklist as an organization template, switch templates from the dropdown (including the built-in default broker checklist), or update an existing org template from the file.",
+      "Each step keeps a stable id for future automations, matching the spirit of portal status-bar steps."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_4nmV3NYE2pn8tCVd2Un4EaJsbVvB"
+  },
+  {
+    "slug": "2026-08-03-deal-info-notes-density",
+    "title": "Deal Info Notes: denser history & previews",
+    "summary": "File notes take less vertical space - truncated previews, latest five in history, and tighter composer chrome.",
+    "body": [
+      "Long note bodies no longer dominate Deal Info. Each note shows a short preview with Show more / Show less; pinned notes stay highlighted without a tall banner.",
+      "History shows the latest five unpinned notes by default, with Show remaining N notes to reveal the rest (and Show less to collapse).",
+      "Composer height, island padding, and spacing are tighter while Add file / Add link / Post note stay ~40px touch targets. Post note stays disabled until there is text, a link, or an attachment. Long URLs wrap or use compact link labels. Scroll still owns the pipeline file workspace - no nested page scroll."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_DVn6qyp9XKL1FQD8N78X7pPPhgBw"
+  },
+  {
+    "slug": "2026-08-03-pfs-contrast-alignment",
+    "title": "Personal Financial Statement: clearer fields & alignment",
+    "summary": "PFS sections and tables have stronger contrast and consistent column alignment so every field is easier to read and fill.",
+    "body": [
+      "Stronger borders and labels use DLC design tokens so section headers and field labels stand out more clearly against the form surface.",
+      "Money rows use a ledger-style layout so amounts line up consistently and are easier to scan while filling the statement.",
+      "Section 2 and Section 3 tables keep fixed column widths so labels, values, and related fields stay aligned across rows.",
+      "Installment debt Balance and Mo. pmt columns stay aligned for quicker comparison of outstanding balances and payments.",
+      "Calculation wiring is unchanged â€” this release is visual contrast and alignment only."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_EG8QFffsKsxtEF15EnfpCCXYSUaE"
+  },
+  {
+    "slug": "2026-08-04-document-vault-explorer-row-density",
+    "title": "Document Vault: denser file & folder rows",
+    "summary": "Vault explorer file lists are more compact so more documents fit on screen without losing Download, selection, or touch targets.",
+    "body": [
+      "File and folder rows in the Documents vault explorer use tighter vertical spacing in both compact and default density.",
+      "Selection checkboxes keep a ~40px touch hit area without stretching each row to 44px tall â€” so Download, Edit, View, and other actions stay usable.",
+      "Requirement cards, Unassigned chrome, and explorer toolbars are slightly denser. Scroll ownership is unchanged (page/workspace scroll, not a nested vault scroller)."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_8dCzk1432VUMtgXQb3ML9gRCrvMp"
+  },
+  {
+    "slug": "2026-08-04-file-details-term-conflict-retry",
+    "title": "File Details: TERM and shared fields save reliably",
+    "summary": "Editing TERM (and other File Details fields) no longer fails with a Convex conflict when Generate Terms or other background writes update the file at the same time.",
+    "body": [
+      "Root cause: pipeline.patch rejected the save with CONFLICT_DATA_CHANGED when expectedUpdatedAt was already stale from concurrent background writers (especially Generate Terms debounce).",
+      "Saves now retry once without the concurrency guard after a conflict, and Generate Terms background sync no longer takes that guard â€” reducing idle write storms on the file workspace.",
+      "Header RATE / TERM now prefer the shared File Details values (with Generate Terms as fallback) so the command-center metrics stay aligned with the block."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_3wQe3qrM9UVLuDKt6eTHQwmbhoJJ"
+  },
+  {
+    "slug": "2026-08-04-deal-info-lenders-density",
+    "title": "Deal Info Lenders: denser board & search",
+    "summary": "The Deal Info Lenders block is tighter — less empty space around search and lender cards, with actions still easy to tap.",
+    "body": [
+      "Board cards (Primary / Secondary / Considering) use less padding and put board role, Rejected, and remove on one compact action row instead of a tall empty side column.",
+      "Search helper copy is shorter, result rows are denser, and the Lenders block body padding matches denser Deal Info sections like Fees & Splits.",
+      "Primary controls keep ~40px touch targets on mobile. Pipeline file scroll ownership is unchanged — still [data-pipeline-workspace-scroll]."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_Bt6T9yKHVGnvkKQEvA298MDMuZn5"
+  },
+  {
+    "slug": "2026-08-04-file-header-details-width",
+    "title": "File header details panel no longer collapses",
+    "summary": "Expanding the top-right file details chevron now shows Switch file, project assignment, and loan clients at full readable width on desktop and mobile.",
+    "body": [
+      "Root cause: the header disclosure used a grid-rows collapse without an explicit full-width column track, so overflow-hidden + min-w-0 collapsed the panel to a one-word-wide strip.",
+      "The details panel now keeps full header width; Switch file sits in a dedicated column on large screens and stacks cleanly below on phones.",
+      "Project and file selects keep ~40px touch targets on mobile. Scroll ownership is unchanged — pipeline file still uses [data-pipeline-workspace-scroll]."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_71aWWyZsQrFHENF1BuHzUkuCQuxp"
+  },
+  {
+    "slug": "2026-08-04-file-header-project-association",
+    "title": "File header shows project name left of stage",
+    "summary": "The pipeline file workspace now shows the associated project name to the left of the stage pill — click it to open the project or switch to sibling files.",
+    "body": [
+      "Project name sits in the top-left header cluster immediately left of the pipeline stage control.",
+      "Clicking the project opens a menu with Open project plus other files in that same project (current file marked). Files without a project show a muted No project label.",
+      "Sibling-file options reuse the existing pipeline switcher data filtered by project — same source as the header details Switch file list. Scroll ownership is unchanged ([data-pipeline-workspace-scroll])."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_GNmWmbTesPWgmrmT53fYTevj4QPU"
+  },
+  {
+    "slug": "2026-08-04-portals-progress-blocks-collapsed-default",
+    "title": "Portals & Progress: blocks start collapsed",
+    "summary": "Opening Portals & Progress now shows every block collapsed so you can scan titles and expand only what you need.",
+    "body": [
+      "Contact portal defaults, Action queue, Safe defaults, Link security, Client uploads inbox, Communications, and the other Portals & Progress sections all open collapsed on first visit.",
+      "Expand any block by tapping its header; drag-reorder and layout visibility still persist on the deal sheet via portalsProgressTabLayout.",
+      "Pipeline file scroll ownership is unchanged — still [data-pipeline-workspace-scroll]."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_46vqzK9D6HJvMQNxa1TjUHw232b8"
+  },
+  {
+    "slug": "2026-08-04-pfs-fillable-pdf-export",
+    "title": "Personal Financial Statement: fillable PDF export",
+    "summary": "Download a client-ready fillable PFS PDF from the block header — right next to the Direct Link control.",
+    "body": [
+      "A new download button sits immediately to the right of the Direct Link (chain) icon on the Personal Financial Statement block header.",
+      "It exports the full statement (applicant, assets, liabilities, Sections 1-8, and signatures) as a multi-page AcroForm PDF clients can type into and return.",
+      "Existing values are prefilled; blank schedule rows stay empty for the client. The shared Block PDF export helper can be reused by other blocks later.",
+      "Touch target stays ~40px; pipeline file scroll ownership is unchanged ([data-pipeline-workspace-scroll])."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_bhjRdoko8BpgqFechLYQnBQpbsJE"
+  },
+  {
+    "slug": "2026-08-04-vault-move-copy-to-sibling-file",
+    "title": "Document Vault: move or copy to another project file",
+    "summary": "When a loan file shares a project with others, folders, tasks, and documents can be moved or copied to a sibling file — structure preserved.",
+    "body": [
+      "In Documents → Explorer, every folder, file task, and file row offers Move / copy to file… when the current file has at least one other loan file in the same project.",
+      "Pick the destination sibling, choose Move or Copy, and confirm. Folders keep nested structure; tasks bring their config and documents; document copies reuse existing storage (no re-upload).",
+      "The picker is a mobile-friendly OverlayShell bottom sheet. Actions stay hidden when there are no project siblings. Vault scroll ownership is unchanged."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_98f8cLmWPrCr2zmEpGdyqzqohDKF"
+  },
+  {
+    "slug": "2026-08-04-triage-labels-modal-viewport",
+    "title": "Manage triage labels: modal fits the screen",
+    "summary": "The Manage triage labels dialog no longer clips at the bottom — header and New label stay visible while the list scrolls inside the panel.",
+    "body": [
+      "Opening Manage triage labels from a file Tasks block keeps the full panel within the viewport (max height ~90dvh), so the bottom edge and Close control stay reachable on short laptop and phone screens.",
+      "The label count and + New label controls stay pinned under the title; only the label list scrolls (overscroll-contained). Create/edit form content scrolls the same way when tall.",
+      "Rows are slightly denser while primary actions keep ~40px touch targets. Pipeline file scroll ownership is unchanged ([data-pipeline-workspace-scroll])."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_C8BWYpTTZYVyD4gZuRWwWuQkpQWE"
+  },
+  {
+    "slug": "2026-08-04-document-vault-folder-zip-download",
+    "title": "Document Vault: download folders as ZIP",
+    "summary": "Folder rows in the Documents explorer now have Download — packs the folder and all nested files into a ZIP with the original folder structure.",
+    "body": [
+      "Unassigned folders (and every other explorer folder row) now show Download next to Link Contact / Trash, matching file-row actions.",
+      "The ZIP uses the existing vault download pipeline: every downloadable file under that folder is included recursively, with paths rooted at the folder name so nested organization stays intact.",
+      "Empty folders show a clear disabled state / toast. Larger folders show progress toasts so the UI stays responsive. Download all, Download selected, and per-file Download are unchanged."
+    ],
+    "changeType": "added"
+  },
+  {
+    "slug": "2026-08-04-pfs-portal-phone-sync-fix",
+    "title": "Client portal PFS fields sync to the broker block",
+    "summary": "Residence/business phone and the rest of the Personal Financial Statement from a client fill link or portal assignment now appear on the broker PFS block.",
+    "body": [
+      "Submitting or autosaving a Personal Financial Statement from the client portal / direct fill link now merges the full structured statement into the file — including residence and business phone, city/state/ZIP, business name, assets, liabilities, and schedules.",
+      "Previously only a few summary totals were written into the deal, so phones and other header fields could look filled on the client side but stay blank for the broker.",
+      "If a client already submitted before this fix, ask them to Revise and Submit once more (or re-enter the missing phone and submit) so the broker block picks up the complete statement."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_Dx7Ltba5xkvLaM6tN6jGzaUdrbHw"
+  },
+  {
+    "slug": "2026-08-04-mobile-header-safe-area-top",
+    "title": "iPhone: top chrome clears the status bar",
+    "summary": "On phones, the app header (menu, Updates, Sign out) now sits below the iOS status bar so controls are tappable.",
+    "body": [
+      "Mobile master chrome now pads with the device safe-area inset at the top (same viewport-fit=cover contract already used for the home indicator).",
+      "Menu, help, refresh, Updates, alerts, and Sign out no longer sit under the clock / signal / battery on iPhone.",
+      "Pipeline locked-header height includes the inset so the single-row toolbar does not clip."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_5GhPBD2wUjHRLiRV2fE6Afm3LFas"
+  },
+  {
+    "slug": "2026-08-04-pfs-fillable-pdf-vault-save",
+    "title": "PFS fillable PDF: save to Document Vault",
+    "summary": "The Personal Financial Statement PDF control now offers Download to computer or Save to Document Vault.",
+    "body": [
+      "Clicking the fillable PDF icon on the Personal Financial Statement block opens a small menu (desktop) or bottom sheet (mobile) with two choices: Download to computer, or Save to Document Vault.",
+      "Save to Document Vault generates the same client-ready AcroForm PDF and creates a new vault document on the current loan file, placed in an existing PFS/Forms folder when present, or a new Forms folder.",
+      "Filename follows Personal-Financial-Statement-{file}.pdf. Loading and error toasts cover the upload; success reminds you to open the Documents tab. The shared block PDF export helper stays reusable for other blocks.",
+      "Touch targets stay ~40px; pipeline file scroll ownership is unchanged ([data-pipeline-workspace-scroll])."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_BFKp4C9ZyUcP6TA1EhWdYMNi6KYW"
+  },
+  {
+    "slug": "2026-08-04-vault-move-on-every-file",
+    "title": "Document Vault: Move on every file",
+    "summary": "Individual files in the Documents explorer now show the same Move control as folders — move or copy any file to a sibling loan in the project.",
+    "body": [
+      "Explorer file rows (inside tasks, folders, and Unassigned) now include Move next to Download, matching folder rows.",
+      "Works for any file type already linked to the loan — PDFs, images, and other vault documents. No content-type restriction.",
+      "Uses the existing Move / copy to file dialog (same project siblings). File tasks and folders keep their Move / copy actions."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_CwB97WpK8tWRPHs4mdKd9TWcPdQ1"
+  },
+  {
+    "slug": "2026-08-04-tasks-block-open-count-badge",
+    "title": "Tasks block badge shows open count",
+    "summary": "On Deal Info, the grey count next to TASKS now matches open tasks — not open plus completed.",
+    "body": [
+      "The Tasks collapsible header pill previously counted every linked task, so a file with 1 open and 1 done showed “2” while the status pill correctly said “1 OPEN”.",
+      "The indicator now uses the same open-task count as the status badge and the “N open · M total” toolbar line.",
+      "Collapsed and expanded headers stay consistent; completed-only files no longer show a misleading total in the grey pill."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_7FSsEhp1yr46rNJ91PYzytpLvLbh"
+  },
+  {
+    "slug": "2026-08-04-tasks-page-errands-stability",
+    "title": "Tasks: grocery runs stay open when you check items",
+    "summary": "Errands / groceries lists no longer collapse or flash busy after checking off an item — especially on phones.",
+    "body": [
+      "Checking a grocery or errand item used to reset the row’s expand/collapse state whenever Convex refreshed the task. Large runs collapsed mid-shopping; small runs could jump or clear store collapse prefs.",
+      "Expand/collapse is now tied to the task identity (and type), not every field update. Errand and checklist toggles no longer lock the whole row, so checkboxes stay usable while saving.",
+      "Touch targets for check-off, expand chevrons, and store collapse are larger (~40px). Compact vs full list controls work both ways. Progress chips (done/total items) are clearer on the row."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_7BxXiMAqHY5ay1QjKRqXZExGt8hX"
+  },
+  {
+    "slug": "2026-08-04-pipeline-hub-stage-pill-fix",
+    "title": "Pipeline hub: stage pill works again; file details always visible",
+    "summary": "Click a loan’s stage pill on the Pipeline list to change stage, and see client, project, and lender lines without hovering.",
+    "body": [
+      "On Pipeline View (grouped list), clicking the stage pill on a row opens the stage chooser again and saves with the same update path as the file header.",
+      "A triage highlight badge on the row no longer sits on top of the pill and blocks clicks. Hidden row-action controls also stop intercepting clicks when they are invisible.",
+      "File identity lines — title with client, project, ★ lender, and ownership — stay visible at all times on hub rows instead of appearing only on hover."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_D9FrBZ5NKGrMtpkf2JnG1mG22R92"
+  },
+  {
+    "slug": "2026-08-04-default-home-pipeline",
+    "title": "Pipeline is now the default home screen",
+    "summary": "Signing in or opening the app lands on Pipeline instead of Tasks. Brand and home links go to Pipeline too.",
+    "body": [
+      "After sign-in, visiting / while signed in, or following the logo / monogram home control now opens Pipeline (/pipeline).",
+      "Signed-in visits to the login screen also bounce to Pipeline. Settings “Back to app,” not-found, and error recovery go to Pipeline as well.",
+      "Tasks remains available from navigation; it is no longer treated as the app’s first screen."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_2eWCdg8JC1RM4oVEnEWNK1nSQNvo"
+  },
+  {
+    "slug": "2026-08-04-vault-document-floating-window",
+    "title": "Open Document Vault files in a floating window",
+    "summary": "View any vault document in a draggable window so it stays visible while you fill Deal Info, Financials, and other tabs.",
+    "body": [
+      "On a loan file Documents tab, View (and opening a file) uses the same floating window system as pipeline blocks.",
+      "Keep a PDF, image, or other previewed file open while you switch tabs and copy details into forms — the window stays until you Return or close it.",
+      "Multiple documents can float at once. Preview still supports the same file types as the rich document viewer."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_5nYaGeMQzk6EKJRzeW4TpmzdEF5k"
+  },
+  {
+    "slug": "2026-08-04-vault-move-always-visible",
+    "title": "Document Vault: Move always available",
+    "summary": "Move / copy to another loan file is always shown on documents, folders, and tasks — not only when project siblings already exist.",
+    "body": [
+      "Previously Move was hidden when a loan had no other files in the same project, so solo files never showed the control.",
+      "Move now appears whenever you can edit the vault. If there is no destination yet, the dialog explains how to add or open another loan file.",
+      "Destinations include other files in the same project first, then other loans in your organization you can edit — same transfer path, broader targets."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_5nYaGeMQzk6EKJRzeW4TpmzdEF5k"
+  },
+  {
+    "slug": "2026-08-04-change-link-hit-area",
+    "title": "Change link: tighter click target",
+    "summary": "On borrower and guarantor cards, Change link and Remove link only respond to clicks on the label — not the empty space across the row.",
+    "body": [
+      "Associated Contacts party cards (primary borrower, co-borrowers, guarantors) no longer stretch those controls to full card width.",
+      "The hit area matches the icon and text so accidental taps beside the label are less likely."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_4hA5KXMcWPoTZGYTSnsJj4Kn2ReG"
+  },
+  {
+    "slug": "2026-08-04-vault-document-window-button",
+    "title": "Float one Document Vault file without floating the whole vault",
+    "summary": "Use Window on a file row or in the document preview to open just that document in a floating window.",
+    "body": [
+      "In the Documents explorer, each file row now has View, Window, and Download. Window opens that document alone in a draggable floating panel — you do not need to float the entire Document Vault block first.",
+      "From the document View modal (and fullscreen enlarge), Window / Open in window does the same and closes the modal so you can keep working on Deal Info, Financials, or other tabs with the file beside you.",
+      "View stays a normal preview. Floating reuses the same rich document viewer (PDFs, images, and other previewable types)."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_2De49ku8CPpDftnqWcmrebKkAmVL"
+  },
+  {
+    "slug": "2026-08-04-pipeline-hub-stage-pill-fix-2",
+    "title": "Pipeline hub stage pill opens on first click",
+    "summary": "Clicking a loan’s stage pill on Pipeline View opens the stage chooser immediately — the previous fix still left the picker blocked.",
+    "body": [
+      "The earlier hub fix stopped overlays from stealing clicks, but the stage pill still swapped to a native control after click and never opened the chooser. Chromium requires showPicker during the same user gesture; calling it from a later effect fails silently.",
+      "Stage pills now use a transparent native select over the colored badge, so the first click opens the OS stage list. On Pipeline hub, contextual tips sit top-right (and ignore clicks outside the tip card) so they never cover stage pills.",
+      "File identity lines (title/client, project, ★ lender) stay fully opaque on hub rows. Ownership chips remain always visible when present."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_AdecYcphwnGRaCvKrPV2k8jF9RSw"
+  },
+  {
+    "slug": "2026-08-04-owner-team-password-reset",
+    "title": "Reset any team member’s password from Settings",
+    "summary": "Workspace owners can pick a member in Team management, set a new password, and sign them out of all sessions in one step.",
+    "body": [
+      "In Settings → Team management, use Reset password on a member row (or choose them in the Reset password form), enter the new password, then choose Reset password & invalidate sessions.",
+      "The member is signed out everywhere and must sign in with the password you set. Owner accounts are not reset from this form; only people with member-invite or role-management access can use it.",
+      "Passwords must meet the existing workspace policy (at least 6 characters). Deactivated members can still have their password reset so they can sign in again after reactivation."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_8UFsg6t8fai8LsWAeu9ySZZrtDTL"
+  },
+  {
+    "slug": "2026-08-04-loan-file-delete-fix",
+    "title": "Loan file Delete works reliably again",
+    "summary": "Permanent delete no longer fails with a vague “Couldn't save” on hub bulk actions, and shared files with portal/vault data clean up safely.",
+    "body": [
+      "Hub bulk Delete was sending the wrong argument name to Convex, which failed validation and showed only “Couldn't save — please try again.” Delete, Archive, and Restore now accept the correct identity and surface the real server message when something still goes wrong.",
+      "File delete cleanup no longer scans entire messaging/portal tables (which could time out on larger workspaces). Document Vault tasks, folders, notes, and related links for that file are removed with the loan file.",
+      "Owners still use Delete / Danger zone → Delete file. Shared recipients should use Leave share instead of Delete."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-04-leave-loan-share",
+    "title": "Leave a shared loan file (Google Docs style)",
+    "summary": "If someone shared a loan file with you, you can Leave share — your access ends; the owner’s file stays.",
+    "body": [
+      "On Pipeline hub, shared-view rows show Leave share (instead of Delete). Select only shared files and the bulk bar becomes Leave share.",
+      "Inside a shared file, Settings → Danger zone offers Leave share instead of permanent Delete.",
+      "Leaving removes only your explicit loan share. It does not delete the owner’s file or other collaborators’ access. If your access is inherited from a project or client share, you’ll see a clear message to change sharing there instead."
+    ],
+    "changeType": "added"
+  },
+  {
+    "slug": "2026-08-04-mobile-no-input-autozoom",
+    "title": "iPhone forms no longer auto-zoom on focus",
+    "summary": "Focusing search, filters, and text fields on mobile stays at normal scale — and you can still pinch-zoom the page.",
+    "body": [
+      "iOS Safari was zooming in whenever a form field used a font smaller than 16px (common on dense pipeline filters and search bars), and the page often stayed stuck zoomed in.",
+      "Every text input, select, and textarea on phones and touch devices is now floored at 16px so focus never triggers that zoom. Pinch-zoom remains available.",
+      "This replaces an earlier incomplete fix that Tailwind size classes could override."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_FYuN1JyWzC3SUdncm5CD5QgRXULN"
+  },
+  {
+    "slug": "2026-08-04-iphone-pipeline-hub-layout",
+    "title": "iPhone Pipeline hub layout cleaned up",
+    "summary": "Triage badges no longer cover titles, project lines wrap cleanly, the top chrome is less cramped, and the bottom nav no longer eats the last row.",
+    "body": [
+      "On phones, triage badges (for example CLIENT: Action Needed) sit on their own row above the card content instead of floating over the loan title.",
+      "Client, project, and lender identity lines wrap instead of truncating mid-word. Stage, stars, and row actions sit on clearer stacked rows; the stray open/external-link icon is hidden on mobile because tapping the title already opens the file.",
+      "Masterpage header keeps search, updates, alerts, and account — help, refresh, live status, and theme controls move out of the narrow phone strip. Extra bottom spacer (with safe-area) keeps the last loan card clear of the bottom nav."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_Fn487NGMmTjh1QyKLqdHxfetKpdr"
+  },
+  {
+    "slug": "2026-08-04-iphone-file-chrome-density",
+    "title": "iPhone loan file: more room to work",
+    "summary": "Opening a loan file on iPhone now keeps most of the screen for Deal Info blocks — funding/rate/owner sit behind Details, and the empty gap under the status bar is gone.",
+    "body": [
+      "The file snap header was stacking safe-area padding twice and spreading title, stage, metrics, tabs, and favorites across too many rows, leaving only a sliver of workspace above the bottom nav.",
+      "Phone chrome is now two dense rows (deal name + stage/project) with Fibonacci-tight spacing. Funding, rate, term, and owner stay one tap away under Details (collapsed by default). Tabs and Favorites use shorter chips and less vertical padding.",
+      "Stage and project switchers stay visible without expanding Details. Safe-area under the Dynamic Island is applied once so controls are not covered and there is no large empty white band."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_6R6LCRfdeJBrAHWbMeRawFhaJZQE"
+  },
+  {
+    "slug": "2026-08-04-iphone-file-safe-area-padding",
+    "title": "iPhone loan file: status bar and bottom spacing fixed",
+    "summary": "Stage and title clear the Dynamic Island again, and the oversized empty band under the bottom nav is gone.",
+    "body": [
+      "After the density update, the file sheet under-padded the top (status bar could cover the stage pill) and over-padded the bottom (stacked safe-area on the sheet body, scroll lead, and an 8rem spacer).",
+      "Top safe-area is applied once on the Vaul sheet (with a small breath so controls stay tappable). Bottom clearance is a single tighter spacer inside the file scroller so last blocks clear the nav without a dead white band under the bar.",
+      "Pipeline hub bottom spacing is unchanged."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_26NcJ1F7iUrmHJX9z3V4xhRKbxiY"
+  },
+  {
+    "slug": "2026-08-04-iphone-bottom-nav-flush",
+    "title": "iPhone bottom nav sits flush to the edge",
+    "summary": "The mobile tab bar now paints edge-to-edge with only home-indicator inset — no more empty white band under the icons.",
+    "body": [
+      "On iPhone, the bottom navigation looked floated: a large empty band sat under the icons above the home indicator because a frozen 24px / 1.5rem pad was stacked on top of safe-area padding.",
+      "The bar is now fixed to the physical bottom of the screen. Background and blur extend to the edge; icons sit above the home indicator using only env(safe-area-inset-bottom) inside the bar — no extra rem padding.",
+      "This applies everywhere the bottom nav shows (Pipeline hub, loan file, Tasks, Settings, and other routes)."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_7qyAPZbeZ9Y1JHyj3jegZmv1i1K5"
+  },
+  {
+    "slug": "2026-08-04-iphone-bottom-nav-icon-flush",
+    "title": "iPhone bottom nav icons sit on the home indicator",
+    "summary": "Tab icons no longer float above a thick empty band — they sit tight above the home indicator with only true safe-area clearance.",
+    "body": [
+      "A prior fix removed stacked rem padding on the bar, but icons were still vertically centered inside tall min-height tap targets. That left empty chrome under the glyphs on top of the home-indicator inset.",
+      "Phone dock icons are now pinned to the bottom of their ~40px hit targets (empty height lives above). The bar still paints edge-to-edge; bottom padding is only env(safe-area-inset-bottom).",
+      "Applies everywhere the mobile bottom nav shows. Content spacers still clear the shorter dock."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_9TqPLhrh9BST4LQp4LfcSVra3Yqb"
+  },
+  {
+    "slug": "2026-08-04-iphone-bottom-nav-home-indicator-flush",
+    "title": "iPhone bottom nav sits into the home indicator",
+    "summary": "Tab icons sit lower — the large empty band under the dock is gone, with only a minimal inset above the home indicator.",
+    "body": [
+      "Earlier flush fixes still reserved the full iPhone safe-area (~34px) under the icons, which read as a thick empty white band.",
+      "The bottom nav now uses a minimal home-indicator pad (about a quarter of the old inset, typically a few pixels) and pulls icons slightly into that zone while keeping ~40px tap targets. The bar paints as a continuous edge-to-edge surface with a thin top hairline — no floating shadow island.",
+      "Content spacers and batch bars match the shorter dock so lists are not over-cleared. Applies everywhere the mobile bottom nav shows."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_2DBUXEMAjR87mYsqmPosQhm9LSMT"
+  },
+  {
+    "slug": "2026-08-04-mobile-saas-drawer-safe-area",
+    "title": "Mobile side menu clears the status bar and covers the bottom dock",
+    "summary": "Opening the hamburger menu on iPhone no longer leaves a white bottom strip or puts the brand under the clock.",
+    "body": [
+      "The green SaaS navigation drawer now paints full-bleed from under the status bar through the physical bottom of the screen. Brand title and Funding & pipeline sit below the Dynamic Island via safe-area padding.",
+      "While the menu is open, the white bottom tab bar is fully covered and hidden so the More hamburger cannot show through a lower strip. Closing the menu restores the flush bottom dock.",
+      "Help center and related mobile panels also get matching top/bottom safe-area treatment for consistency."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_EEcLQKXAfBrhyV33DBV7GVULgB1K"
+  }
+]

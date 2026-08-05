@@ -21,6 +21,8 @@ export type DocumentVaultCommandBarProps = {
   uploadBusy: boolean;
   searchQuery: string;
   onSearchChange: (value: string) => void;
+  /** Same handler as Explorer + Tasks — opens file-task batch create. */
+  onAddFileTasks?: () => void;
   onCreate?: () => void;
   onCompile?: () => void;
   onRecallFromClientVault?: () => void;
@@ -51,6 +53,7 @@ export function DocumentVaultCommandBar({
   uploadBusy,
   searchQuery,
   onSearchChange,
+  onAddFileTasks,
   onCreate,
   onCompile,
   onRecallFromClientVault,
@@ -82,6 +85,20 @@ export function DocumentVaultCommandBar({
       <div className="flex min-w-0 flex-col gap-2.5">
         {/* Row 1 — primary vault actions (wraps cleanly on narrow widths) */}
         <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
+          {canMutate && onAddFileTasks ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={actionButtonClass}
+              onClick={onAddFileTasks}
+              data-testid="document-vault-add-file-tasks-command"
+              title="Add file tasks"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Tasks
+            </Button>
+          ) : null}
           {canMutate && onCreate ? (
             <Button
               type="button"

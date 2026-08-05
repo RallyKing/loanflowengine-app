@@ -66,17 +66,23 @@ function ContactHubPageInner({ contactId }: ContactHubPageProps) {
   const [draft, setDraft] = useState<IndividualHubDraft>(() =>
     normalizeContactHubDraft(),
   );
+  const [draftContactId, setDraftContactId] = useState<Id<"contacts"> | null>(
+    null,
+  );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [entityProfileModalId, setEntityProfileModalId] =
     useState<Id<"clients"> | null>(null);
 
+  // Hydrate draft when the contact document first loads or the route id changes.
+  // Do not clobber in-progress edits on every reactive selectedDoc reference.
   useEffect(() => {
-    if (selectedDoc) {
-      setDraft(contactHubDraftFromDoc(selectedDoc));
-    }
-  }, [selectedDoc]);
+    if (!selectedDoc) return;
+    if (draftContactId === contactId) return;
+    setDraft(contactHubDraftFromDoc(selectedDoc));
+    setDraftContactId(contactId);
+  }, [selectedDoc, contactId, draftContactId]);
 
   const update = useMutation(api.contacts.update);
   const remove = useMutation(api.contacts.remove);
@@ -87,6 +93,38 @@ function ContactHubPageInner({ contactId }: ContactHubPageProps) {
   const patchDraft = useCallback((patch: Partial<IndividualHubDraft>) => {
     setDraft((current) => normalizeContactHubDraft({ ...current, ...patch }));
   }, []);
+
+  const patchEmails = useCallback(
+    (
+      next:
+        | IndividualHubDraft["emails"]
+        | ((prev: IndividualHubDraft["emails"]) => IndividualHubDraft["emails"]),
+    ) => {
+      setDraft((current) =>
+        normalizeContactHubDraft({
+          ...current,
+          emails: typeof next === "function" ? next(current.emails) : next,
+        }),
+      );
+    },
+    [],
+  );
+
+  const patchPhones = useCallback(
+    (
+      next:
+        | IndividualHubDraft["phones"]
+        | ((prev: IndividualHubDraft["phones"]) => IndividualHubDraft["phones"]),
+    ) => {
+      setDraft((current) =>
+        normalizeContactHubDraft({
+          ...current,
+          phones: typeof next === "function" ? next(current.phones) : next,
+        }),
+      );
+    },
+    [],
+  );
 
   const onSave = useCallback(async () => {
     const safe = normalizeContactHubDraft(draft);
@@ -105,6 +143,9 @@ function ContactHubPageInner({ contactId }: ContactHubPageProps) {
         ...contactPiiMutationArgs(safe),
         memberUserKey: memberKey,
       });
+      // Re-baseline from the just-saved draft (server will converge via query).
+      setDraft(safe);
+      setDraftContactId(contactId);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -201,6 +242,8 @@ function ContactHubPageInner({ contactId }: ContactHubPageProps) {
         contactRoles={contactRoles}
         editorDraft={draft}
         onPatchDraft={patchDraft}
+        onPatchEmails={patchEmails}
+        onPatchPhones={patchPhones}
         onOpenEntityProfile={setEntityProfileModalId}
         onOpenEntityInHub={openEntityInHub}
         saveError={saveError}

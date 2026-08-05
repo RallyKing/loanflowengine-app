@@ -1061,6 +1061,10 @@ export const upsert = mutation({
     memberUserKey: v.string(),
     ...lenderInput,
   },
+  returns: v.object({
+    action: v.union(v.literal("inserted"), v.literal("updated")),
+    id: v.id("lenders"),
+  }),
   handler: async (ctx, { organizationId, memberUserKey, ...args }) => {
     await assertLenderMutationAuth(ctx, organizationId, memberUserKey, "lenders.edit");
     if (!args.company || !args.company.trim()) {
@@ -1118,6 +1122,139 @@ export const upsert = mutation({
         inserted,
         "lender_created",
         `Added lender “${inserted.company.trim() || "Lender"}”`,
+      );
+    }
+    return { action: "inserted" as const, id };
+  },
+});
+
+/**
+ * Lightweight create/upsert for Deliver-to-Lender modal.
+ * - Directory add: same idempotent keys as `upsert` (shared catalog).
+ * - One-time recipient: org-scoped row so it does not pollute the global catalog.
+ */
+export const upsertDeliveryRecipient = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    company: v.string(),
+    contactName: v.optional(v.string()),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    titleRole: v.optional(v.string()),
+    oneTimeRecipient: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    action: v.union(v.literal("inserted"), v.literal("updated")),
+    id: v.id("lenders"),
+  }),
+  handler: async (ctx, args) => {
+    await assertLenderMutationAuth(
+      ctx,
+      args.organizationId,
+      args.memberUserKey,
+      "lenders.edit",
+    );
+    const company = args.company.trim();
+    if (!company) throw new Error("Company is required");
+
+    const oneTime = args.oneTimeRecipient === true;
+    const now = Date.now();
+    const doc = buildDoc(
+      {
+        company,
+        contactName: args.contactName,
+        email: args.email,
+        phone: args.phone,
+        titleRole: args.titleRole,
+        source: oneTime ? "One-time delivery recipient" : "Manual Entry",
+        section: oneTime ? "Delivery Recipient" : "Manual Addition",
+        notes: oneTime
+          ? "Created from Deliver to Lender as a one-time / custom recipient."
+          : undefined,
+      },
+      now,
+    );
+
+    let existing: Doc<"lenders"> | null = null;
+    if (doc.emailKey) {
+      existing = await ctx.db
+        .query("lenders")
+        .withIndex("by_company_email", (q) =>
+          q.eq("companyKey", doc.companyKey).eq("emailKey", doc.emailKey),
+        )
+        .first();
+    }
+    if (!existing && doc.contactKey) {
+      existing = await ctx.db
+        .query("lenders")
+        .withIndex("by_company_contact", (q) =>
+          q.eq("companyKey", doc.companyKey).eq("contactKey", doc.contactKey),
+        )
+        .first();
+    }
+    if (existing) {
+      const god = await callerHasUnrestrictedOrgDataAccess(ctx, args.memberUserKey);
+      if (
+        !god &&
+        existing.organizationId &&
+        existing.organizationId !== args.organizationId
+      ) {
+        throw new Error("A matching lender belongs to a different organization.");
+      }
+
+      const sameOrg =
+        existing.organizationId == null ||
+        existing.organizationId === args.organizationId;
+
+      // One-time recipients intentionally create an org-scoped row when the
+      // only match is the shared catalog (avoid mutating global lenders).
+      const reuseExisting =
+        sameOrg &&
+        (!oneTime || existing.organizationId === args.organizationId);
+
+      if (reuseExisting) {
+        if (!oneTime) {
+          // Directory pick: never overwrite a full lender profile with a
+          // sparse modal payload — just select the match.
+          return { action: "updated" as const, id: existing._id };
+        }
+        const before = existing;
+        await ctx.db.patch(existing._id, {
+          ...doc,
+          organizationId: args.organizationId,
+          createdAt: existing.createdAt,
+          updatedAt: now,
+          enrichedAt: existing.enrichedAt ?? 0,
+        });
+        const after = await ctx.db.get(existing._id);
+        if (after) {
+          await applyLenderWrite(ctx, before, after);
+          await appendLenderFeed(
+            ctx,
+            after,
+            "lender_updated",
+            `Updated delivery recipient “${after.company.trim() || "Lender"}”`,
+          );
+        }
+        return { action: "updated" as const, id: existing._id };
+      }
+    }
+
+    const id = await ctx.db.insert("lenders", {
+      ...doc,
+      ...(oneTime ? { organizationId: args.organizationId } : {}),
+    });
+    const inserted = await ctx.db.get(id);
+    if (inserted) {
+      await applyLenderWrite(ctx, null, inserted);
+      await appendLenderFeed(
+        ctx,
+        inserted,
+        "lender_created",
+        oneTime
+          ? `Added one-time delivery recipient “${inserted.company.trim() || "Lender"}”`
+          : `Added lender “${inserted.company.trim() || "Lender"}”`,
       );
     }
     return { action: "inserted" as const, id };

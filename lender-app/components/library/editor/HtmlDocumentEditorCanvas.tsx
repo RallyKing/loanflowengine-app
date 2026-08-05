@@ -77,6 +77,7 @@ export type HtmlDocumentEditorCanvasProps = {
   onClosePreview?: () => void;
   onToggleFullscreen?: () => void;
   previewFullscreen?: boolean;
+  onOpenInWindow?: () => void;
   onOpenProperties?: () => void;
   fileName?: string;
   onError?: (message: string) => void;
@@ -99,6 +100,7 @@ export function HtmlDocumentEditorCanvas({
   onClosePreview,
   onToggleFullscreen,
   previewFullscreen = false,
+  onOpenInWindow,
   onOpenProperties,
   fileName,
   onError,
@@ -208,6 +210,7 @@ export function HtmlDocumentEditorCanvas({
         onClosePreview={onClosePreview}
         onToggleFullscreen={onToggleFullscreen}
         previewFullscreen={previewFullscreen}
+        onOpenInWindow={onOpenInWindow}
         onOpenProperties={onOpenProperties}
         fileName={fileName}
         canEnterEditMode={false}

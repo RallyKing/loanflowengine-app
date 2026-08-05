@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -387,7 +387,7 @@ function EventDetailInner({ eventId }: Props) {
   }
 
   if (bundle === undefined) {
-    return <p className="text-sm text-muted-foreground">Loading event…</p>;
+    return <p className="text-sm text-muted-foreground">Loading eventâ€¦</p>;
   }
 
   if (bundle === null) {
@@ -551,7 +551,7 @@ function EventDetailInner({ eventId }: Props) {
                 >
                   <p className="text-xs text-muted-foreground">
                     {event.status}
-                    {event.location ? ` · ${event.location}` : ""}
+                    {event.location ? ` Â· ${event.location}` : ""}
                   </p>
                   {bundle.collaborators.length > 0 ? (
                     <ul className="flex flex-wrap gap-1.5">
@@ -804,7 +804,7 @@ function EventDetailInner({ eventId }: Props) {
               <button
                 type="button"
                 className={cn(
-                  "fixed inset-0 backdrop-blur-[2px] lg:hidden",
+                  "fixed inset-0 lg:hidden",
                   overlayScrimClass(),
                 )}
                 style={layerZIndexStyle("POPOVER")}
@@ -872,7 +872,7 @@ export function EventDetailClient({ eventId }: Props) {
   return (
     <ConvexQueryBoundary
       fallback={
-        <p className="px-4 py-8 text-sm text-muted-foreground">Loading event…</p>
+        <p className="px-4 py-8 text-sm text-muted-foreground">Loading eventâ€¦</p>
       }
     >
       <EventDetailInner eventId={eventId} />

@@ -18,6 +18,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { LenderDeliveryBlockPanel } from "@/components/library/LenderDeliveryBlockPanel";
+import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
 import { cn } from "@/lib/cn";
 import {
   buildFolderTree,
@@ -30,6 +31,8 @@ import {
   buildVerifyAccessPath,
   readPortalAccessProof,
 } from "@/lib/portalAccessProof";
+import { PortalPageComposition } from "@/components/portal/PortalPageSectionRenderer";
+import type { PortalPageSectionInstance } from "@/lib/portalPageSections";
 
 type LenderDeliveryPortalClientProps = {
   deliveryToken: string;
@@ -62,6 +65,10 @@ export function LenderDeliveryPortalClient({
     token: deliveryToken,
     accessProof,
   });
+  const composition = useQuery(
+    api.portalDefaults.resolveCompositionForLenderDelivery,
+    { token: deliveryToken },
+  );
   const recordAccess = useMutation(
     api.lenderDeliveryPortal.recordDeliveryPortalAccess,
   );
@@ -176,25 +183,18 @@ export function LenderDeliveryPortalClient({
 
   const canDownload = delivery.permission === "downloadable";
 
-  return (
-    <div className="min-h-dvh bg-neutral-50 px-4 py-10">
-      <div className="mx-auto max-w-3xl">
-        <header className="mb-6">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {delivery.workspaceName}
-          </p>
-          <h1 className="mt-1 flex items-center gap-2 text-lg font-semibold text-foreground">
-            <Shield className="h-5 w-5 text-primary" aria-hidden />
-            Lender Data Room
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Secure package for {delivery.lenderName} · {delivery.fileLabel}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {canDownload ? "View and download" : "View only"} · Read-only deal data
-          </p>
-        </header>
+  const useComposition =
+    composition?.status === "ok" && (composition.sections?.length ?? 0) > 0;
+  const compositionChrome =
+    composition?.status === "ok" ? composition.chrome ?? null : null;
+  const compositionUsesChrome = Boolean(
+    compositionChrome &&
+      ((compositionChrome.sidebar?.items?.length ?? 0) > 0 ||
+        compositionChrome.top),
+  );
 
+  const packageBody = (
+    <>
         {canDownload ? (
           <div
             className="sticky top-4 z-10 mb-6 rounded-dlc-lg border border-border/80 bg-white p-3 shadow-dlc-2"
@@ -250,23 +250,104 @@ export function LenderDeliveryPortalClient({
             ))}
           </section>
         ) : null}
+    </>
+  );
 
-        <section data-testid="lender-data-room-documents">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Documents
-          </h2>
-          <LenderDataRoomDocumentTree
-            folders={delivery.folders}
-            documents={delivery.documents}
-            canDownload={canDownload}
-            onFolderExpand={(folderName, folderId) =>
-              emitEngagement("folder_expanded", { folderName, folderId })
-            }
-            onDocumentPreview={(documentTitle, documentId) =>
-              emitEngagement("document_previewed", { documentTitle, documentId })
-            }
+  return (
+    <div
+      className={
+        compositionUsesChrome
+          ? "min-h-dvh bg-neutral-50 px-0 py-0 sm:px-3 sm:py-6"
+          : "min-h-dvh bg-neutral-50 px-4 py-10"
+      }
+    >
+      <div
+        className={
+          compositionUsesChrome ? "mx-auto max-w-6xl" : "mx-auto max-w-3xl"
+        }
+      >
+        {useComposition && composition ? (
+          <PortalPageComposition
+            className="mb-6"
+            sections={composition.sections as PortalPageSectionInstance[]}
+            chrome={compositionChrome}
+            context={{
+              ...composition.context,
+              fileLabel:
+                composition.context?.fileLabel ?? delivery.fileLabel,
+              workspaceName:
+                composition.context?.workspaceName ?? delivery.workspaceName,
+              outstandingCount:
+                composition.context?.outstandingCount ??
+                delivery.documents.length,
+            }}
+            slots={{
+              documentPackage: (
+                <div className="space-y-4">
+                  {packageBody}
+                  <LenderDataRoomDocumentTree
+                    folders={delivery.folders}
+                    documents={delivery.documents}
+                    canDownload={canDownload}
+                    onFolderExpand={(folderName, folderId) =>
+                      emitEngagement("folder_expanded", {
+                        folderName,
+                        folderId,
+                      })
+                    }
+                    onDocumentPreview={(documentTitle, documentId) =>
+                      emitEngagement("document_previewed", {
+                        documentTitle,
+                        documentId,
+                      })
+                    }
+                  />
+                </div>
+              ),
+            }}
           />
-        </section>
+        ) : (
+          <header className="mb-6">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {delivery.workspaceName}
+            </p>
+            <h1 className="mt-1 flex items-center gap-2 text-lg font-semibold text-foreground">
+              <Shield className="h-5 w-5 text-primary" aria-hidden />
+              Lender Data Room
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Secure package for {delivery.lenderName} · {delivery.fileLabel}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {canDownload ? "View and download" : "View only"} · Read-only deal data
+            </p>
+          </header>
+        )}
+
+        {!useComposition ? (
+          <>
+            {packageBody}
+            <section data-testid="lender-data-room-documents">
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Documents
+              </h2>
+              <LenderDataRoomDocumentTree
+                folders={delivery.folders}
+                documents={delivery.documents}
+                canDownload={canDownload}
+                onFolderExpand={(folderName, folderId) =>
+                  emitEngagement("folder_expanded", { folderName, folderId })
+                }
+                onDocumentPreview={(documentTitle, documentId) =>
+                  emitEngagement("document_previewed", {
+                    documentTitle,
+                    documentId,
+                  })
+                }
+              />
+            </section>
+          </>
+        ) : null}
 
         {delivery.documents.length === 0 && delivery.folders.length === 0 ? (
           <p className="text-sm text-muted-foreground">No documents in this package.</p>
@@ -474,17 +555,33 @@ function LenderDeliveryDocumentRow({
   onPreview?: () => void;
 }) {
   const title = doc.title;
-  const fileName = doc.fileName;
+  const fileName = doc.fileName ?? doc.title;
   const contentType = doc.contentType;
   const url = doc.url;
-  const isPdf = (contentType ?? "").includes("pdf") || fileName?.endsWith(".pdf");
-  const isImage = (contentType ?? "").startsWith("image/");
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const handlePreview = () => {
     onPreview?.();
     setPreviewOpen(true);
   };
+
+  const previewPane =
+    url && (previewOpen || !canDownload) ? (
+      <div
+        className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
+        onContextMenu={(e) => e.preventDefault()}
+        onMouseEnter={!canDownload ? () => onPreview?.() : undefined}
+        data-testid="lender-doc-preview-pane"
+      >
+        <RichFilePreview
+          url={url}
+          fileName={fileName}
+          contentType={contentType}
+          protectMedia={!canDownload}
+          viewportClassName="min-h-[min(70vh,32rem)] max-h-[min(70vh,32rem)]"
+        />
+      </div>
+    ) : null;
 
   return (
     <li
@@ -498,8 +595,8 @@ function LenderDeliveryDocumentRow({
           <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{title}</p>
-            {fileName ? (
-              <p className="truncate text-xs text-muted-foreground">{fileName}</p>
+            {doc.fileName ? (
+              <p className="truncate text-xs text-muted-foreground">{doc.fileName}</p>
             ) : null}
           </div>
         </div>
@@ -531,64 +628,7 @@ function LenderDeliveryDocumentRow({
         )}
       </div>
 
-      {!canDownload && url ? (
-        <div
-          className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
-          onContextMenu={(e) => e.preventDefault()}
-          onMouseEnter={() => onPreview?.()}
-        >
-          {isPdf ? (
-            <iframe
-              title={title}
-              src={`${url}#toolbar=0&navpanes=0`}
-              className="h-[min(70vh,32rem)] w-full pointer-events-auto"
-              sandbox="allow-scripts allow-same-origin"
-            />
-          ) : isImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={title}
-              className="max-h-[min(70vh,32rem)] w-full object-contain pointer-events-none"
-              draggable={false}
-              onContextMenu={(e) => e.preventDefault()}
-            />
-          ) : (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              Inline preview not available for this file type.
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      {canDownload && previewOpen && url ? (
-        <div
-          className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
-          onContextMenu={(e) => e.preventDefault()}
-        >
-          {isPdf ? (
-            <iframe
-              title={title}
-              src={`${url}#toolbar=0&navpanes=0`}
-              className="h-[min(70vh,32rem)] w-full pointer-events-auto"
-              sandbox="allow-scripts allow-same-origin"
-            />
-          ) : isImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={title}
-              className="max-h-[min(70vh,32rem)] w-full object-contain pointer-events-none"
-              draggable={false}
-              onContextMenu={(e) => e.preventDefault()}
-            />
-          ) : (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              Inline preview not available for this file type.
-            </p>
-          )}
-        </div>
-      ) : null}
+      {previewPane}
     </li>
   );
 }

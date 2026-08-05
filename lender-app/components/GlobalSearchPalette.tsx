@@ -311,7 +311,7 @@ export function GlobalSearchPalette() {
       {open ? (
         <div
           className={cn(
-            "fixed inset-0 flex justify-center backdrop-blur-[2px]",
+            "fixed inset-0 flex justify-center",
             shellMotionTw.searchBackdrop,
             !motionReady && "transition-none",
             overlayScrimClass(),

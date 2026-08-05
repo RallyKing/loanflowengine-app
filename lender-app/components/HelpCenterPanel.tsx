@@ -251,7 +251,7 @@ export function HelpCenterPanel() {
   return (
     <div
       className={cn(
-        "fixed inset-0 flex justify-end backdrop-blur-[1px]",
+        "fixed inset-0 flex justify-end",
         overlayScrimClass(),
       )}
       style={layerZIndexStyle("HELP")}
@@ -268,10 +268,11 @@ export function HelpCenterPanel() {
       <aside
         className={cn(
           "relative flex h-full w-full max-w-xl flex-col border-l border-border bg-background shadow-2xl",
+          "max-md:pb-[env(safe-area-inset-bottom,0px)]",
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3 sm:px-5">
+        <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3 sm:px-5 max-md:pt-[max(0.75rem,env(safe-area-inset-top,0px))]">
           <div className="mt-0.5 rounded-lg bg-primary/10 p-2 text-primary">
             <BookOpen className="h-5 w-5" aria-hidden />
           </div>

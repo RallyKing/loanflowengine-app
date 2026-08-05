@@ -3,6 +3,7 @@
 import { forwardRef, type InputHTMLAttributes } from "react";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { MOBILE_SAFE_FORM_FONT_CLASS } from "@/lib/ui/mobileInputZoom";
 import { opSearchFieldClass } from "@/lib/ui/operationalInputs";
 
 export type SearchFieldProps = Omit<
@@ -52,7 +53,9 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(
             "pl-9",
             showClear && "pr-9",
             className,
-            inputClassName
+            inputClassName,
+            // Re-assert after caller className so twMerge cannot shrink below 16px on mobile.
+            MOBILE_SAFE_FORM_FONT_CLASS,
           )}
           {...inputProps}
         />

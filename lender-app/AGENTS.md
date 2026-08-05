@@ -2,6 +2,17 @@
 
 The app is **Direct Lending Connection** (this repo or parent folder on disk may still be named e.g. “Lender List”).
 
+## Product Updates (required on user-facing ships)
+
+After shipping user-facing work, **publish a Product Updates entry** in the same session so the masterpage **Updates** bell shows what changed.
+
+- **UI:** `components/ProductUpdatesBell.tsx` (title + summary + expandable details)
+- **Table:** `productReleasePosts` via `productKnowledge:operatorPublishReleasePost` (operator-gated; stable `slug` = idempotent) or Settings → Product knowledge
+- **Session seed file:** `lib/product-knowledge/sessionReleasePosts.json` — append entries, then publish
+- Each entry needs **title**, **summary**, and **body** paragraphs (full description). Only list confirmed shipped work.
+
+See `lib/product-knowledge/README.md`.
+
 ## Convex backend sync
 
 After you edit anything under `convex/` (new or renamed `tasks:*`, `lenders:*`, schema, etc.), the **running deployment** must include those functions or the client will error (e.g. “Could not find public function”).

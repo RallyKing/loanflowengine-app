@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { APP_HOME_HREF } from "@/lib/brandIdentity";
 import { cn } from "@/lib/cn";
 
 export default function NotFound() {
@@ -9,14 +10,14 @@ export default function NotFound() {
         That URL does not match any page in this app.
       </p>
       <Link
-        href="/tasks"
+        href={APP_HOME_HREF}
         className={cn(
           "inline-flex h-9 items-center justify-center rounded-md bg-brand-accent px-4 text-sm font-medium text-brand-accent-foreground shadow-sm",
           "hover:bg-brand hover:text-brand-foreground",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         )}
       >
-        Back to tasks
+        Back to pipeline
       </Link>
     </div>
   );

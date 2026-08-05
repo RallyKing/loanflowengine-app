@@ -43,6 +43,8 @@ import { OperationalSkeletonList } from "@/components/ui/OperationalSkeleton";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
 import { simpleDeleteConfirm } from "@/lib/ui/confirmDestructive";
+import { hubLoanFileActionCapabilities } from "@/lib/pipeline/hubLoanFileActions";
+import { convexClientErrorMessage } from "@/lib/ui/convexErrorMessage";
 import {
   pipelineHubClientHref,
   pipelineHubProjectHref,
@@ -156,6 +158,7 @@ import {
   Bookmark,
   Rows3,
   LayoutList,
+  LogOut,
   SlidersHorizontal,
   ChevronDown,
 } from "lucide-react";
@@ -633,6 +636,7 @@ export function PipelinePageClient() {
   const archivePipeline = useMutation(api.pipeline.archive);
   const unarchivePipeline = useMutation(api.pipeline.unarchive);
   const removePipeline = useMutation(api.pipeline.remove);
+  const leaveShare = useMutation(api.pipelineFileShares.leaveShare);
 
   const hubReturnParams = useMemo(
     () => ({
@@ -1228,6 +1232,25 @@ export function PipelinePageClient() {
     return false;
   }, [bulkIds, rowById]);
 
+  const bulkSelectionCaps = useMemo(() => {
+    let owned = 0;
+    let leaveable = 0;
+    for (const id of bulkIds) {
+      const row = rowById.get(id);
+      if (!row) continue;
+      const caps = hubLoanFileActionCapabilities(row);
+      if (caps.canDelete) owned += 1;
+      if (caps.canLeaveShare) leaveable += 1;
+    }
+    return {
+      owned,
+      leaveable,
+      allLeaveable: bulkIds.size > 0 && leaveable === bulkIds.size,
+      allOwned: bulkIds.size > 0 && owned === bulkIds.size,
+      mixed: owned > 0 && leaveable > 0,
+    };
+  }, [bulkIds, rowById]);
+
   const runBulkArchive = useCallback(async () => {
     if (bulkIds.size === 0) return;
     setBulkBusy(true);
@@ -1236,7 +1259,9 @@ export function PipelinePageClient() {
         [...bulkIds].map((id) =>
           archivePipeline({
             id,
-            ...(memberUserKey ? { memberUserKey } : {}),
+            ...(memberUserKey
+              ? { preferencesAccountId: memberUserKey, memberUserKey }
+              : {}),
           }),
         ),
       );
@@ -1260,7 +1285,9 @@ export function PipelinePageClient() {
         [...bulkIds].map((id) =>
           unarchivePipeline({
             id,
-            ...(memberUserKey ? { memberUserKey } : {}),
+            ...(memberUserKey
+              ? { preferencesAccountId: memberUserKey, memberUserKey }
+              : {}),
           }),
         ),
       );
@@ -1276,8 +1303,63 @@ export function PipelinePageClient() {
     }
   }, [bulkIds, unarchivePipeline, memberUserKey]);
 
+  const runBulkLeaveShare = useCallback(async () => {
+    if (bulkIds.size === 0) return;
+    const n = bulkIds.size;
+    const ok = await confirm({
+      variant: "delete",
+      title: "Leave shared loan files",
+      entityName: `${n} shared file${n === 1 ? "" : "s"}`,
+      impact:
+        "You will lose access to the selected files. Owners and other collaborators keep their access.",
+      confirmLabel: "Leave share",
+      cascade: [
+        { text: "This does not delete anyone else’s loan files." },
+      ],
+      testId: "pipeline-hub-bulk-leave-share",
+    });
+    if (!ok) return;
+    const ids = [...bulkIds];
+    setBulkBusy(true);
+    try {
+      for (const id of ids) {
+        await leaveShare({
+          fileId: id,
+          ...(memberUserKey ? { memberUserKey } : {}),
+        });
+      }
+      setBulkIds(new Set());
+      showOperationalToast({
+        title: "Left shares",
+        description: `${n} file${n === 1 ? "" : "s"} removed from your pipeline`,
+        variant: "success",
+      });
+    } catch (e) {
+      showOperationalToast({
+        title: "Couldn’t leave share",
+        description: convexClientErrorMessage(e),
+        variant: "destructive",
+      });
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [bulkIds, leaveShare, memberUserKey, confirm]);
+
   const runBulkDelete = useCallback(async () => {
     if (bulkIds.size === 0) return;
+    if (bulkSelectionCaps.allLeaveable) {
+      await runBulkLeaveShare();
+      return;
+    }
+    if (!bulkSelectionCaps.allOwned) {
+      showOperationalToast({
+        title: "Mixed selection",
+        description:
+          "Select only files you own to Delete, or only shared files to Leave share.",
+        variant: "destructive",
+      });
+      return;
+    }
     const n = bulkIds.size;
     const ok = await confirm({
       ...simpleDeleteConfirm(
@@ -1296,7 +1378,9 @@ export function PipelinePageClient() {
       for (const id of ids) {
         await removePipeline({
           id,
-          ...(memberUserKey ? { memberUserKey } : {}),
+          ...(memberUserKey
+            ? { preferencesAccountId: memberUserKey, memberUserKey }
+            : {}),
         });
       }
       setBulkIds(new Set());
@@ -1305,10 +1389,24 @@ export function PipelinePageClient() {
         description: `${n} pipeline file${n === 1 ? "" : "s"} permanently deleted`,
         variant: "destructive",
       });
+    } catch (e) {
+      showOperationalToast({
+        title: "Delete failed",
+        description: convexClientErrorMessage(e),
+        variant: "destructive",
+      });
     } finally {
       setBulkBusy(false);
     }
-  }, [bulkIds, removePipeline, memberUserKey, confirm]);
+  }, [
+    bulkIds,
+    bulkSelectionCaps.allLeaveable,
+    bulkSelectionCaps.allOwned,
+    removePipeline,
+    memberUserKey,
+    confirm,
+    runBulkLeaveShare,
+  ]);
 
   const totalLoan = useMemo(
     () => filtered.reduce((sum, r) => sum + (r.fundingAmount || 0), 0),
@@ -1758,7 +1856,7 @@ export function PipelinePageClient() {
                     </h3>
                     <div className="flex min-w-0 flex-wrap items-center gap-2 gap-y-3">
                       <select
-                        className="h-8 min-w-0 max-w-full flex-1 basis-[8rem] rounded-md border border-border bg-background px-2 text-xs sm:min-w-[8rem] sm:flex-none"
+                        className="h-8 min-w-0 max-w-full flex-1 basis-[8rem] rounded-md border border-border bg-background px-2 text-base md:text-xs sm:min-w-[8rem] sm:flex-none"
                         value={filterClientKey ?? ""}
                         onChange={(e) => {
                           const key = e.target.value || null;
@@ -1782,7 +1880,7 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                       <select
-                        className="h-8 min-w-0 max-w-full flex-1 basis-[8rem] rounded-md border border-border bg-background px-2 text-xs sm:min-w-[8rem] sm:flex-none"
+                        className="h-8 min-w-0 max-w-full flex-1 basis-[8rem] rounded-md border border-border bg-background px-2 text-base md:text-xs sm:min-w-[8rem] sm:flex-none"
                         value={filterProjectKey ?? ""}
                         onChange={(e) =>
                           setFilterProjectKey(e.target.value || null)
@@ -1797,7 +1895,7 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                       <select
-                        className="h-8 min-w-[9rem] max-w-full rounded-md border border-border bg-background px-2 text-xs"
+                        className="h-8 min-w-[9rem] max-w-full rounded-md border border-border bg-background px-2 text-base md:text-xs"
                         value={clientInvolvementFilters.clientId ?? ""}
                         onChange={(e) =>
                           setClientInvolvementFilters((prev) => ({
@@ -1815,7 +1913,7 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                       <select
-                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-xs"
+                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-base md:text-xs"
                         value={clientInvolvementFilters.relationshipType}
                         onChange={(e) =>
                           setClientInvolvementFilters((prev) => ({
@@ -1851,7 +1949,7 @@ export function PipelinePageClient() {
                         Primary only
                       </label>
                       <select
-                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-xs"
+                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-base md:text-xs"
                         value={capitalStackFilters.sourceType}
                         onChange={(e) =>
                           setCapitalStackFilters((prev) => ({
@@ -1869,7 +1967,7 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                       <select
-                        className="h-8 min-w-[8rem] rounded-md border border-border bg-background px-2 text-xs"
+                        className="h-8 min-w-[8rem] rounded-md border border-border bg-background px-2 text-base md:text-xs"
                         value={capitalStackFilters.fundingHealth}
                         onChange={(e) =>
                           setCapitalStackFilters((prev) => ({
@@ -1884,7 +1982,7 @@ export function PipelinePageClient() {
                         <option value="fully_funded">Fully funded</option>
                       </select>
                       <select
-                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-xs"
+                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-base md:text-xs"
                         value={capitalStackFilters.gapThreshold}
                         onChange={(e) =>
                           setCapitalStackFilters((prev) => ({
@@ -1901,7 +1999,7 @@ export function PipelinePageClient() {
                       </select>
                       {projectionMode === "referral" ? (
                         <select
-                          className="h-8 min-w-[10rem] max-w-full flex-1 basis-[10rem] rounded-md border border-border bg-background px-2 text-xs sm:flex-none"
+                          className="h-8 min-w-[10rem] max-w-full flex-1 basis-[10rem] rounded-md border border-border bg-background px-2 text-base md:text-xs sm:flex-none"
                           value={filterEntityKey ?? ""}
                           onChange={(e) =>
                             setFilterEntityKey(e.target.value || null)
@@ -2085,7 +2183,7 @@ export function PipelinePageClient() {
                     <details className="relative min-w-0 shrink">
                       <summary
                         className={cn(
-                          "flex h-8 cursor-pointer list-none items-center gap-1 rounded-md border border-border bg-background px-2 text-xs font-medium shadow-sm",
+                          "flex h-8 cursor-pointer list-none items-center gap-1 rounded-md border border-border bg-background px-2 text-base md:text-xs font-medium shadow-sm",
                           "marker:content-none [&::-webkit-details-marker]:hidden",
                         )}
                       >
@@ -2631,11 +2729,23 @@ export function PipelinePageClient() {
           variant="danger"
           size="sm"
           className="h-9 gap-1.5 px-2.5 text-xs max-md:min-h-10"
-          disabled={bulkBusy}
+          disabled={
+            bulkBusy ||
+            (!bulkSelectionCaps.allOwned && !bulkSelectionCaps.allLeaveable)
+          }
           onClick={() => void runBulkDelete()}
         >
-          <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          Delete
+          {bulkSelectionCaps.allLeaveable ? (
+            <>
+              <LogOut className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Leave share
+            </>
+          ) : (
+            <>
+              <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Delete
+            </>
+          )}
         </Button>
       </OperationalBatchBar>
     </div>

@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Maximize2,
   Minimize2,
+  Paperclip,
   X,
 } from "lucide-react";
 import { OverlayShell } from "@/components/ui/OverlayShell";
@@ -207,6 +208,27 @@ export function FileTaskExecutionModal({
                   No instruction text configured.
                 </p>
               )}
+              {(fileTask.clientTemplateAttachments?.length ?? 0) > 0 ? (
+                <div className="rounded-dlc-md border border-border/60 bg-muted/10 px-3 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Client templates
+                  </p>
+                  <ul className="mt-1.5 space-y-1">
+                    {fileTask.clientTemplateAttachments!.map((att) => (
+                      <li
+                        key={String(att.storageId)}
+                        className="flex items-center gap-1.5 text-xs text-foreground"
+                      >
+                        <Paperclip
+                          className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <span className="truncate">{att.fileName}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -231,6 +253,27 @@ export function FileTaskExecutionModal({
               <p className="text-xs text-muted-foreground">
                 Upload and organize documents for this requirement below.
               </p>
+              {(fileTask.clientTemplateAttachments?.length ?? 0) > 0 ? (
+                <div className="rounded-dlc-md border border-border/60 bg-muted/10 px-3 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Client templates
+                  </p>
+                  <ul className="mt-1.5 space-y-1">
+                    {fileTask.clientTemplateAttachments!.map((att) => (
+                      <li
+                        key={String(att.storageId)}
+                        className="flex items-center gap-1.5 text-xs text-foreground"
+                      >
+                        <Paperclip
+                          className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <span className="truncate">{att.fileName}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {vaultContent ?? (
                 <p className="text-xs text-muted-foreground italic">
                   No vault content loaded.

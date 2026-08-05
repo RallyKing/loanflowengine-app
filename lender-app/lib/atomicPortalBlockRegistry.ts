@@ -21,6 +21,8 @@ export const ATOMIC_PORTAL_BLOCK_IDS = [
   "construction_budget",
   "investor_experience",
   "pfs_statement",
+  "file_tasks",
+  "generate_terms",
   // Deal intake sections
   "cover",
   "scenario",
@@ -87,6 +89,8 @@ export type AtomicPortalBlockDefinition = {
     | "construction_budget"
     | "investor_experience"
     | "pfs_statement"
+    | "file_tasks"
+    | "generate_terms"
   >;
   defaultSummary: string;
   defaultStatus: string;
@@ -236,6 +240,30 @@ const PIPELINE_MODULE_DEFS: AtomicPortalBlockDefinition[] = [
     defaultSummary: "PFS assets and liabilities",
     defaultStatus: "Draft",
   },
+  {
+    id: "file_tasks",
+    label: "File tasks",
+    description: "Client-facing follow-ups and checklist items on this file.",
+    category: "file",
+    kind: "pipelineModule",
+    clientEditable: true,
+    pipelineModuleId: "file_tasks",
+    dealDataKeys: [],
+    defaultSummary: "Tasks and follow-ups",
+    defaultStatus: "Draft",
+  },
+  {
+    id: "generate_terms",
+    label: "Generate terms",
+    description: "Proposed loan terms for the client to review.",
+    category: "file",
+    kind: "pipelineModule",
+    clientEditable: true,
+    pipelineModuleId: "generate_terms",
+    dealDataKeys: [],
+    defaultSummary: "Proposed loan terms",
+    defaultStatus: "Draft",
+  },
 ];
 
 function dealSectionDef(
@@ -318,6 +346,9 @@ export const LEGACY_BLOCK_ALIASES: Record<string, AtomicPortalBlockId> = {
   pfs: "pfs_statement",
   constructionBudget: "construction_budget",
   investorExperience: "investor_experience",
+  tasks: "file_tasks",
+  generateTerms: "generate_terms",
+  scenarioMatch: "scenario",
   borrowers: "borrower_entity",
   business: "business_entity",
   assets: "assets_liabilities",

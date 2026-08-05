@@ -353,7 +353,10 @@ function PortalAtomicBlockInner({
   switch (atomicId) {
     case "pfs_statement":
       return (
-        <div data-testid={`client-portal-block-${atomicId}`}>
+        <div
+          data-testid={`client-portal-block-${atomicId}`}
+          onBlur={flushOnBlur}
+        >
           <DealWorkspaceEditorStaticProvider
             fileId={pipelineFileId}
             draft={draft}
@@ -720,6 +723,7 @@ export function AtomicPortalBlockRenderer({
       density="compact"
       headerLeading={headerLeading}
       headerRight={headerRight}
+      clientAssignBlockId={false}
     >
       <div
         className={readOnly ? "pointer-events-none opacity-90" : undefined}

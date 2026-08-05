@@ -17,7 +17,6 @@ import {
   fmtPipelineBoardLoanCompact,
   fmtPipelineRelativeUpdated,
 } from "@/lib/pipeline/pipelineTableFormatting";
-import { getPipelineStatusInfo } from "@/lib/pipelineStatus";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
 import type { InlineSelectOption } from "@/components/inline";
 import { PipelineHubNotesIndicatorChip } from "@/components/pipeline/notes/PipelineHubNotesIndicatorChip";
@@ -78,7 +77,6 @@ export function PipelineHubFileRow({
 }) {
   const focused = hubFocusFileId === row._id;
   usePipelineLayoutRemountProbe("PipelineHubFileRow", row._id);
-  const statusInfo = getPipelineStatusInfo(row.status);
   const fileHighlight = resolveTriageHighlight(triageHighlights, {
     kind: "file",
     id: String(row._id),
@@ -95,6 +93,20 @@ export function PipelineHubFileRow({
       <PipelineHubRelationshipBadges row={row} compact />
     ) : null;
 
+  const renderStageSelector = () => (
+    <PipelineStageSelector
+      stageId={row.stageId}
+      subStageId={row.subStageId}
+      status={row.status}
+      readOnly={!row.canEditFile}
+      canEditFile={row.canEditFile}
+      compact
+      stopPropagation
+      onCommit={onChangeRowStatus}
+      ariaLabel={`Pipeline stage for ${row.fileName}`}
+    />
+  );
+
   return (
     <HubTriageHighlightFrame
       highlight={fileHighlight}
@@ -102,81 +114,164 @@ export function PipelineHubFileRow({
         "relative rounded-md border-2 border-border/50 bg-background",
         stackTotal > 1 && "ml-3 border-l-2 border-l-border/55",
         focused && "ring-1 ring-primary/20",
-        fileHighlight && "pr-28",
+        fileHighlight && "md:pr-28",
       )}
       badgeClassName="top-1.5"
     >
-    <div data-pipeline-row={row._id} className="relative">
-      {stackTotal > 1 ? (
-        <span className="absolute -left-[9px] top-3 flex h-4 w-4 items-center justify-center rounded-full bg-primary/15 text-[9px] font-bold text-primary">
-          {stackIndex + 1}
-        </span>
-      ) : null}
-      <OperationalRowShell
-        stackOnMobile
-        indentLevel={0}
-        left={
-          <div className="hidden md:block">
-            <OperationalCheckbox
-              bare
-              checked={bulkChecked}
-              onChange={(e) => onBulkCheckedChange(e.target.checked)}
-              aria-label={`Select ${row.fileName}`}
-              onClick={(e) => e.stopPropagation()}
-            />
-          </div>
-        }
-        mobileSecondary={
-          <div
-            className={cn(
-              "flex w-full flex-wrap items-center gap-2",
-              mobileHierarchySecondaryInsetClass,
-            )}
-          >
-            <OperationalCheckbox
-              bare
-              checked={bulkChecked}
-              onChange={(e) => onBulkCheckedChange(e.target.checked)}
-              aria-label={`Select ${row.fileName}`}
-              onClick={(e) => e.stopPropagation()}
-              className="md:hidden"
-            />
-            <span className="tabular-nums font-medium text-foreground/80">
-              {fmtPipelineBoardLoanCompact(row.fundingAmount)}
-            </span>
-            <span>{statusInfo.label}</span>
-            <span>{fmtPipelineRelativeUpdated(row.updatedAt)}</span>
-            <PipelineHubNotesIndicatorChip
-              noteCount={row.fileNotesCount ?? 0}
-              fileName={row.fileName}
-              onOpenNotes={onOpenNotes}
-            />
-            <TaskRollupBadge counts={fileTaskCounts} />
-            {(row.linkedClients?.length ?? 0) > 1 ? (
-              <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
-            ) : null}
-            {tertiaryBadges}
-            {row.ownership ? (
-              <ResourceOwnershipLine presentation={row.ownership} compact />
-            ) : null}
-            <PipelineStageSelector
-              stageId={row.stageId}
-              subStageId={row.subStageId}
-              status={row.status}
-              readOnly={!row.canEditFile}
-              canEditFile={row.canEditFile}
-              compact
-              stopPropagation
-              onCommit={onChangeRowStatus}
-            />
-            {onSetClientMomentum ? (
-              <ClientMomentumStars
-                value={row.clientMomentum}
-                onCommit={(n) => onSetClientMomentum(n)}
-                size="sm"
+      <div data-pipeline-row={row._id} className="relative">
+        {stackTotal > 1 ? (
+          <span className="absolute -left-[9px] top-3 flex h-4 w-4 items-center justify-center rounded-full bg-primary/15 text-[9px] font-bold text-primary">
+            {stackIndex + 1}
+          </span>
+        ) : null}
+        <OperationalRowShell
+          stackOnMobile
+          alwaysShowTertiary
+          indentLevel={0}
+          left={
+            <div className="hidden md:block">
+              <OperationalCheckbox
+                bare
+                checked={bulkChecked}
+                onChange={(e) => onBulkCheckedChange(e.target.checked)}
+                aria-label={`Select ${row.fileName}`}
+                onClick={(e) => e.stopPropagation()}
               />
-            ) : null}
-            {organizationId && memberUserKey ? (
+            </div>
+          }
+          mobileSecondary={
+            <div className="flex w-full min-w-0 flex-col gap-2">
+              <div
+                className={cn(
+                  "flex w-full min-w-0 flex-wrap items-center gap-2",
+                  mobileHierarchySecondaryInsetClass,
+                )}
+              >
+                <OperationalCheckbox
+                  bare
+                  checked={bulkChecked}
+                  onChange={(e) => onBulkCheckedChange(e.target.checked)}
+                  aria-label={`Select ${row.fileName}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="md:hidden"
+                />
+                <span className="tabular-nums font-medium text-foreground/80">
+                  {fmtPipelineBoardLoanCompact(row.fundingAmount)}
+                </span>
+                <span>{fmtPipelineRelativeUpdated(row.updatedAt)}</span>
+                <PipelineHubNotesIndicatorChip
+                  noteCount={row.fileNotesCount ?? 0}
+                  fileName={row.fileName}
+                  onOpenNotes={onOpenNotes}
+                />
+                <TaskRollupBadge counts={fileTaskCounts} />
+                {(row.linkedClients?.length ?? 0) > 1 ? (
+                  <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
+                ) : null}
+                {tertiaryBadges}
+                {row.ownership ? (
+                  <ResourceOwnershipLine presentation={row.ownership} compact />
+                ) : null}
+              </div>
+              <div
+                className={cn(
+                  "flex w-full min-w-0 flex-wrap items-center gap-2",
+                  mobileHierarchySecondaryInsetClass,
+                )}
+              >
+                {renderStageSelector()}
+                {onSetClientMomentum ? (
+                  <ClientMomentumStars
+                    value={row.clientMomentum}
+                    onCommit={(n) => onSetClientMomentum(n)}
+                    size="sm"
+                  />
+                ) : null}
+              </div>
+              {organizationId && memberUserKey ? (
+                <div className="flex w-full min-w-0 justify-end">
+                  <HubHierarchyLoanRowActions
+                    row={row}
+                    organizationId={organizationId}
+                    memberUserKey={memberUserKey}
+                    onOpen={onOpen}
+                    onDuplicated={onFileDuplicated}
+                    compactMobile
+                  />
+                </div>
+              ) : null}
+            </div>
+          }
+          primary={
+            <button
+              type="button"
+              className="flex w-full min-w-0 flex-1 items-start gap-1.5 text-left"
+              onClick={onOpen}
+              aria-label={`Open file ${row.fileName}`}
+            >
+              <PipelineFileArchivedIndicator
+                archivedAt={row.archivedAt}
+                compact
+                withLabel
+                className="mt-0.5 shrink-0"
+              />
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                {parentPathLabel ? (
+                  <span className="text-[11px] text-muted-foreground max-md:whitespace-normal max-md:break-words md:truncate md:hidden">
+                    {parentPathLabel}
+                  </span>
+                ) : null}
+                <PipelineFileRowHierarchyStack row={row} />
+              </div>
+            </button>
+          }
+          secondary={
+            <>
+              <span className="tabular-nums font-medium text-foreground/80">
+                {fmtPipelineBoardLoanCompact(row.fundingAmount)}
+              </span>
+              <span className="hidden text-muted-foreground sm:inline">
+                <span className="text-muted-foreground/50"> · </span>
+                {fmtPipelineRelativeUpdated(row.updatedAt)}
+              </span>
+              <PipelineHubNotesIndicatorChip
+                noteCount={row.fileNotesCount ?? 0}
+                fileName={row.fileName}
+                onOpenNotes={onOpenNotes}
+                className="ml-0.5"
+              />
+              <TaskRollupBadge counts={fileTaskCounts} className="ml-0.5" />
+            </>
+          }
+          tertiary={
+            <>
+              {(row.linkedClients?.length ?? 0) > 1 ? (
+                <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
+              ) : null}
+              {tertiaryBadges}
+              {row.ownership ? (
+                <ResourceOwnershipLine presentation={row.ownership} compact />
+              ) : null}
+            </>
+          }
+          trailing={
+            <div
+              className="relative z-[2] flex flex-wrap items-center gap-1.5 overflow-visible"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {renderStageSelector()}
+              {onSetClientMomentum ? (
+                <ClientMomentumStars
+                  value={row.clientMomentum}
+                  onCommit={(n) => onSetClientMomentum(n)}
+                  size="sm"
+                />
+              ) : null}
+            </div>
+          }
+          actions={
+            organizationId && memberUserKey ? (
               <HubHierarchyLoanRowActions
                 row={row}
                 organizationId={organizationId}
@@ -184,92 +279,10 @@ export function PipelineHubFileRow({
                 onOpen={onOpen}
                 onDuplicated={onFileDuplicated}
               />
-            ) : null}
-          </div>
-        }
-        primary={
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
-            onClick={onOpen}
-          >
-            <PipelineFileArchivedIndicator
-              archivedAt={row.archivedAt}
-              compact
-              withLabel
-              className="mt-0.5 shrink-0"
-            />
-            <PipelineFileRowHierarchyStack row={row} />
-          </button>
-        }
-        secondary={
-          <>
-            <span className="tabular-nums font-medium text-foreground/80">
-              {fmtPipelineBoardLoanCompact(row.fundingAmount)}
-            </span>
-            <span className="text-muted-foreground/50"> · </span>
-            <span>{statusInfo.label}</span>
-            <span className="hidden text-muted-foreground sm:inline">
-              <span className="text-muted-foreground/50"> · </span>
-              {fmtPipelineRelativeUpdated(row.updatedAt)}
-            </span>
-            <PipelineHubNotesIndicatorChip
-              noteCount={row.fileNotesCount ?? 0}
-              fileName={row.fileName}
-              onOpenNotes={onOpenNotes}
-              className="ml-0.5"
-            />
-            <TaskRollupBadge counts={fileTaskCounts} className="ml-0.5" />
-          </>
-        }
-        tertiary={
-          <>
-            {(row.linkedClients?.length ?? 0) > 1 ? (
-              <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
-            ) : null}
-            {tertiaryBadges}
-            {row.ownership ? (
-              <ResourceOwnershipLine presentation={row.ownership} compact />
-            ) : null}
-          </>
-        }
-        trailing={
-          <div
-            className="flex flex-wrap items-center gap-1.5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <PipelineStageSelector
-              stageId={row.stageId}
-              subStageId={row.subStageId}
-              status={row.status}
-              readOnly={!row.canEditFile}
-              canEditFile={row.canEditFile}
-              compact
-              stopPropagation
-              onCommit={onChangeRowStatus}
-            />
-            {onSetClientMomentum ? (
-              <ClientMomentumStars
-                value={row.clientMomentum}
-                onCommit={(n) => onSetClientMomentum(n)}
-                size="sm"
-              />
-            ) : null}
-          </div>
-        }
-        actions={
-          organizationId && memberUserKey ? (
-            <HubHierarchyLoanRowActions
-              row={row}
-              organizationId={organizationId}
-              memberUserKey={memberUserKey}
-              onOpen={onOpen}
-              onDuplicated={onFileDuplicated}
-            />
-          ) : null
-        }
-      />
-    </div>
+            ) : null
+          }
+        />
+      </div>
     </HubTriageHighlightFrame>
   );
 }

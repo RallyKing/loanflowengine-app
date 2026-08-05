@@ -155,7 +155,11 @@ export function UserNotificationsBell({
   };
 
   return (
-    <div ref={rootRef} className={cn("relative", className)}>
+    <div
+      ref={rootRef}
+      className={cn("relative", className)}
+      data-portal-overlay-trigger
+    >
       <Button
         type="button"
         variant="outline"
@@ -187,7 +191,7 @@ export function UserNotificationsBell({
         open={open}
         onClose={() => setOpen(false)}
         position={panelPos}
-        layer="DROPDOWN"
+        layer="CHROME_MENU"
         className="p-3"
         aria-label="Notifications"
         data-testid="notifications-inbox-panel"

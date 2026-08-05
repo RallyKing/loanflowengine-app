@@ -11,16 +11,11 @@ import {
   ExternalLink,
   Mail,
   Phone,
-  Plus,
   Sparkles,
   GitMerge,
-  Paperclip,
-  FileText,
   StickyNote,
-  Eye,
   Maximize2,
   Minimize2,
-  Upload,
   UserCircle2,
 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -30,38 +25,17 @@ import { Input, Label, Select, Textarea } from "./ui/Input";
 import { SearchField } from "./ui/SearchField";
 import { Badge } from "./ui/Badge";
 import { Stars } from "./ui/Stars";
-import {
-  FIELD_META,
-  LENDER_FIELDS,
-  ENTITY_TYPES,
-  type Lender,
-  type LenderField,
-  type Program,
-} from "@/lib/schema";
+import { ENTITY_TYPES, type Lender, type Program } from "@/lib/schema";
 import {
   contactMethodsCreateArgs,
   resolvePreferredEmail,
   resolvePreferredPhone,
 } from "@/lib/contact/contactMethods";
-
-/** Primary CSV columns still stored on the lender row; hidden here so editing flows through Contacts. */
-const LENDER_FIELDS_HIDDEN_LEGACY_CONTACT: ReadonlySet<LenderField> = new Set([
-  "contactName",
-  "titleRole",
-  "phone",
-  "email",
-]);
 import { cn } from "@/lib/cn";
 import { useLiveConnection } from "@/lib/useLiveConnection";
 import { useOrgConvexQueryArgs, type OrgScopedConvexArgs } from "@/lib/useOrgConvexQueryArgs";
-import {
-  MAX_LENDER_ATTACHMENT_BYTES,
-  uploadLocalFilesViaConvexUrl,
-  validateLenderAttachmentFile,
-} from "@/lib/uploadToConvexStorage";
 import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
-import { AttachmentPreviewDialog } from "@/components/AttachmentPreviewDialog";
 import { InlineText, InlineTextarea } from "@/components/inline";
 import {
   RecordInspectorBody,
@@ -72,7 +46,15 @@ import {
 import { useWorkspaceSheetDragLock } from "@/components/PipelineWorkspaceMobileVaulFrame";
 import { CommunicationHistoryPanel } from "@/components/communications/CommunicationHistoryPanel";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
-import { simpleDeleteConfirm, unlinkConfirm } from "@/lib/ui/confirmDestructive";
+import { simpleDeleteConfirm } from "@/lib/ui/confirmDestructive";
+import {
+  LenderProfileTabBar,
+  type LenderProfileTabId,
+} from "@/components/lender/LenderProfileTabBar";
+import { LenderPortalCredentialsCard } from "@/components/lender/LenderPortalCredentialsCard";
+import { LenderProgramsTab } from "@/components/lender/LenderProgramsTab";
+import { LenderTemplatesTab } from "@/components/lender/LenderTemplatesTab";
+import { LenderDocsTab } from "@/components/lender/LenderDocsTab";
 
 export function LenderDrawer({
   id,
@@ -116,6 +98,7 @@ export function LenderDrawer({
   const [profileNotesDirty, setProfileNotesDirty] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
+  const [profileTab, setProfileTab] = useState<LenderProfileTabId>("overview");
 
   const mergeListQuery = useMemo(():
     | ({ search: string; limit: number } & OrgScopedConvexArgs)
@@ -151,6 +134,7 @@ export function LenderDrawer({
     setMergeMsg(null);
     setProfileNotesDirty(false);
     setFullScreen(false);
+    setProfileTab("overview");
   }, [id]);
 
   useEffect(() => {
@@ -504,33 +488,109 @@ export function LenderDrawer({
               {enrichMsg}
             </div>
           )}
-          {!editing ? (
-            <div className="space-y-5">
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-3 text-sm">
-                  {draft.website && (
-                    <a
-                      href={
-                        draft.website.startsWith("http")
-                          ? draft.website
-                          : `https://${draft.website}`
-                      }
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" /> {draft.website}
-                    </a>
-                  )}
-                </div>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  Rep name, title, phone, and email are edited through{" "}
-                  <span className="font-medium text-foreground">Lender contacts</span>{" "}
-                  below (global Contacts + roles). Legacy CSV columns and embedded contact rows
-                  stay on the lender record for search and imports until a future database
-                  cleanup — saving this profile elsewhere does not erase them.
-                </p>
-              </div>
+          <LenderProfileTabBar active={profileTab} onChange={setProfileTab} />
+
+          {profileTab === "overview" && (
+            <div className="space-y-5" role="tabpanel" aria-label="Overview">
+              <CollapsibleSection
+                variant="card"
+                defaultOpen
+                title={
+                  <span className="flex items-center gap-2 normal-case text-foreground">
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                    Website &amp; company info
+                  </span>
+                }
+              >
+                {editing ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <Label>Company</Label>
+                      <Input
+                        className="mt-1"
+                        value={draft.company ?? ""}
+                        onChange={(e) =>
+                          setDraft({ ...draft, company: e.target.value } as Lender)
+                        }
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Label>Website</Label>
+                      <Input
+                        className="mt-1"
+                        placeholder="https://…"
+                        value={draft.website ?? ""}
+                        onChange={(e) =>
+                          setDraft({ ...draft, website: e.target.value } as Lender)
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label>Entity type</Label>
+                      <Select
+                        className="mt-1"
+                        value={draft.entityType ?? ""}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            entityType: e.target.value,
+                          } as Lender)
+                        }
+                      >
+                        <option value="">(auto-classify)</option>
+                        {ENTITY_TYPES.map((ent) => (
+                          <option key={ent} value={ent}>
+                            {ent}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Status</Label>
+                      <Input
+                        className="mt-1"
+                        value={draft.status ?? ""}
+                        onChange={(e) =>
+                          setDraft({ ...draft, status: e.target.value } as Lender)
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-3 text-sm">
+                      {draft.website ? (
+                        <a
+                          href={
+                            draft.website.startsWith("http")
+                              ? draft.website
+                              : `https://${draft.website}`
+                          }
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 hover:bg-accent hover:text-accent-foreground"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" /> {draft.website}
+                        </a>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          No website on file. Tap Edit to add one.
+                        </p>
+                      )}
+                    </div>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Reps are managed under Lender contacts (CRM links with roles).
+                      Partner portal logins are saved separately below.
+                    </p>
+                  </div>
+                )}
+              </CollapsibleSection>
+
+              <LenderPortalCredentialsCard
+                lenderId={id}
+                canUseHub={canUseHub}
+                actionTitle={actionTitle}
+              />
 
               <LenderContactsPanel
                 lenderId={id}
@@ -548,46 +608,62 @@ export function LenderDrawer({
                     Profile notes
                   </span>
                 }
-                description="Your notes for this lender (reminders, terms discussed, or anything the CSV or enrichment didn’t capture). Searchable with the rest of the profile."
+                description="Searchable notes for this lender."
               >
-                <Textarea
-                  className="min-h-[5.5rem] text-sm"
-                  value={profileNotes}
-                  onChange={(e) => {
-                    setProfileNotes(e.target.value);
-                    setProfileNotesDirty(true);
-                  }}
-                  readOnly={!canUseHub}
-                  title={!canUseHub ? actionTitle("Add notes to this profile") : undefined}
-                  rows={4}
-                />
-                {canUseHub && (
-                  <div className="mt-2 flex justify-end">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      onClick={() => void saveProfileNotes()}
-                      disabled={!noteDelta || savingNotes}
-                      title={actionTitle("Save profile notes only")}
-                    >
-                      {savingNotes ? "Saving…" : "Save notes"}
-                    </Button>
-                  </div>
+                {editing ? (
+                  <Textarea
+                    className="min-h-[5.5rem] text-sm"
+                    value={draft.notes ?? ""}
+                    onChange={(e) =>
+                      setDraft({ ...draft, notes: e.target.value } as Lender)
+                    }
+                    rows={4}
+                  />
+                ) : (
+                  <>
+                    <Textarea
+                      className="min-h-[5.5rem] text-sm"
+                      value={profileNotes}
+                      onChange={(e) => {
+                        setProfileNotes(e.target.value);
+                        setProfileNotesDirty(true);
+                      }}
+                      readOnly={!canUseHub}
+                      title={
+                        !canUseHub
+                          ? actionTitle("Add notes to this profile")
+                          : undefined
+                      }
+                      rows={4}
+                    />
+                    {canUseHub && (
+                      <div className="mt-2 flex justify-end">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="primary"
+                          onClick={() => void saveProfileNotes()}
+                          disabled={!noteDelta || savingNotes}
+                          title={actionTitle("Save profile notes only")}
+                        >
+                          {savingNotes ? "Saving…" : "Save notes"}
+                        </Button>
+                      </div>
+                    )}
+                  </>
                 )}
               </CollapsibleSection>
 
               {draft.organizationId ? (
                 <CollapsibleSection
                   variant="card"
-                  defaultOpen
+                  defaultOpen={false}
                   title={
                     <span className="flex items-center gap-2 normal-case text-foreground">
                       <Mail className="h-3.5 w-3.5" aria-hidden />
                       Communication hub
                     </span>
                   }
-                  description="Unified outbound history for this lender across email and portal-linked conversations."
                 >
                   <CommunicationHistoryPanel
                     organizationId={draft.organizationId}
@@ -599,120 +675,150 @@ export function LenderDrawer({
                 </CollapsibleSection>
               ) : null}
 
-              <Section title="Programs & Specialty">
-                <Field k="Primary Niche" v={draft.primaryNiche} />
-                <Field k="Programs / Funding Types" v={draft.programs} />
-                <Field k="Property Types" v={draft.propertyTypes} />
-                <Field k="Exclusions" v={draft.exclusions} />
+              <Section title="Deal Parameters">
+                {editing ? (
+                  <div className="col-span-full grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {(
+                      [
+                        ["statesServed", "States Served"],
+                        ["ownerOrInvestor", "Owner / Investor"],
+                        ["fundingAmountMin", "Funding min"],
+                        ["fundingAmountMax", "Funding max"],
+                        ["minFico", "Min FICO"],
+                        ["ltv", "LTV / Leverage"],
+                        ["interestRates", "Interest Rates"],
+                        ["amortTerm", "Amortization / Term"],
+                        ["referralFees", "Referral / YSP Fees"],
+                      ] as const
+                    ).map(([field, label]) => (
+                      <div key={field}>
+                        <Label>{label}</Label>
+                        <Input
+                          className="mt-1"
+                          value={
+                            (draft as unknown as Record<string, string>)[field] ??
+                            ""
+                          }
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              [field]: e.target.value,
+                            } as Lender)
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <Field k="States Served" v={draft.statesServed} />
+                    <Field k="Owner / Investor" v={draft.ownerOrInvestor} />
+                    <Field
+                      k="Funding Amount"
+                      v={
+                        draft.fundingAmountMin || draft.fundingAmountMax
+                          ? `${draft.fundingAmountMin || "—"} to ${draft.fundingAmountMax || "—"}`
+                          : ""
+                      }
+                    />
+                    <Field
+                      k="Min FICO (confirmed)"
+                      v={draft.minFico ? `${draft.minFico}` : ""}
+                    />
+                    <Field k="LTV / Leverage" v={draft.ltv} />
+                    <Field k="Interest Rates" v={draft.interestRates} />
+                    <Field k="Amortization / Term" v={draft.amortTerm} />
+                    <Field k="Referral / YSP Fees" v={draft.referralFees} />
+                  </>
+                )}
               </Section>
 
-              {draft.programList && draft.programList.length > 0 && (
+              {editing && (
                 <CollapsibleSection
                   variant="card"
-                  defaultOpen
+                  defaultOpen={false}
                   title={
-                    <span className="text-sm font-semibold normal-case">
-                      Programs (structured)
+                    <span className="text-sm font-semibold normal-case text-foreground">
+                      Rating notes
                     </span>
                   }
                 >
-                  <div className="space-y-3">
-                    {draft.programList.map((p, i) => (
-                      <div
-                        key={i}
-                        className="rounded-md border bg-muted/30 p-3"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="text-sm font-semibold">
-                            {p.name || <span className="text-muted-foreground italic">(unnamed program)</span>}
-                          </div>
-                          {p.minFico && (
-                            <Badge variant="warning">
-                              Min FICO: {p.minFico}
-                            </Badge>
-                          )}
-                        </div>
-                        {p.requirements && (
-                          <div className="mt-2 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
-                            {p.requirements}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                  <div className="flex items-center gap-3">
+                    <Stars
+                      value={draft.rating ?? 0}
+                      onChange={(n) =>
+                        setDraft({ ...draft, rating: n } as Lender)
+                      }
+                      size="lg"
+                    />
+                  </div>
+                  <div className="mt-3">
+                    <Label>Rating notes</Label>
+                    <Textarea
+                      rows={2}
+                      value={draft.ratingNotes ?? ""}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          ratingNotes: e.target.value,
+                        } as Lender)
+                      }
+                    />
                   </div>
                 </CollapsibleSection>
               )}
 
-              <Section title="Deal Parameters">
-                <Field k="States Served" v={draft.statesServed} />
-                <Field k="Owner / Investor" v={draft.ownerOrInvestor} />
-                <Field
-                  k="Funding Amount"
-                  v={
-                    draft.fundingAmountMin || draft.fundingAmountMax
-                      ? `${draft.fundingAmountMin || "—"} to ${draft.fundingAmountMax || "—"}`
-                      : ""
-                  }
-                />
-                <Field
-                  k="Min FICO (confirmed)"
-                  v={draft.minFico ? `${draft.minFico}` : ""}
-                />
-                <Field k="LTV / Leverage" v={draft.ltv} />
-                <Field k="Interest Rates" v={draft.interestRates} />
-                <Field k="Amortization / Term" v={draft.amortTerm} />
-                <Field k="Referral / YSP Fees" v={draft.referralFees} />
-              </Section>
-
               {(draft.ratingNotes ||
-                (draft.enrichmentSources && draft.enrichmentSources.length > 0) ||
-                draft.enrichedAt) && (
-                <Section title="Rating & Enrichment">
-                  {draft.ratingNotes && (
-                    <div className="col-span-full">
-                      <div className="text-xs text-muted-foreground">
-                        Why you like them
-                      </div>
-                      <div className="text-sm leading-5">
-                        {draft.ratingNotes}
-                      </div>
-                    </div>
-                  )}
-                  {draft.enrichedAt && (
-                    <Field
-                      k="Last AI enrichment"
-                      v={`${new Date(draft.enrichedAt).toLocaleString()}${
-                        draft.enrichmentStatus
-                          ? ` · ${draft.enrichmentStatus}`
-                          : ""
-                      }`}
-                    />
-                  )}
-                  {draft.enrichmentSources &&
-                    draft.enrichmentSources.length > 0 && (
+                (draft.enrichmentSources &&
+                  draft.enrichmentSources.length > 0) ||
+                draft.enrichedAt) &&
+                !editing && (
+                  <Section title="Rating & Enrichment">
+                    {draft.ratingNotes && (
                       <div className="col-span-full">
                         <div className="text-xs text-muted-foreground">
-                          Sources
+                          Why you like them
                         </div>
-                        <ul className="mt-1 space-y-1 text-sm">
-                          {draft.enrichmentSources.map((u, i) => (
-                            <li key={i} className="truncate">
-                              <a
-                                href={u}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 hover:underline"
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                                {u}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
+                        <div className="text-sm leading-5">
+                          {draft.ratingNotes}
+                        </div>
                       </div>
                     )}
-                </Section>
-              )}
+                    {draft.enrichedAt && (
+                      <Field
+                        k="Last AI enrichment"
+                        v={`${new Date(draft.enrichedAt).toLocaleString()}${
+                          draft.enrichmentStatus
+                            ? ` · ${draft.enrichmentStatus}`
+                            : ""
+                        }`}
+                      />
+                    )}
+                    {draft.enrichmentSources &&
+                      draft.enrichmentSources.length > 0 && (
+                        <div className="col-span-full">
+                          <div className="text-xs text-muted-foreground">
+                            Sources
+                          </div>
+                          <ul className="mt-1 space-y-1 text-sm">
+                            {draft.enrichmentSources.map((u, i) => (
+                              <li key={i} className="truncate">
+                                <a
+                                  href={u}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 hover:underline"
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                  {u}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                  </Section>
+                )}
 
               {!editing && (
                 <CollapsibleSection
@@ -724,7 +830,7 @@ export function LenderDrawer({
                       Merge duplicate
                     </span>
                   }
-                  description="Search for a second lender, tap to select, then pick which company row to keep. The other is deleted; empty fields are filled, notes and lists are combined."
+                  description="Search for a second lender, then pick which company row to keep."
                 >
                   {mergeMsg && (
                     <p className="mb-2 text-xs text-destructive" role="alert">
@@ -732,7 +838,7 @@ export function LenderDrawer({
                     </p>
                   )}
                   <SearchField
-                    placeholder="Type 2+ characters to search (company, contact, programs…)"
+                    placeholder="Type 2+ characters to search…"
                     value={mergeQuery}
                     onChange={(e) => {
                       setMergeQuery(e.target.value);
@@ -749,7 +855,7 @@ export function LenderDrawer({
                             type="button"
                             className={cn(
                               "w-full rounded px-2 py-1.5 text-left text-foreground hover:bg-muted",
-                              mergeTarget === r._id && "bg-muted font-medium"
+                              mergeTarget === r._id && "bg-muted font-medium",
                             )}
                             onClick={() => setMergeTarget(r._id)}
                           >
@@ -760,11 +866,6 @@ export function LenderDrawer({
                       ))}
                     </ul>
                   )}
-                  {mergeQuery.trim().length >= 2 && mergeHitRows.length === 0 && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      No other lenders match this search.
-                    </p>
-                  )}
                   {mergeTarget && (
                     <div className="mt-3 flex flex-col gap-2">
                       <Button
@@ -774,12 +875,8 @@ export function LenderDrawer({
                         className="w-full justify-start"
                         disabled={!canUseHub || merging}
                         onClick={() =>
-                          void runMerge(
-                            id as Id<"lenders">,
-                            mergeTarget
-                          )
+                          void runMerge(id as Id<"lenders">, mergeTarget)
                         }
-                        title={actionTitle("Keep the open company as primary")}
                       >
                         {merging
                           ? "Merging…"
@@ -794,23 +891,14 @@ export function LenderDrawer({
                         onClick={() =>
                           void runMerge(mergeTarget, id as Id<"lenders">)
                         }
-                        title={actionTitle("Keep the search result as primary")}
                       >
                         {merging
                           ? "Merging…"
-                          : "Use the selected result as the main record (this one is removed)"}
+                          : "Use the selected result as the main record"}
                       </Button>
                     </div>
                   )}
                 </CollapsibleSection>
-              )}
-
-              {id && (
-                <LenderAttachmentsPanel
-                  lenderId={id as Id<"lenders">}
-                  canUseHub={canUseHub}
-                  actionTitle={actionTitle}
-                />
               )}
 
               <Section title="Metadata">
@@ -819,237 +907,46 @@ export function LenderDrawer({
                 <Field k="Last Updated" v={draft.lastUpdated} />
               </Section>
             </div>
-          ) : (
-            <div className="space-y-5">
-              <CollapsibleSection
-                variant="card"
-                defaultOpen
-                title={
-                  <span className="flex items-center gap-2 normal-case text-foreground">
-                    <StickyNote className="h-3.5 w-3.5" aria-hidden />
-                    Profile notes
-                  </span>
-                }
-                description="Free-form notes for this profile. Shown in this drawer and included in search."
-              >
-                <Textarea
-                  className="min-h-[5.5rem] text-sm"
-                  value={draft.notes ?? ""}
-                  onChange={(e) =>
-                    setDraft({ ...draft, notes: e.target.value } as Lender)
-                  }
-                  rows={4}
-                />
-              </CollapsibleSection>
+          )}
 
-              <CollapsibleSection
-                variant="card"
-                defaultOpen
-                title={
-                  <span className="text-sm font-semibold normal-case text-foreground">
-                    Programs (structured editor)
-                  </span>
+          {profileTab === "programs" && (
+            <div role="tabpanel" aria-label="Programs">
+              <LenderProgramsTab
+                draft={draft}
+                editing={editing}
+                canUseHub={canUseHub}
+                onAddProgram={addProgram}
+                onRemoveProgram={removeProgram}
+                onPatchProgram={patchProgram}
+                onPatchField={(field, value) =>
+                  setDraft({ ...draft, [field]: value } as Lender)
                 }
-                description="Add each program this lender offers, its minimum FICO, and any specific requirements (DSCR floor, seasoning, reserves, experience, etc.)."
-                headerRight={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={addProgram}
-                  >
-                    <Plus className="h-3.5 w-3.5" /> Add program
-                  </Button>
-                }
-              >
-                {(draft.programList ?? []).length === 0 ? (
-                  <div className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                    No structured programs yet. Click &quot;Add program&quot; to start.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {(draft.programList ?? []).map((p, i) => (
-                      <div
-                        key={i}
-                        className="rounded-md border bg-muted/20 p-3"
-                      >
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                          <div className="md:col-span-2">
-                            <Label>Program name</Label>
-                            <Input
-                              className="mt-1"
-                              placeholder="e.g. DSCR Investor / SBA 7(a) / Bridge"
-                              value={p.name ?? ""}
-                              onChange={(e) =>
-                                patchProgram(i, { name: e.target.value })
-                              }
-                            />
-                          </div>
-                          <div>
-                            <Label hint="Leave blank to use the lender-wide min">
-                              Min FICO
-                            </Label>
-                            <Input
-                              className="mt-1"
-                              placeholder="680"
-                              inputMode="numeric"
-                              value={p.minFico ?? ""}
-                              onChange={(e) =>
-                                patchProgram(i, { minFico: e.target.value })
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="mt-3">
-                          <Label hint="Anything other than FICO — DSCR, LTV, seasoning, experience, reserves, doc type, etc.">
-                            Requirements / notes
-                          </Label>
-                          <Textarea
-                            className="mt-1"
-                            rows={3}
-                            placeholder={"e.g. DSCR >= 1.1\n12mo reserves\nMin 2 prior flips"}
-                            value={p.requirements ?? ""}
-                            onChange={(e) =>
-                              patchProgram(i, {
-                                requirements: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                        <div className="mt-2 flex justify-end">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeProgram(i)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-destructive" />{" "}
-                            Remove
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CollapsibleSection>
+              />
+            </div>
+          )}
 
-              <CollapsibleSection
-                variant="card"
-                defaultOpen
-                title={
-                  <span className="text-sm font-semibold normal-case text-foreground">
-                    Rating &amp; stars
-                  </span>
-                }
-                description="Rate 1-5 to boost this lender in scenario search. Click the same star again to clear."
-              >
-                <div className="flex items-center gap-3">
-                  <Stars
-                    value={draft.rating ?? 0}
-                    onChange={(n) => setDraft({ ...draft, rating: n } as Lender)}
-                    size="lg"
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    {draft.rating ? `${draft.rating}/5` : "Not rated"}
-                  </span>
-                </div>
-                <div className="mt-3">
-                  <Label>Rating notes (optional)</Label>
-                  <Textarea
-                    rows={2}
-                    placeholder="What do you like about this lender? (e.g. fast close, flexible on FICO, great service)"
-                    value={draft.ratingNotes ?? ""}
-                    onChange={(e) =>
-                      setDraft({ ...draft, ratingNotes: e.target.value } as Lender)
-                    }
-                  />
-                </div>
-              </CollapsibleSection>
-
-              <LenderContactsPanel
+          {profileTab === "templates" && (
+            <div role="tabpanel" aria-label="Templates">
+              <LenderTemplatesTab
                 lenderId={id}
-                lenderOrganizationId={draft.organizationId}
+                lenderCompany={draft.company}
                 canUseHub={canUseHub}
                 actionTitle={actionTitle}
               />
+            </div>
+          )}
 
-              {id && (
-                <LenderAttachmentsPanel
-                  lenderId={id as Id<"lenders">}
-                  canUseHub={canUseHub}
-                  actionTitle={actionTitle}
-                />
-              )}
-
-              <CollapsibleSection
-                variant="card"
-                defaultOpen
-                title={
-                  <span className="text-sm font-semibold normal-case text-foreground">
-                    All fields (raw editor)
-                  </span>
-                }
-                description="CSV-aligned columns except primary contact name / title / phone / email (use Lender contacts above). Notes are edited in the profile block while this profile is open in edit mode. Saving still preserves legacy columns on the server."
-              >
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {LENDER_FIELDS.filter(
-                    (f) =>
-                      f !== "notes" && !LENDER_FIELDS_HIDDEN_LEGACY_CONTACT.has(f)
-                  ).map((f) => {
-                    const meta = FIELD_META[f];
-                    const value =
-                      (draft as unknown as Record<string, string>)[f] ?? "";
-                    const common = {
-                      value,
-                      onChange: (
-                        e: React.ChangeEvent<
-                          HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-                        >
-                      ) =>
-                        setDraft({
-                          ...draft,
-                          [f]: e.target.value,
-                        } as Lender),
-                    };
-                    const fullWidth =
-                      meta.multiline || f === "programs" || f === "propertyTypes";
-                    return (
-                      <div key={f} className={cn(fullWidth && "md:col-span-2")}>
-                        <Label hint={meta.hint}>{meta.label}</Label>
-                        {f === "entityType" ? (
-                          <>
-                            <Select
-                              className="mt-1"
-                              value={value}
-                              onChange={common.onChange}
-                            >
-                              <option value="">(auto-classify)</option>
-                              {ENTITY_TYPES.map((e) => (
-                                <option key={e} value={e}>
-                                  {e}
-                                </option>
-                              ))}
-                              {value &&
-                                !ENTITY_TYPES.includes(
-                                  value as (typeof ENTITY_TYPES)[number]
-                                ) && (
-                                  <option value={value}>{value}</option>
-                                )}
-                            </Select>
-                          </>
-                        ) : meta.multiline ? (
-                          <Textarea className="mt-1" rows={5} {...common} />
-                        ) : (
-                          <Input className="mt-1" {...common} />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </CollapsibleSection>
+          {profileTab === "docs" && (
+            <div role="tabpanel" aria-label="Docs">
+              <LenderDocsTab
+                lenderId={id}
+                canUseHub={canUseHub}
+                actionTitle={actionTitle}
+              />
             </div>
           )}
       </RecordInspectorBody>
+
     </RecordInspectorShell>
   );
 }
@@ -1495,310 +1392,6 @@ function LenderContactsPanel({
           </Button>
         </div>
       </div>
-    </CollapsibleSection>
-  );
-}
-
-type LenderFileRow = {
-  _id: Id<"lenderAttachments">;
-  _creationTime: number;
-  fileName: string;
-  contentType: string | undefined;
-  size: number | undefined;
-  label: string | undefined;
-  createdAt: number;
-  url: string | null;
-};
-
-function LenderAttachmentsPanel({
-  lenderId,
-  canUseHub,
-  actionTitle,
-}: {
-  lenderId: Id<"lenders">;
-  canUseHub: boolean;
-  actionTitle: (hint: string) => string;
-}) {
-  const { confirm } = useOperationalConfirm();
-  const files = useQuery(api.lenderFiles.list, { lenderId });
-  const generateUploadUrl = useMutation(api.lenderFiles.generateUploadUrl);
-  const addFileM = useMutation(api.lenderFiles.addFile);
-  const removeFileM = useMutation(api.lenderFiles.removeFile);
-  const updateFileLabelM = useMutation(api.lenderFiles.updateFileLabel);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{
-    current: number;
-    total: number;
-  } | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [previewFile, setPreviewFile] = useState<LenderFileRow | null>(null);
-  const [dragActive, setDragActive] = useState(false);
-
-  function formatSize(n: number | undefined) {
-    if (n == null || n < 0) return "";
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  async function processFiles(raw: File[]) {
-    if (!raw.length || !canUseHub) return;
-
-    setUploading(true);
-    setErr(null);
-    try {
-      const { ok, failures, attempted } = await uploadLocalFilesViaConvexUrl({
-        files: raw,
-        generateUploadUrl: () => generateUploadUrl({}),
-        onProgress: (current, total) =>
-          setUploadProgress({ current, total }),
-        commitEach: async ({ storageId, fileName, contentType, size }) => {
-          await addFileM({
-            lenderId,
-            storageId: storageId as Id<"_storage">,
-            fileName,
-            contentType,
-            size,
-          });
-        },
-      });
-      if (failures.length > 0) {
-        if (ok === 0) {
-          setErr(
-            attempted > 1
-              ? `Upload failed: ${failures.join("; ")}`
-              : failures[0] ?? "Upload failed"
-          );
-        } else {
-          setErr(
-            `Uploaded ${ok} of ${attempted} file(s). Not attached: ${failures.join("; ")}`
-          );
-        }
-      }
-    } finally {
-      setUploading(false);
-      setUploadProgress(null);
-    }
-  }
-
-  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const input = e.target;
-    const list = input.files;
-    const arr = list ? Array.from(list) : [];
-    await processFiles(arr);
-    input.value = "";
-  }
-
-  function onDropFiles(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (!canUseHub || uploading) return;
-    const dt = e.dataTransfer.files;
-    void processFiles(Array.from(dt));
-  }
-
-  return (
-    <CollapsibleSection
-      variant="card"
-      defaultOpen
-      title={
-        <span className="flex items-center gap-2 normal-case">
-          <Paperclip className="h-3.5 w-3.5" aria-hidden />
-          Files &amp; documents
-        </span>
-      }
-      description="Attach term sheets, guidelines, or other documents. You can select multiple files at once. Use Preview to view images, PDFs, and text in the app."
-    >
-      <AttachmentPreviewDialog
-        file={previewFile}
-        onClose={() => setPreviewFile(null)}
-        actionTitle={actionTitle}
-      />
-      {!canUseHub && (
-        <p
-          className="mb-3 rounded-md border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100"
-          role="status"
-        >
-          Connect to Convex (wait for the live connection) to upload or remove
-          files. Viewing may still work for files that already have a URL.
-        </p>
-      )}
-      <p className="mb-2 text-xs text-muted-foreground">
-        Per file up to{" "}
-        {Math.round(MAX_LENDER_ATTACHMENT_BYTES / (1024 * 1024))} MB. Drag and
-        drop here or use Add file(s) — both accept the same file types (any
-        type your device allows in the picker). PDFs, images, Office docs, and
-        HEIC/HEIF are common.
-      </p>
-      <div
-        className={`mb-3 rounded-md border border-dashed p-3 transition-colors ${
-          dragActive && canUseHub && !uploading
-            ? "border-primary bg-primary/5"
-            : "border-border/80 bg-muted/10"
-        }`}
-        onDragEnter={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (canUseHub && !uploading) setDragActive(true);
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (canUseHub && !uploading) setDragActive(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-          setDragActive(false);
-        }}
-        onDrop={onDropFiles}
-      >
-        <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
-          <Upload className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span>Drop files here when connected</span>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
-            <Upload className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span>Drop files here to attach</span>
-          </div>
-          <div className="relative inline-flex h-8 shrink-0 sm:ml-auto">
-            {/*
-              Overlay the file input on the button so the OS file picker opens from a
-              real click on the control (parity with drag-and-drop; avoids broken
-              programmatic `.click()` on clipped `sr-only` inputs, especially mobile).
-            */}
-            <input
-              type="file"
-              multiple
-              disabled={!canUseHub || uploading}
-              onChange={onPickFile}
-              className="absolute inset-0 z-10 w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-              aria-label="Upload files to this profile — browse device"
-              title={actionTitle("Add one or more files to this profile")}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              tabIndex={-1}
-              aria-hidden
-              className="pointer-events-none relative z-0 min-w-[6.5rem]"
-              disabled={!canUseHub || uploading}
-            >
-              {uploading
-                ? uploadProgress
-                  ? `Uploading ${uploadProgress.current} / ${uploadProgress.total}…`
-                  : "Uploading…"
-                : "Add file(s)"}
-            </Button>
-          </div>
-        </div>
-      </div>
-      {err && (
-        <p className="mb-2 text-xs text-destructive" role="alert">
-          {err}
-        </p>
-      )}
-      {files === undefined ? (
-        <p className="text-sm text-muted-foreground">Loading attachments…</p>
-      ) : files.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No files attached yet.</p>
-      ) : (
-        <ul className="space-y-3" aria-label="Attached files">
-          {(files as LenderFileRow[]).map((a) => (
-            <li
-              key={a._id}
-              className="flex flex-col gap-2 rounded-md border border-border/80 bg-muted/20 p-3 sm:flex-row sm:items-center sm:gap-3"
-            >
-              <FileText
-                className="hidden h-8 w-8 shrink-0 text-muted-foreground sm:block"
-                aria-hidden
-              />
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                    {a.fileName}
-                  </span>
-                  {a.url && (
-                    <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 gap-1 px-2 text-xs"
-                        onClick={() => setPreviewFile(a)}
-                        title={actionTitle("Preview in app")}
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        Preview
-                      </Button>
-                      <a
-                        href={a.url}
-                        download={a.fileName}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex h-7 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs font-medium text-primary hover:bg-muted"
-                        title={actionTitle("Open in new tab")}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Open
-                      </a>
-                    </>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {formatSize(a.size)}
-                  {a.contentType
-                    ? ` · ${a.contentType}`
-                    : ""}
-                </div>
-                <div className="pt-0.5">
-                  <Input
-                    key={`${a._id}-label`}
-                    className="h-8 text-xs"
-                    placeholder="Optional label (e.g. 2024 rate sheet)"
-                    defaultValue={a.label ?? ""}
-                    title={actionTitle("Short label for this file")}
-                    readOnly={!canUseHub}
-                    onBlur={(e) => {
-                      const next = e.target.value.trim();
-                      const cur = a.label?.trim() ?? "";
-                      if (next === cur) return;
-                      void updateFileLabelM({ id: a._id, label: next || undefined });
-                    }}
-                  />
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="shrink-0 self-end text-destructive hover:bg-destructive/10"
-                disabled={!canUseHub}
-                onClick={() => {
-                  void (async () => {
-                    const ok = await confirm(
-                      unlinkConfirm(
-                        a.fileName,
-                        "This file is removed from this lender. Other records are not affected.",
-                      ),
-                    );
-                    if (!ok) return;
-                    void removeFileM({ id: a._id });
-                  })();
-                }}
-                title={actionTitle("Remove file")}
-                aria-label={`Remove ${a.fileName}`}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
     </CollapsibleSection>
   );
 }
