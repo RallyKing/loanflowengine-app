@@ -1540,7 +1540,7 @@ export function SettingsPageClient() {
           <SettingsSection
             id="webhooks"
             title="Webhooks"
-            description="Register HTTPS endpoints for background SaaS event delivery. Use Send Test Ping to verify connectivity without blocking the UI."
+            description="Register multi-event HTTPS endpoints, or configure one merchant channel webhook for SMS/email fan-out (GHL pattern). Deliveries never block the UI."
           >
             <WebhookSettingsWorkspace />
           </SettingsSection>

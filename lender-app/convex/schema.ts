@@ -684,6 +684,19 @@ export default defineSchema({
         nextMorningMinute: v.number(),
       }),
     ),
+    /**
+     * Merchant channel notifications (SenseBS / GHL pattern).
+     * One HTTPS URL; separate POSTs per deliveryMethod SMS | EMAIL | INTERNAL.
+     * @see docs/WEBHOOK_SMS_EMAIL_NOTIFICATION_SPEC.md
+     */
+    notificationWebhookUrl: v.optional(v.string()),
+    merchantNotificationChannels: v.optional(
+      v.object({
+        enableSms: v.boolean(),
+        enableEmail: v.boolean(),
+        enableInternal: v.boolean(),
+      }),
+    ),
     updatedAt: v.number(),
     updatedByUserKey: v.optional(v.string()),
   }).index("by_organization", ["organizationId"]),
@@ -4455,6 +4468,33 @@ export default defineSchema({
   })
     .index("by_webhook", ["webhookId", "createdAt"])
     .index("by_organization", ["organizationId", "createdAt"]),
+
+  /**
+   * Delivery results for org-level merchant SMS/EMAIL/INTERNAL companion webhooks.
+   * Distinct from multi-endpoint `webhook_logs`.
+   */
+  merchantNotificationDeliveryLogs: defineTable({
+    organizationId: v.id("organizations"),
+    event: v.string(),
+    context: v.string(),
+    deliveryMethod: v.union(
+      v.literal("SMS"),
+      v.literal("EMAIL"),
+      v.literal("INTERNAL"),
+    ),
+    result: v.string(),
+    isTest: v.boolean(),
+    httpStatus: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+    payload: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_organization", ["organizationId", "createdAt"])
+    .index("by_organization_method", [
+      "organizationId",
+      "deliveryMethod",
+      "createdAt",
+    ]),
 
   /**
    * Snapshots of rows quarantined during `referentialIntegrity` repair (orphan / cross-org links).
