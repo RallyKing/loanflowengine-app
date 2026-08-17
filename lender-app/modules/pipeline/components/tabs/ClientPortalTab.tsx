@@ -440,7 +440,7 @@ export function ClientPortalTab({
             badgeVariant={communicationsMeta.badgeVariant}
             icon={<MessageSquare className="h-4 w-4" aria-hidden />}
             headerRight={headerRight}
-            description="Internal file threads plus outbound email and portal messages."
+            description="Internal file threads plus outbound email, SMS, and portal messages."
           >
             <div className={premiumTabSectionSpaceClass}>
               <div className="space-y-2">

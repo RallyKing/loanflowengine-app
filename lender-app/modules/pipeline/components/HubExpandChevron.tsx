@@ -24,8 +24,9 @@ export function HubExpandChevron({
     <button
       type="button"
       className={cn(
-        "inline-flex h-8 w-8 shrink-0 touch-manipulation items-center justify-center rounded-md",
-        "text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground",
+        "inline-flex h-8 w-8 shrink-0 touch-manipulation items-center justify-center rounded-dlc-sm",
+        "text-muted-foreground/85 transition-colors duration-dlc-short1 ease-dlc-standard",
+        "hover:bg-dlc-surface-low/70 hover:text-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         className,
       )}
@@ -40,7 +41,7 @@ export function HubExpandChevron({
     >
       <ChevronRight
         className={cn(
-          "h-4 w-4 transition-transform duration-dlc-standard ease-dlc-standard motion-reduce:transition-none",
+          "h-4 w-4 transition-transform duration-dlc-short2 ease-dlc-standard motion-reduce:transition-none",
           expanded && "rotate-90",
         )}
         aria-hidden

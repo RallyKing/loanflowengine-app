@@ -149,7 +149,7 @@ export function GlobalSearchPalette() {
     searchRaw instanceof Error
       ? null
       : (searchRaw as GlobalSearchResult | null | undefined);
-  const hits = result?.hits ?? [];
+  const hits = useMemo(() => result?.hits ?? [], [result]);
 
   const searchListSegments = useMemo(() => {
     const segments: Array<

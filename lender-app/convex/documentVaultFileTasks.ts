@@ -5,8 +5,9 @@ import { internal } from "./_generated/api";
 import {
   assertCanMutatePipelineRow,
   assertCanReadPipelineRow,
+  assertOrgMember,
 } from "./organizationAccess";
-import { randomHex, sha256Hex } from "./clientPortalCrypto";
+import { hashPassword, randomHex, sha256Hex } from "./clientPortalCrypto";
 import { purgeLibraryDocumentIfOrphaned } from "./libraryDocumentsCleanup";
 import {
   assignedBlockEntryV,
@@ -19,6 +20,26 @@ import {
   clientPortalBlockLabel,
   isClientPortalAssignableBlock,
 } from "../lib/documentVaultClientBlocks";
+import {
+  createEmptyPfsInstance,
+  defaultPfsInstanceName,
+  findPfsInstance,
+  normalizePfsInstances,
+  pfsDealPatchFromInstances,
+  type PfsInstance,
+} from "../lib/pfs/pfsInstances";
+import {
+  PFS_INTAKE_FORM_FIELD_KEYS,
+  pfsAssociatedFormTitle,
+  planPfsAssociations,
+} from "../lib/pfs/pfsFormAssociation";
+import {
+  findSimplePlInstance,
+  normalizeSimplePlInstances,
+  simplePlDealPatchFromInstances,
+  simplePlInstanceDisplayName,
+  type SimplePlInstance,
+} from "../lib/simplePl/simplePlInstances";
 import { recordBrokerVaultReview } from "./documentVaultActivity";
 import {
   pipelineDealName,
@@ -195,7 +216,14 @@ export const listByPipeline = query({
     } else if (!includeArchived) {
       filtered = rows.filter((r) => !r.isArchived);
     }
-    return filtered.sort((a, b) => a.sortOrder - b.sortOrder);
+    return filtered
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(({ accessPasswordHash, accessPasswordSalt, ...row }) => ({
+        ...row,
+        passwordProtected: Boolean(
+          accessPasswordHash?.trim() && accessPasswordSalt?.trim(),
+        ),
+      }));
   },
 });
 
@@ -999,15 +1027,25 @@ export async function ensureExclusiveBlockAssignmentTask(
     )
     .collect();
 
-  const exclusiveMatch = rows.find((task) => {
-    if (task.isArchived) return false;
-    if (task.status === "complete") return false;
-    if ((task.taskType ?? "document_upload") !== "block_assignment") return false;
-    const assigned = normalizeAssignedBlockEntriesFromDoc(task);
-    return (
-      assigned.length === 1 && assigned[0]!.blockId === atomicBlockId
-    );
-  });
+  /**
+   * PFS / Simple P&L are multi-instance: never reuse a single exclusive
+   * `pfs_statement` / `simple_pl` task. Per-period tasks are created via
+   * `ensurePfsInstanceVaultTask` / `ensureSimplePlInstanceVaultTask`.
+   */
+  const exclusiveMatch =
+    atomicBlockId === "pfs_statement" || atomicBlockId === "simple_pl"
+      ? undefined
+      : rows.find((task) => {
+          if (task.isArchived) return false;
+          if (task.status === "complete") return false;
+          if ((task.taskType ?? "document_upload") !== "block_assignment") {
+            return false;
+          }
+          const assigned = normalizeAssignedBlockEntriesFromDoc(task);
+          return (
+            assigned.length === 1 && assigned[0]!.blockId === atomicBlockId
+          );
+        });
 
   const key = args.memberUserKey?.trim() || "__system__";
   const now = Date.now();
@@ -1132,3 +1170,747 @@ export const restoreFileTask = mutation({
     return { ok: true as const };
   },
 });
+
+const MAX_TASK_PASSWORD_LEN = 128;
+
+function dealPfsInstancesFromPipeline(pipeline: Doc<"pipeline">): PfsInstance[] {
+  const deal =
+    pipeline.dealData != null &&
+    typeof pipeline.dealData === "object" &&
+    !Array.isArray(pipeline.dealData)
+      ? (pipeline.dealData as Record<string, unknown>)
+      : {};
+  return normalizePfsInstances(deal);
+}
+
+async function persistPfsInstancesOnPipeline(
+  ctx: MutationCtx,
+  pipeline: Doc<"pipeline">,
+  instances: PfsInstance[],
+): Promise<Doc<"pipeline">> {
+  const { pfsInstances, pfs } = pfsDealPatchFromInstances(instances);
+  const deal =
+    pipeline.dealData != null &&
+    typeof pipeline.dealData === "object" &&
+    !Array.isArray(pipeline.dealData)
+      ? { ...(pipeline.dealData as Record<string, unknown>) }
+      : {};
+  const now = Date.now();
+  await ctx.db.patch(pipeline._id, {
+    dealData: { ...deal, pfsInstances, pfs, updatedAt: now } as Doc<"pipeline">["dealData"],
+    updatedAt: now,
+  });
+  if (pipeline.intakeSheetId) {
+    const intakeRow = await ctx.db.get(pipeline.intakeSheetId);
+    if (intakeRow) {
+      await ctx.db.patch(pipeline.intakeSheetId, {
+        pfsInstances,
+        pfs,
+        updatedAt: now,
+      });
+    }
+  }
+  const refreshed = await ctx.db.get(pipeline._id);
+  return refreshed ?? pipeline;
+}
+
+export async function ensurePfsInstanceVaultTaskForInstance(
+  ctx: MutationCtx,
+  args: {
+    pipeline: Doc<"pipeline">;
+    instances: PfsInstance[];
+    instance: PfsInstance;
+    memberUserKey?: string;
+    assignedContactId?: Id<"contacts">;
+    title?: string;
+  },
+): Promise<{
+  fileTaskId: Id<"documentVaultFileTasks">;
+  created: boolean;
+  title: string;
+  passwordProtected: boolean;
+  instances: PfsInstance[];
+  pipeline: Doc<"pipeline">;
+}> {
+  const { pipeline } = args;
+  let instances = args.instances;
+  const instance =
+    findPfsInstance(instances, args.instance.id) ?? args.instance;
+
+  if (args.assignedContactId) {
+    const contact = await ctx.db.get(args.assignedContactId);
+    if (!contact) throw new Error("Contact not found.");
+  }
+
+  const primaryContactId =
+    args.assignedContactId ??
+    (instance.assignedContactIds?.[0]
+      ? (instance.assignedContactIds[0] as Id<"contacts">)
+      : undefined);
+
+  const title =
+    args.title?.trim().slice(0, MAX_TITLE_LEN) || pfsAssociatedFormTitle(instance);
+
+  if (instance.vaultFileTaskId) {
+    const existing = await ctx.db.get(
+      instance.vaultFileTaskId as Id<"documentVaultFileTasks">,
+    );
+    if (existing && !existing.isArchived) {
+      const patch: Partial<Doc<"documentVaultFileTasks">> = {
+        updatedAt: Date.now(),
+      };
+      if (!existing.isPortalVisible) patch.isPortalVisible = true;
+      if (existing.title !== title) patch.title = title;
+      if (!existing.sourceKind) patch.sourceKind = "pfs_instance";
+      if (existing.sourceInstanceId !== instance.id) {
+        patch.sourceInstanceId = instance.id;
+      }
+      if (primaryContactId && existing.assignedContactId !== primaryContactId) {
+        patch.assignedContactId = primaryContactId;
+        patch.assignedClientId = undefined;
+        patch.assignedLenderId = undefined;
+      }
+      if (Object.keys(patch).length > 1) {
+        await ctx.db.patch(existing._id, patch);
+      }
+      return {
+        fileTaskId: existing._id,
+        created: false,
+        title: patch.title ?? existing.title,
+        passwordProtected: Boolean(
+          existing.accessPasswordHash?.trim() &&
+            existing.accessPasswordSalt?.trim(),
+        ),
+        instances,
+        pipeline,
+      };
+    }
+  }
+
+  const rows = await ctx.db
+    .query("documentVaultFileTasks")
+    .withIndex("by_pipeline_source", (q) =>
+      q
+        .eq("pipelineFileId", pipeline._id)
+        .eq("sourceKind", "pfs_instance")
+        .eq("sourceInstanceId", instance.id),
+    )
+    .collect();
+  const live = rows.find((t) => !t.isArchived);
+  if (live) {
+    if (live.title !== title) {
+      await ctx.db.patch(live._id, { title, updatedAt: Date.now() });
+    }
+    instances = instances.map((inst) =>
+      inst.id === instance.id
+        ? { ...inst, vaultFileTaskId: String(live._id) }
+        : inst,
+    );
+    const nextPipeline = await persistPfsInstancesOnPipeline(
+      ctx,
+      pipeline,
+      instances,
+    );
+    return {
+      fileTaskId: live._id,
+      created: false,
+      title: live.title !== title ? title : live.title,
+      passwordProtected: Boolean(
+        live.accessPasswordHash?.trim() && live.accessPasswordSalt?.trim(),
+      ),
+      instances,
+      pipeline: nextPipeline,
+    };
+  }
+
+  const blockPatch = persistAssignedBlocksPatch([
+    { blockId: "pfs_statement", sortOrder: 1000 },
+  ]);
+  validateTaskConfig({
+    taskType: "block_assignment",
+    assignedBlockEntries: blockPatch.assignedBlockEntries,
+  });
+  const now = Date.now();
+  const key = args.memberUserKey?.trim() || "__system__";
+  const fileTaskId = await ctx.db.insert("documentVaultFileTasks", {
+    pipelineFileId: pipeline._id,
+    title,
+    sortOrder: await nextSortOrder(ctx, pipeline._id),
+    status: "incomplete",
+    taskType: "block_assignment",
+    ...blockPatch,
+    isRequired: true,
+    isPortalVisible: true,
+    isArchived: false,
+    assignedContactId: primaryContactId,
+    sourceKind: "pfs_instance",
+    sourceInstanceId: instance.id,
+    createdByUserKey: key,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  instances = instances.map((inst) =>
+    inst.id === instance.id
+      ? { ...inst, vaultFileTaskId: String(fileTaskId) }
+      : inst,
+  );
+  const nextPipeline = await persistPfsInstancesOnPipeline(
+    ctx,
+    pipeline,
+    instances,
+  );
+
+  return {
+    fileTaskId,
+    created: true,
+    title,
+    passwordProtected: false,
+    instances,
+    pipeline: nextPipeline,
+  };
+}
+
+/**
+ * Find or create a portal-visible `block_assignment` vault task for one PFS
+ * instance. Distinct from exclusive single-block tasks so 4–5 borrowers can
+ * each have their own Document Vault / portal request.
+ */
+export const ensurePfsInstanceVaultTask = mutation({
+  args: {
+    pipelineFileId: v.id("pipeline"),
+    pfsInstanceId: v.string(),
+    assignedContactId: v.optional(v.id("contacts")),
+    title: v.optional(v.string()),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, args) => {
+    const pipeline = await loadPipelineOrThrow(ctx, args.pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, args.memberUserKey);
+
+    const instances = dealPfsInstancesFromPipeline(pipeline);
+    const instance = findPfsInstance(instances, args.pfsInstanceId);
+    if (!instance) throw new Error("Personal financial statement not found.");
+
+    const result = await ensurePfsInstanceVaultTaskForInstance(ctx, {
+      pipeline,
+      instances,
+      instance,
+      memberUserKey: args.memberUserKey,
+      assignedContactId: args.assignedContactId,
+      title: args.title,
+    });
+
+    return {
+      ok: true as const,
+      fileTaskId: result.fileTaskId,
+      created: result.created,
+      title: result.title,
+      passwordProtected: result.passwordProtected,
+    };
+  },
+});
+
+function dealSimplePlInstancesFromPipeline(
+  pipeline: Doc<"pipeline">,
+): SimplePlInstance[] {
+  const deal =
+    pipeline.dealData != null &&
+    typeof pipeline.dealData === "object" &&
+    !Array.isArray(pipeline.dealData)
+      ? (pipeline.dealData as Record<string, unknown>)
+      : {};
+  return normalizeSimplePlInstances(deal);
+}
+
+async function persistSimplePlInstancesOnPipeline(
+  ctx: MutationCtx,
+  pipeline: Doc<"pipeline">,
+  instances: SimplePlInstance[],
+): Promise<void> {
+  const { simplePlInstances, simplePl } =
+    simplePlDealPatchFromInstances(instances);
+  const deal =
+    pipeline.dealData != null &&
+    typeof pipeline.dealData === "object" &&
+    !Array.isArray(pipeline.dealData)
+      ? { ...(pipeline.dealData as Record<string, unknown>) }
+      : {};
+  const now = Date.now();
+  await ctx.db.patch(pipeline._id, {
+    dealData: {
+      ...deal,
+      simplePlInstances,
+      simplePl,
+      updatedAt: now,
+    } as Doc<"pipeline">["dealData"],
+    updatedAt: now,
+  });
+  if (pipeline.intakeSheetId) {
+    const intakeRow = await ctx.db.get(pipeline.intakeSheetId);
+    if (intakeRow) {
+      await ctx.db.patch(pipeline.intakeSheetId, {
+        simplePlInstances,
+        simplePl,
+        updatedAt: now,
+      });
+    }
+  }
+}
+
+/**
+ * Find or create a portal-visible `block_assignment` vault task for one Simple
+ * P&L timeframe (YTD / past year / named period).
+ */
+export const ensureSimplePlInstanceVaultTask = mutation({
+  args: {
+    pipelineFileId: v.id("pipeline"),
+    simplePlInstanceId: v.string(),
+    assignedContactId: v.optional(v.id("contacts")),
+    title: v.optional(v.string()),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, args) => {
+    const pipeline = await loadPipelineOrThrow(ctx, args.pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, args.memberUserKey);
+
+    const instances = dealSimplePlInstancesFromPipeline(pipeline);
+    const instance = findSimplePlInstance(instances, args.simplePlInstanceId);
+    if (!instance) throw new Error("Simple P&L statement not found.");
+
+    if (args.assignedContactId) {
+      const contact = await ctx.db.get(args.assignedContactId);
+      if (!contact) throw new Error("Contact not found.");
+    }
+
+    const primaryContactId =
+      args.assignedContactId ??
+      (instance.assignedContactIds?.[0]
+        ? (instance.assignedContactIds[0] as Id<"contacts">)
+        : undefined);
+
+    const title =
+      args.title?.trim().slice(0, MAX_TITLE_LEN) ||
+      `P&L: ${simplePlInstanceDisplayName(instance)}`;
+
+    if (instance.vaultFileTaskId) {
+      const existing = await ctx.db.get(
+        instance.vaultFileTaskId as Id<"documentVaultFileTasks">,
+      );
+      if (existing && !existing.isArchived) {
+        const patch: Partial<Doc<"documentVaultFileTasks">> = {
+          updatedAt: Date.now(),
+        };
+        if (!existing.isPortalVisible) patch.isPortalVisible = true;
+        if (existing.title !== title) patch.title = title;
+        if (!existing.sourceKind) patch.sourceKind = "simple_pl_instance";
+        if (existing.sourceInstanceId !== instance.id) {
+          patch.sourceInstanceId = instance.id;
+        }
+        if (primaryContactId && existing.assignedContactId !== primaryContactId) {
+          patch.assignedContactId = primaryContactId;
+          patch.assignedClientId = undefined;
+          patch.assignedLenderId = undefined;
+        }
+        if (Object.keys(patch).length > 1) {
+          await ctx.db.patch(existing._id, patch);
+        }
+        return {
+          ok: true as const,
+          fileTaskId: existing._id,
+          created: false,
+          title: patch.title ?? existing.title,
+          passwordProtected: Boolean(
+            existing.accessPasswordHash?.trim() &&
+              existing.accessPasswordSalt?.trim(),
+          ),
+        };
+      }
+    }
+
+    const rows = await ctx.db
+      .query("documentVaultFileTasks")
+      .withIndex("by_pipeline_source", (q) =>
+        q
+          .eq("pipelineFileId", args.pipelineFileId)
+          .eq("sourceKind", "simple_pl_instance")
+          .eq("sourceInstanceId", instance.id),
+      )
+      .collect();
+    const live = rows.find((t) => !t.isArchived);
+    if (live) {
+      const nextInstances = instances.map((inst) =>
+        inst.id === instance.id
+          ? { ...inst, vaultFileTaskId: String(live._id) }
+          : inst,
+      );
+      await persistSimplePlInstancesOnPipeline(ctx, pipeline, nextInstances);
+      return {
+        ok: true as const,
+        fileTaskId: live._id,
+        created: false,
+        title: live.title,
+        passwordProtected: Boolean(
+          live.accessPasswordHash?.trim() && live.accessPasswordSalt?.trim(),
+        ),
+      };
+    }
+
+    const blockPatch = persistAssignedBlocksPatch([
+      { blockId: "simple_pl", sortOrder: 1000 },
+    ]);
+    validateTaskConfig({
+      taskType: "block_assignment",
+      assignedBlockEntries: blockPatch.assignedBlockEntries,
+    });
+    const now = Date.now();
+    const key = args.memberUserKey?.trim() || "__system__";
+    const fileTaskId = await ctx.db.insert("documentVaultFileTasks", {
+      pipelineFileId: args.pipelineFileId,
+      title,
+      sortOrder: await nextSortOrder(ctx, args.pipelineFileId),
+      status: "incomplete",
+      taskType: "block_assignment",
+      ...blockPatch,
+      isRequired: true,
+      isPortalVisible: true,
+      isArchived: false,
+      assignedContactId: primaryContactId,
+      sourceKind: "simple_pl_instance",
+      sourceInstanceId: instance.id,
+      createdByUserKey: key,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const nextInstances = instances.map((inst) =>
+      inst.id === instance.id
+        ? { ...inst, vaultFileTaskId: String(fileTaskId) }
+        : inst,
+    );
+    await persistSimplePlInstancesOnPipeline(ctx, pipeline, nextInstances);
+
+    return {
+      ok: true as const,
+      fileTaskId,
+      created: true,
+      title,
+      passwordProtected: false,
+    };
+  },
+});
+
+async function ensurePfsIntakeFormForInstance(
+  ctx: MutationCtx,
+  args: {
+    pipeline: Doc<"pipeline">;
+    instance: PfsInstance;
+    title: string;
+    formId?: string;
+    createForm: boolean;
+    renameForm: boolean;
+    memberUserKey?: string;
+  },
+): Promise<{ formId: Id<"intakeForms">; created: boolean }> {
+  const orgId = args.pipeline.organizationId;
+  if (!orgId) throw new Error("File is missing an organization.");
+  const key = args.memberUserKey?.trim() || "__system__";
+  if (args.memberUserKey?.trim()) {
+    await assertOrgMember(ctx, orgId, args.memberUserKey);
+  }
+
+  if (args.formId && !args.createForm) {
+    const existing = await ctx.db.get(args.formId as Id<"intakeForms">);
+    if (existing && existing.fileId === args.pipeline._id) {
+      const patch: Partial<Doc<"intakeForms">> = { updatedAt: Date.now() };
+      if (args.renameForm && existing.name !== args.title) patch.name = args.title;
+      if (existing.sourceKind !== "pfs_instance") patch.sourceKind = "pfs_instance";
+      if (existing.sourceInstanceId !== args.instance.id) {
+        patch.sourceInstanceId = args.instance.id;
+      }
+      if (Object.keys(patch).length > 1) {
+        await ctx.db.patch(existing._id, patch);
+      }
+      return { formId: existing._id, created: false };
+    }
+  }
+
+  const sourced = await ctx.db
+    .query("intakeForms")
+    .withIndex("by_file_source", (q) =>
+      q
+        .eq("fileId", args.pipeline._id)
+        .eq("sourceKind", "pfs_instance")
+        .eq("sourceInstanceId", args.instance.id),
+    )
+    .first();
+  if (sourced) {
+    if (args.renameForm && sourced.name !== args.title) {
+      await ctx.db.patch(sourced._id, {
+        name: args.title,
+        updatedAt: Date.now(),
+      });
+    }
+    return { formId: sourced._id, created: false };
+  }
+
+  const now = Date.now();
+  const formId = await ctx.db.insert("intakeForms", {
+    organizationId: orgId,
+    fileId: args.pipeline._id,
+    formType: "file_intake",
+    name: args.title,
+    fieldKeys: [...PFS_INTAKE_FORM_FIELD_KEYS],
+    borrowerPartyType: "individual",
+    sourceKind: "pfs_instance",
+    sourceInstanceId: args.instance.id,
+    createdByUserKey: key,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { formId, created: true };
+}
+
+/**
+ * Link every PFS on a file to its own titled Forms & Applications form and
+ * Document Vault / portal task. Creating a new instance is optional.
+ */
+export const ensurePfsInstanceAssociations = mutation({
+  args: {
+    pipelineFileId: v.id("pipeline"),
+    pfsInstanceId: v.optional(v.string()),
+    createInstance: v.optional(v.boolean()),
+    instanceName: v.optional(v.string()),
+    assignedContactIds: v.optional(v.array(v.string())),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, args) => {
+    let pipeline = await loadPipelineOrThrow(ctx, args.pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, args.memberUserKey);
+
+    let instances = dealPfsInstancesFromPipeline(pipeline);
+    let createdInstanceId: string | undefined;
+
+    if (args.pfsInstanceId && args.instanceName?.trim() && !args.createInstance) {
+      const existing = findPfsInstance(instances, args.pfsInstanceId);
+      if (existing && existing.name !== args.instanceName.trim()) {
+        instances = instances.map((inst) =>
+          inst.id === args.pfsInstanceId
+            ? { ...inst, name: args.instanceName!.trim() }
+            : inst,
+        );
+        pipeline = await persistPfsInstancesOnPipeline(ctx, pipeline, instances);
+      }
+    }
+
+    if (args.createInstance) {
+      const nextInst = createEmptyPfsInstance({
+        name:
+          args.instanceName?.trim() ||
+          defaultPfsInstanceName(instances.length),
+        assignedContactIds: args.assignedContactIds,
+      });
+      instances = [...instances, nextInst];
+      createdInstanceId = nextInst.id;
+      pipeline = await persistPfsInstancesOnPipeline(ctx, pipeline, instances);
+    }
+
+    const forms = await ctx.db
+      .query("intakeForms")
+      .withIndex("by_file", (q) => q.eq("fileId", args.pipelineFileId))
+      .collect();
+    const vaultTasks = await ctx.db
+      .query("documentVaultFileTasks")
+      .withIndex("by_pipeline_sort", (q) =>
+        q.eq("pipelineFileId", args.pipelineFileId),
+      )
+      .collect();
+
+    const plan = planPfsAssociations({
+      instances,
+      forms: forms.map((f) => ({
+        id: String(f._id),
+        name: f.name,
+        sourceKind: f.sourceKind,
+        sourceInstanceId: f.sourceInstanceId,
+      })),
+      vaultTasks: vaultTasks.map((t) => ({
+        id: String(t._id),
+        title: t.title,
+        sourceKind: t.sourceKind,
+        sourceInstanceId: t.sourceInstanceId,
+        assignedBlockIds: normalizeAssignedBlockEntriesFromDoc(t).map(
+          (e) => e.blockId,
+        ),
+        isArchived: t.isArchived,
+        status: t.status,
+        taskType: t.taskType,
+      })),
+    });
+
+    const targetIds = args.pfsInstanceId
+      ? new Set([args.pfsInstanceId, ...(createdInstanceId ? [createdInstanceId] : [])])
+      : createdInstanceId
+        ? new Set([createdInstanceId])
+        : null;
+    const backfillAll = !targetIds;
+
+    const items = plan.filter((item) => {
+      if (targetIds) return targetIds.has(item.instanceId);
+      if (!backfillAll) return true;
+      const inst = findPfsInstance(instances, item.instanceId);
+      if (!inst) return false;
+      if (inst.vaultFileTaskId || inst.intakeFormId) return true;
+      if (item.formId || item.vaultFileTaskId) return true;
+      return instances.length > 1;
+    });
+
+    let createdForms = 0;
+    let createdTasks = 0;
+    const linked: Array<{
+      pfsInstanceId: string;
+      title: string;
+      intakeFormId: string;
+      vaultFileTaskId: string;
+    }> = [];
+
+    for (const item of items) {
+      const instance = findPfsInstance(instances, item.instanceId);
+      if (!instance) continue;
+
+      if (item.vaultFileTaskId && !item.createVaultTask) {
+        const existing = await ctx.db.get(
+          item.vaultFileTaskId as Id<"documentVaultFileTasks">,
+        );
+        if (existing && !existing.isArchived) {
+          const patch: Partial<Doc<"documentVaultFileTasks">> = {
+            updatedAt: Date.now(),
+          };
+          if (item.renameVaultTask && existing.title !== item.title) {
+            patch.title = item.title;
+          }
+          if (existing.sourceKind !== "pfs_instance") {
+            patch.sourceKind = "pfs_instance";
+          }
+          if (existing.sourceInstanceId !== instance.id) {
+            patch.sourceInstanceId = instance.id;
+          }
+          if (!existing.isPortalVisible) patch.isPortalVisible = true;
+          if (Object.keys(patch).length > 1) {
+            await ctx.db.patch(existing._id, patch);
+          }
+          if (instance.vaultFileTaskId !== String(existing._id)) {
+            instances = instances.map((inst) =>
+              inst.id === instance.id
+                ? { ...inst, vaultFileTaskId: String(existing._id) }
+                : inst,
+            );
+            pipeline = await persistPfsInstancesOnPipeline(
+              ctx,
+              pipeline,
+              instances,
+            );
+          }
+        }
+      } else {
+        const ensured = await ensurePfsInstanceVaultTaskForInstance(ctx, {
+          pipeline,
+          instances,
+          instance,
+          memberUserKey: args.memberUserKey,
+          assignedContactId: instance.assignedContactIds?.[0]
+            ? (instance.assignedContactIds[0] as Id<"contacts">)
+            : undefined,
+          title: item.title,
+        });
+        instances = ensured.instances;
+        pipeline = ensured.pipeline;
+        if (ensured.created) createdTasks += 1;
+      }
+
+      const formResult = await ensurePfsIntakeFormForInstance(ctx, {
+        pipeline,
+        instance: findPfsInstance(instances, item.instanceId) ?? instance,
+        title: item.title,
+        formId: item.formId,
+        createForm: item.createForm,
+        renameForm: item.renameForm,
+        memberUserKey: args.memberUserKey,
+      });
+      if (formResult.created) createdForms += 1;
+      const current = findPfsInstance(instances, item.instanceId) ?? instance;
+      if (current.intakeFormId !== String(formResult.formId)) {
+        instances = instances.map((inst) =>
+          inst.id === item.instanceId
+            ? { ...inst, intakeFormId: String(formResult.formId) }
+            : inst,
+        );
+        pipeline = await persistPfsInstancesOnPipeline(ctx, pipeline, instances);
+      }
+
+      const linkedInst = findPfsInstance(instances, item.instanceId);
+      if (linkedInst?.intakeFormId && linkedInst.vaultFileTaskId) {
+        linked.push({
+          pfsInstanceId: linkedInst.id,
+          title: item.title,
+          intakeFormId: linkedInst.intakeFormId,
+          vaultFileTaskId: linkedInst.vaultFileTaskId,
+        });
+      }
+    }
+
+    return {
+      ok: true as const,
+      createdInstanceId,
+      createdForms,
+      createdTasks,
+      linked,
+      pfsInstances: instances,
+    };
+  },
+});
+
+export const setFileTaskAccessPassword = mutation({
+  args: {
+    fileTaskId: v.id("documentVaultFileTasks"),
+    password: v.string(),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, { fileTaskId, password, memberUserKey }) => {
+    const task = await loadTaskOrThrow(ctx, fileTaskId);
+    const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
+    const plain = password.trim();
+    if (!plain) throw new Error("Enter a password.");
+    if (plain.length > MAX_TASK_PASSWORD_LEN) {
+      throw new Error("Password is too long.");
+    }
+    const salt = randomHex(16);
+    const hash = await hashPassword(plain, salt);
+    await ctx.db.patch(fileTaskId, {
+      accessPasswordSalt: salt,
+      accessPasswordHash: hash,
+      updatedAt: Date.now(),
+    });
+    return { ok: true as const, passwordProtected: true as const };
+  },
+});
+
+export const clearFileTaskAccessPassword = mutation({
+  args: {
+    fileTaskId: v.id("documentVaultFileTasks"),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, { fileTaskId, memberUserKey }) => {
+    const task = await loadTaskOrThrow(ctx, fileTaskId);
+    const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
+    await ctx.db.patch(fileTaskId, {
+      accessPasswordSalt: undefined,
+      accessPasswordHash: undefined,
+      updatedAt: Date.now(),
+    });
+    return { ok: true as const, passwordProtected: false as const };
+  },
+});
+

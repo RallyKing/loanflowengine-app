@@ -18,6 +18,8 @@ import {
   isValidPublishedAt,
 } from "@/lib/product-knowledge/formatPublishedAt";
 import { SilentFeatureErrorBoundary } from "@/components/SilentFeatureErrorBoundary";
+import { resolveViewerTimeZone } from "@/lib/dateTimeZone";
+import { useUserPreferences } from "@/lib/userPreferencesContext";
 
 function changeTypeLabel(
   t: Doc<"productReleasePosts">["changeType"],
@@ -43,9 +45,11 @@ function changeTypeLabel(
 function ReleasePostCard({
   post,
   onLearnMore,
+  timeZone,
 }: {
   post: Doc<"productReleasePosts">;
   onLearnMore: (slug: string) => void;
+  timeZone: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasBody = post.body.length > 0;
@@ -62,7 +66,7 @@ function ReleasePostCard({
             className="text-[10px] text-muted-foreground"
             dateTime={new Date(post.publishedAt).toISOString()}
           >
-            {formatPublishedAt(post.publishedAt)}
+            {formatPublishedAt(post.publishedAt, timeZone)}
           </time>
         ) : null}
       </div>
@@ -130,6 +134,8 @@ export function ProductUpdatesBell({
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
   const k = sessionKey || (userKey?.trim() ?? "") || actorKey;
   const { activeOrganizationId } = useOrgPermissions();
+  const { preferences } = useUserPreferences();
+  const timeZone = resolveViewerTimeZone(preferences.displaySettings);
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0, width: 360 });
   const rootRef = useRef<HTMLDivElement>(null);
@@ -256,6 +262,7 @@ export function ProductUpdatesBell({
                 <ReleasePostCard
                   key={post._id}
                   post={post}
+                  timeZone={timeZone}
                   onLearnMore={(slug) => {
                     openHelp({ articleId: slug });
                     setOpen(false);

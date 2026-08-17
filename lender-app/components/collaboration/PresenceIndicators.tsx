@@ -6,6 +6,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { cn } from "@/lib/cn";
 import { humanizeWorkspaceSurface } from "@/lib/collaboration/workspaceSurface";
+import { filterLivePresenceRows } from "@/lib/collaboration/presenceLiveness";
 import { useDocumentTabVisible } from "@/lib/hooks/useDocumentTabVisible";
 import {
   useConvexSubMountTrace,
@@ -49,9 +50,10 @@ export function PresenceIndicators(props: {
     queryKey: "presence.listActiveInOrganization",
     route: "file",
   });
-  const rows = useQuery(api.presence.listActiveInOrganization, presenceArgs);
+  const rawRows = useQuery(api.presence.listActiveInOrganization, presenceArgs);
+  const rows = filterLivePresenceRows(rawRows);
 
-  if (!rows?.length) return null;
+  if (!rows.length) return null;
 
   return (
     <div

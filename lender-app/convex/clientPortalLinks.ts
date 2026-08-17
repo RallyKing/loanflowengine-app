@@ -10,6 +10,7 @@ import { hashPassword, normalizePortalToken, randomHex, sha256Hex } from "./clie
 import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 import { buildClientPortalUrl } from "../lib/clientPortalUrl";
 import { invalidateSessionsForGrant } from "./clientPortalShared";
+import { resolveTriageEvaluationTime } from "../lib/triageClock";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -267,14 +268,16 @@ export const listLinksForPipeline = query({
         v.literal("access"),
       ),
     ),
+    /** Minute bucket from `TriageClockProvider` — never Date.now() in this query. */
+    nowBucket: v.optional(v.number()),
     ...memberKeyArg,
   },
-  handler: async (ctx, { pipelineFileId, linkType, memberUserKey }) => {
+  handler: async (ctx, { pipelineFileId, linkType, memberUserKey, nowBucket }) => {
     const pipeline = await ctx.db.get(pipelineFileId);
     if (!pipeline) return [];
     await assertCanReadPipelineRow(ctx, pipeline, memberUserKey);
 
-    const now = Date.now();
+    const now = resolveTriageEvaluationTime(nowBucket);
     const rows = await ctx.db
       .query("clientPortalLinks")
       .withIndex("by_pipeline_created", (q) =>

@@ -18,6 +18,7 @@ import {
   type DocumentExpiryStatus,
 } from "../lib/library/documentVaultExpiry";
 import { LIBRARY_DOCUMENT_CATEGORY_LABELS } from "../lib/library/documentVaultTaxonomy";
+import { resolveTriageEvaluationTime } from "../lib/triageClock";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -97,6 +98,12 @@ async function collectPipelineStaleRows(
 export const listStaleDocuments = query({
   args: {
     pipelineFileId: v.id("pipeline"),
+    /**
+     * Minute bucket from `TriageClockProvider`. Required in practice — this
+     * handler never reads the wall clock, so an omitted bucket evaluates as
+     * "nothing expired yet" (see `resolveTriageEvaluationTime`).
+     */
+    nowBucket: v.optional(v.number()),
     ...memberKeyArg,
   },
   returns: v.object({
@@ -104,14 +111,14 @@ export const listStaleDocuments = query({
     expiredCount: v.number(),
     expiringSoonCount: v.number(),
   }),
-  handler: async (ctx, { pipelineFileId, memberUserKey }) => {
+  handler: async (ctx, { pipelineFileId, memberUserKey, nowBucket }) => {
     const pipeline = await ctx.db.get(pipelineFileId);
     if (!pipeline) {
       return { stale: [], expiredCount: 0, expiringSoonCount: 0 };
     }
     await assertCanReadPipelineRow(ctx, pipeline, memberUserKey);
 
-    const now = Date.now();
+    const now = resolveTriageEvaluationTime(nowBucket);
     const stale = await collectPipelineStaleRows(ctx, pipelineFileId, now);
     return {
       stale,

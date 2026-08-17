@@ -39,6 +39,11 @@ import {
   resolvePrimaryEntityForContact,
   type PrimaryEntitySummary,
 } from "./contactPrimaryEntity";
+import {
+  applyFicoScore,
+  parseFicoScore,
+  type FicoHistoryEntry,
+} from "../lib/contacts/ficoHistory";
 
 export type ContactHubRecord = Doc<"contacts"> & {
   primaryEntity: PrimaryEntitySummary | null;
@@ -46,21 +51,58 @@ export type ContactHubRecord = Doc<"contacts"> & {
 
 const contactPiiArgV = {
   fico: v.optional(v.number()),
+  /** When set with `fico`, timestamps the new pull (ms). Defaults to now. */
+  ficoRecordedAt: v.optional(v.number()),
+  ficoNote: v.optional(v.string()),
   ssn: v.optional(v.string()),
   dob: v.optional(v.string()),
 };
 
-function contactPiiPatchFromArgs(args: {
-  fico?: number;
-  ssn?: string;
-  dob?: string;
-}): Partial<Pick<Doc<"contacts">, "fico" | "ssn" | "dob">> {
-  const patch: Partial<Pick<Doc<"contacts">, "fico" | "ssn" | "dob">> = {};
+const ficoHistoryValidator = v.array(
+  v.object({
+    id: v.string(),
+    score: v.number(),
+    recordedAt: v.number(),
+    note: v.optional(v.string()),
+  }),
+);
+
+function contactPiiPatchFromArgs(
+  args: {
+    fico?: number;
+    ficoRecordedAt?: number;
+    ficoNote?: string;
+    ssn?: string;
+    dob?: string;
+  },
+  row?: Pick<Doc<"contacts">, "fico" | "ficoHistory" | "createdAt" | "updatedAt">,
+  now: number = Date.now(),
+): Partial<Pick<Doc<"contacts">, "fico" | "ficoHistory" | "ssn" | "dob">> {
+  const patch: Partial<
+    Pick<Doc<"contacts">, "fico" | "ficoHistory" | "ssn" | "dob">
+  > = {};
   if (args.fico !== undefined) {
-    if (!Number.isFinite(args.fico)) {
-      throw new Error("FICO must be a valid number.");
+    const next = parseFicoScore(args.fico);
+    if (next == null) {
+      throw new Error("FICO must be a whole number between 300 and 850.");
     }
-    patch.fico = args.fico;
+    const sameAsCurrent = row != null && parseFicoScore(row.fico) === next;
+    const explicitPull =
+      args.ficoRecordedAt !== undefined ||
+      Boolean(args.ficoNote?.trim());
+    if (!sameAsCurrent || explicitPull || row == null) {
+      const applied = applyFicoScore({
+        fico: row?.fico,
+        history: row?.ficoHistory as FicoHistoryEntry[] | undefined,
+        nextScore: next,
+        recordedAt: args.ficoRecordedAt ?? now,
+        note: args.ficoNote,
+        now,
+        fallbackRecordedAt: row?.updatedAt ?? row?.createdAt ?? now,
+      });
+      patch.fico = applied.fico;
+      patch.ficoHistory = applied.ficoHistory;
+    }
   }
   if (args.ssn !== undefined) {
     const ssn = args.ssn.trim();
@@ -457,7 +499,7 @@ export const create = mutation({
       notes: (args.notes ?? "").trim(),
       contactRoleIds,
       contactRoleId,
-      ...contactPiiPatchFromArgs(args),
+      ...contactPiiPatchFromArgs(args, undefined, now),
       organizationId: args.organizationId,
       createdAt: now,
       updatedAt: now,
@@ -659,7 +701,7 @@ export const update = mutation({
         : {}),
       ...(rolePatch ?? {}),
       ...(portalDefaultIdsPatch ?? {}),
-      ...contactPiiPatchFromArgs(rest),
+      ...contactPiiPatchFromArgs(rest, row, now),
       updatedAt: now,
     });
     await refreshContactGlobalSearchText(ctx, id);
@@ -677,7 +719,7 @@ export const update = mutation({
       const identityTouched =
         rest.name !== undefined ||
         methodsTouched ||
-        Object.keys(contactPiiPatchFromArgs(rest)).length > 0;
+        Object.keys(contactPiiPatchFromArgs(rest, row, now)).length > 0;
       if (identityTouched) {
         await propagateContactIdentityToLinkedFiles(ctx, updatedRow);
       }
@@ -703,5 +745,51 @@ export const remove = mutation({
     );
     await deleteContactGraph(ctx, id);
     await ctx.db.delete(id);
+  },
+});
+
+export const recordFicoScore = mutation({
+  args: {
+    id: v.id("contacts"),
+    score: v.number(),
+    recordedAt: v.optional(v.number()),
+    note: v.optional(v.string()),
+    memberUserKey: v.optional(v.string()),
+  },
+  returns: v.object({
+    fico: v.number(),
+    ficoHistory: ficoHistoryValidator,
+  }),
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.id);
+    if (!row) throw new Error("Contact not found");
+    await assertCanMutateContactRow(ctx, row, args.memberUserKey);
+    const now = Date.now();
+    const applied = applyFicoScore({
+      fico: row.fico,
+      history: row.ficoHistory as FicoHistoryEntry[] | undefined,
+      nextScore: args.score,
+      recordedAt: args.recordedAt ?? now,
+      note: args.note,
+      now,
+      fallbackRecordedAt: row.updatedAt ?? row.createdAt ?? now,
+    });
+    await ctx.db.patch(args.id, {
+      fico: applied.fico,
+      ficoHistory: applied.ficoHistory,
+      updatedAt: now,
+    });
+    const updatedRow = await ctx.db.get(args.id);
+    if (updatedRow) {
+      await appendContactCrudFeed(
+        ctx,
+        updatedRow,
+        "contact_updated",
+        `Updated FICO for “${updatedRow.name.trim() || "Contact"}” to ${applied.fico}`,
+        args.memberUserKey?.trim(),
+      );
+      await propagateContactIdentityToLinkedFiles(ctx, updatedRow);
+    }
+    return applied;
   },
 });

@@ -5,6 +5,11 @@ const config: Config = {
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./lib/**/*.{js,ts,jsx,tsx,mdx}",
+    // Feature modules (settings hub, pipeline workspace, contacts, …).
+    // Without this, classes used only under modules/ are purged — e.g. Settings
+    // Jump-to lost `lg:flex-col` / `lg:w-56` while parent `lg:flex-row` (in app/)
+    // still applied, collapsing the sidebar into a horizontal strip.
+    "./modules/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   // Match OS dark for `dark:` utilities only when the classic (non-SaaS)
   // color scheme is active. SaaS is always a light workspace: without this,

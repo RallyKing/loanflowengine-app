@@ -23,6 +23,11 @@ import { resolveCommunicationProvider } from "@/lib/comms/providerRouter";
 import { GLOBAL_COMMUNICATION_TEMPLATE_SEEDS } from "@/lib/comms/seedTemplates";
 import { buildCommunicationPreview } from "@/lib/comms/templateRender";
 import { defaultProviderForChannel } from "@/lib/comms/types";
+import {
+  BUILT_IN_MERGE_VARIABLES,
+  sanitizeCustomInputs,
+  type CustomInputDefinition,
+} from "@/lib/comms/mergeVariables";
 
 const channelV = v.union(
   v.literal("email"),
@@ -31,6 +36,27 @@ const channelV = v.union(
   v.literal("portal"),
   v.literal("voice"),
   v.literal("webhook"),
+);
+
+const customInputV = v.object({
+  key: v.string(),
+  label: v.string(),
+  inputType: v.union(
+    v.literal("text"),
+    v.literal("textarea"),
+    v.literal("number"),
+    v.literal("phone"),
+    v.literal("email"),
+  ),
+  defaultValue: v.optional(v.string()),
+  required: v.optional(v.boolean()),
+  helpText: v.optional(v.string()),
+});
+
+const templateStatusV = v.union(
+  v.literal("draft"),
+  v.literal("published"),
+  v.literal("archived"),
 );
 
 const priorityV = v.union(
@@ -153,6 +179,32 @@ async function getTemplateSeed(slug: string | undefined) {
   return GLOBAL_COMMUNICATION_TEMPLATE_SEEDS.find((seed) => seed.slug === slug) ?? null;
 }
 
+function primaryPhoneFromContact(
+  contact: Doc<"contacts"> | null,
+): string {
+  if (!contact) return "";
+  const phones = contact.phones ?? [];
+  const primary = phones.find((p) => p.isPrimary)?.number ?? phones[0]?.number;
+  return (primary ?? contact.phone ?? "").trim();
+}
+
+function primaryEmailFromContact(contact: Doc<"contacts"> | null): string {
+  if (!contact) return "";
+  const emails = contact.emails ?? [];
+  const primary = emails.find((e) => e.isPrimary)?.email ?? emails[0]?.email;
+  return (primary ?? contact.email ?? "").trim();
+}
+
+function lenderDisplayName(
+  lender: Doc<"lenders"> | null,
+): string {
+  if (!lender) return "the lender";
+  const company = (lender.company ?? "").trim();
+  if (company) return company;
+  const contact = (lender.contactName ?? "").trim();
+  return contact || "the lender";
+}
+
 async function buildVariables(
   ctx: any,
   args: {
@@ -161,26 +213,62 @@ async function buildVariables(
     relatedContactId?: Id<"contacts">;
     relatedLenderId?: Id<"lenders">;
     senderName?: string;
+    customOverrides?: Record<string, string>;
+    customInputs?: CustomInputDefinition[];
   },
 ) {
   const organization = await ctx.db.get(args.organizationId);
-  const file = args.relatedPipelineFileId
+  const file: Doc<"pipeline"> | null = args.relatedPipelineFileId
     ? await ctx.db.get(args.relatedPipelineFileId)
     : null;
-  const contact = args.relatedContactId ? await ctx.db.get(args.relatedContactId) : null;
-  const lender = args.relatedLenderId ? await ctx.db.get(args.relatedLenderId) : null;
-  return {
+  const contact: Doc<"contacts"> | null = args.relatedContactId
+    ? await ctx.db.get(args.relatedContactId)
+    : null;
+  const lender: Doc<"lenders"> | null = args.relatedLenderId
+    ? await ctx.db.get(args.relatedLenderId)
+    : null;
+
+  let stageName = "";
+  if (file?.stageId) {
+    const stage = await ctx.db.get(file.stageId);
+    stageName = stage?.name?.trim() ?? "";
+  }
+  if (!stageName && file?.status) {
+    stageName = String(file.status);
+  }
+
+  const fileName = (file?.fileName ?? "").trim() || "this file";
+  const variables: Record<string, string> = {
     organizationName: organization?.name ?? "Your organization",
-    fileName: (file as { name?: string; title?: string } | null)?.name ??
-      (file as { title?: string } | null)?.title ??
-      "this file",
-    contactName: contact?.name ?? "there",
-    lenderName: lender?.name ?? "the lender",
-    senderName: args.senderName ?? "Your team",
+    fileName,
+    dealName: fileName,
+    stage: stageName || "current stage",
+    status: file?.status?.trim() || stageName || "",
+    contactName: contact?.name?.trim() || "there",
+    contactPhone: primaryPhoneFromContact(contact),
+    contactEmail: primaryEmailFromContact(contact),
+    companyName: (contact?.companyName ?? "").trim() || "",
+    lenderName: lenderDisplayName(lender),
+    lenderPhone: (lender?.phone ?? "").trim(),
+    lenderEmail: (lender?.email ?? "").trim(),
+    senderName: args.senderName?.trim() || "Your team",
     approvalSummary: "Your file continues moving through review.",
     fundingSummary: "We will share timing details as they are finalized.",
     escalationReason: "Needs internal follow-up.",
   };
+
+  for (const input of args.customInputs ?? []) {
+    if (!(input.key in variables)) {
+      variables[input.key] = input.defaultValue ?? "";
+    }
+  }
+  if (args.customOverrides) {
+    for (const [key, value] of Object.entries(args.customOverrides)) {
+      if (!key.trim()) continue;
+      variables[key.trim()] = value;
+    }
+  }
+  return variables;
 }
 
 async function upsertDraftRow(
@@ -354,17 +442,33 @@ export const listTemplateCatalog = query({
     organizationId: v.id("organizations"),
     memberUserKey: v.optional(v.string()),
     channel: v.optional(channelV),
+    includeArchived: v.optional(v.boolean()),
   },
-  handler: async (ctx, { organizationId, memberUserKey, channel }) => {
+  returns: v.array(
+    v.object({
+      id: v.union(v.id("communicationTemplates"), v.null()),
+      source: v.union(v.literal("saved"), v.literal("seed")),
+      slug: v.string(),
+      name: v.string(),
+      description: v.optional(v.string()),
+      channel: channelV,
+      status: templateStatusV,
+      subjectTemplate: v.optional(v.string()),
+      bodyTemplate: v.string(),
+      customInputs: v.array(customInputV),
+    }),
+  ),
+  handler: async (ctx, { organizationId, memberUserKey, channel, includeArchived }) => {
     await assertOrgMember(ctx, organizationId, memberUserKey);
     const rows = await ctx.db
       .query("communicationTemplates")
       .withIndex("by_org_updated", (q) => q.eq("organizationId", organizationId))
       .order("desc")
-      .collect();
+      .take(200);
 
     const versionsByTemplate = new Map<string, Doc<"communicationTemplateVersions">>();
     for (const row of rows) {
+      if (!includeArchived && row.status === "archived") continue;
       const version = row.publishedVersion ?? row.currentDraftVersion;
       if (version == null) continue;
       const match = await ctx.db
@@ -377,32 +481,215 @@ export const listTemplateCatalog = query({
     }
 
     const saved = rows
+      .filter((row) => includeArchived || row.status !== "archived")
       .filter((row) => !channel || row.channel === channel)
-      .map((row) => ({
-        id: row._id,
-        source: "saved" as const,
-        slug: row.slug,
-        name: row.name,
-        channel: row.channel,
-        status: row.status,
-        subjectTemplate: versionsByTemplate.get(String(row._id))?.subjectTemplate,
-        bodyTemplate: versionsByTemplate.get(String(row._id))?.bodyTemplate ?? "",
-      }));
+      .map((row) => {
+        const version = versionsByTemplate.get(String(row._id));
+        const customInputs = sanitizeCustomInputs(
+          (version?.customInputs ?? row.customInputs ?? []) as CustomInputDefinition[],
+        );
+        return {
+          id: row._id as Id<"communicationTemplates"> | null,
+          source: "saved" as const,
+          slug: row.slug,
+          name: row.name,
+          description: row.description,
+          channel: row.channel,
+          status: row.status,
+          subjectTemplate: version?.subjectTemplate,
+          bodyTemplate: version?.bodyTemplate ?? "",
+          customInputs,
+        };
+      });
 
     const seeded = GLOBAL_COMMUNICATION_TEMPLATE_SEEDS.filter(
       (seed) => !channel || seed.channel === channel,
     ).map((seed) => ({
-      id: null,
+      id: null as Id<"communicationTemplates"> | null,
       source: "seed" as const,
       slug: seed.slug,
       name: seed.name,
+      description: seed.description,
       channel: seed.channel,
       status: "published" as const,
       subjectTemplate: seed.subjectTemplate,
       bodyTemplate: seed.bodyTemplate,
+      customInputs: [] as CustomInputDefinition[],
     }));
 
     return [...saved, ...seeded];
+  },
+});
+
+export const listTemplateLibrary = query({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.optional(v.string()),
+    channel: v.optional(channelV),
+    includeArchived: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  returns: v.object({
+    page: v.array(
+      v.object({
+        _id: v.id("communicationTemplates"),
+        slug: v.string(),
+        name: v.string(),
+        description: v.optional(v.string()),
+        channel: channelV,
+        status: templateStatusV,
+        subjectTemplate: v.optional(v.string()),
+        bodyTemplate: v.string(),
+        customInputs: v.array(customInputV),
+        publishedVersion: v.optional(v.number()),
+        currentDraftVersion: v.optional(v.number()),
+        updatedAt: v.number(),
+        createdAt: v.number(),
+      }),
+    ),
+    isDone: v.boolean(),
+    builtInVariables: v.array(
+      v.object({
+        key: v.string(),
+        label: v.string(),
+        description: v.string(),
+        group: v.string(),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    await assertOrgPermission(ctx, args.organizationId, args.memberUserKey, "settings.access");
+    const limit = Math.min(Math.max(args.limit ?? 80, 1), 200);
+    const rows = args.channel
+      ? await ctx.db
+          .query("communicationTemplates")
+          .withIndex("by_org_channel_updated", (idx) =>
+            idx.eq("organizationId", args.organizationId).eq("channel", args.channel!),
+          )
+          .order("desc")
+          .take(limit)
+      : await ctx.db
+          .query("communicationTemplates")
+          .withIndex("by_org_updated", (idx) => idx.eq("organizationId", args.organizationId))
+          .order("desc")
+          .take(limit);
+
+    const page = [];
+    for (const row of rows) {
+      if (!args.includeArchived && row.status === "archived") continue;
+      const versionNum = row.publishedVersion ?? row.currentDraftVersion;
+      let subjectTemplate: string | undefined;
+      let bodyTemplate = "";
+      let versionInputs: CustomInputDefinition[] = [];
+      if (versionNum != null) {
+        const version = await ctx.db
+          .query("communicationTemplateVersions")
+          .withIndex("by_template_version", (idx) =>
+            idx.eq("templateId", row._id).eq("version", versionNum),
+          )
+          .first();
+        subjectTemplate = version?.subjectTemplate;
+        bodyTemplate = version?.bodyTemplate ?? "";
+        versionInputs = sanitizeCustomInputs(
+          (version?.customInputs ?? []) as CustomInputDefinition[],
+        );
+      }
+      page.push({
+        _id: row._id,
+        slug: row.slug,
+        name: row.name,
+        description: row.description,
+        channel: row.channel,
+        status: row.status,
+        subjectTemplate,
+        bodyTemplate,
+        customInputs: versionInputs.length
+          ? versionInputs
+          : sanitizeCustomInputs((row.customInputs ?? []) as CustomInputDefinition[]),
+        publishedVersion: row.publishedVersion,
+        currentDraftVersion: row.currentDraftVersion,
+        updatedAt: row.updatedAt,
+        createdAt: row.createdAt,
+      });
+    }
+
+    return {
+      page,
+      isDone: rows.length < limit,
+      builtInVariables: BUILT_IN_MERGE_VARIABLES.map((row) => ({
+        key: row.key,
+        label: row.label,
+        description: row.description,
+        group: row.group,
+      })),
+    };
+  },
+});
+
+export const getTemplate = query({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.optional(v.string()),
+    templateId: v.id("communicationTemplates"),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      _id: v.id("communicationTemplates"),
+      slug: v.string(),
+      name: v.string(),
+      description: v.optional(v.string()),
+      channel: channelV,
+      status: templateStatusV,
+      subjectTemplate: v.optional(v.string()),
+      bodyTemplate: v.string(),
+      customInputs: v.array(customInputV),
+      publishedVersion: v.optional(v.number()),
+      currentDraftVersion: v.optional(v.number()),
+      updatedAt: v.number(),
+      createdAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    await assertOrgPermission(ctx, args.organizationId, args.memberUserKey, "settings.access");
+    const row = await ctx.db.get(args.templateId);
+    if (!row || row.organizationId !== args.organizationId) return null;
+    const versionNum = row.currentDraftVersion ?? row.publishedVersion;
+    let subjectTemplate: string | undefined;
+    let bodyTemplate = "";
+    let customInputs: CustomInputDefinition[] = sanitizeCustomInputs(
+      (row.customInputs ?? []) as CustomInputDefinition[],
+    );
+    if (versionNum != null) {
+      const version = await ctx.db
+        .query("communicationTemplateVersions")
+        .withIndex("by_template_version", (q) =>
+          q.eq("templateId", row._id).eq("version", versionNum),
+        )
+        .first();
+      subjectTemplate = version?.subjectTemplate;
+      bodyTemplate = version?.bodyTemplate ?? "";
+      if (version?.customInputs?.length) {
+        customInputs = sanitizeCustomInputs(
+          version.customInputs as CustomInputDefinition[],
+        );
+      }
+    }
+    return {
+      _id: row._id,
+      slug: row.slug,
+      name: row.name,
+      description: row.description,
+      channel: row.channel,
+      status: row.status,
+      subjectTemplate,
+      bodyTemplate,
+      customInputs,
+      publishedVersion: row.publishedVersion,
+      currentDraftVersion: row.currentDraftVersion,
+      updatedAt: row.updatedAt,
+      createdAt: row.createdAt,
+    };
   },
 });
 
@@ -414,6 +701,28 @@ export const getComposerContext = query({
     relatedContactId: v.optional(v.id("contacts")),
     relatedLenderId: v.optional(v.id("lenders")),
   },
+  returns: v.object({
+    fileName: v.union(v.string(), v.null()),
+    suggestedRecipients: v.array(
+      v.object({
+        value: v.string(),
+        label: v.string(),
+        contactId: v.optional(v.id("contacts")),
+        kind: v.optional(v.union(v.literal("email"), v.literal("sms"))),
+      }),
+    ),
+    contactName: v.union(v.string(), v.null()),
+    lenderName: v.union(v.string(), v.null()),
+    variables: v.record(v.string(), v.string()),
+    builtInVariables: v.array(
+      v.object({
+        key: v.string(),
+        label: v.string(),
+        description: v.string(),
+        group: v.string(),
+      }),
+    ),
+  }),
   handler: async (ctx, args) => {
     await assertOrgMember(ctx, args.organizationId, args.memberUserKey);
     const file = await maybeReadFileContext(ctx, args.relatedPipelineFileId, args.memberUserKey);
@@ -426,14 +735,69 @@ export const getComposerContext = query({
           .collect()
       : [];
 
-    const suggestedRecipients = [];
+    const suggestedRecipients: Array<{
+      value: string;
+      label: string;
+      contactId?: Id<"contacts">;
+      kind?: "email" | "sms";
+    }> = [];
     for (const link of contacts.slice(0, 10)) {
       const row = await ctx.db.get(link.contactId);
-      if (row?.email?.trim()) {
+      if (!row) continue;
+      const email = primaryEmailFromContact(row);
+      if (email) {
         suggestedRecipients.push({
-          value: row.email.trim(),
+          value: email,
           label: row.name,
           contactId: row._id,
+          kind: "email",
+        });
+      }
+      const phone = primaryPhoneFromContact(row);
+      if (phone) {
+        suggestedRecipients.push({
+          value: phone,
+          label: `${row.name} (SMS)`,
+          contactId: row._id,
+          kind: "sms",
+        });
+      }
+    }
+    if (contact) {
+      const email = primaryEmailFromContact(contact);
+      if (email && !suggestedRecipients.some((r) => r.value === email && r.kind === "email")) {
+        suggestedRecipients.unshift({
+          value: email,
+          label: contact.name,
+          contactId: contact._id,
+          kind: "email",
+        });
+      }
+      const phone = primaryPhoneFromContact(contact);
+      if (phone && !suggestedRecipients.some((r) => r.value === phone && r.kind === "sms")) {
+        suggestedRecipients.unshift({
+          value: phone,
+          label: `${contact.name} (SMS)`,
+          contactId: contact._id,
+          kind: "sms",
+        });
+      }
+    }
+    if (lender) {
+      const email = (lender.email ?? "").trim();
+      if (email) {
+        suggestedRecipients.push({
+          value: email,
+          label: lenderDisplayName(lender),
+          kind: "email",
+        });
+      }
+      const phone = (lender.phone ?? "").trim();
+      if (phone) {
+        suggestedRecipients.push({
+          value: phone,
+          label: `${lenderDisplayName(lender)} (SMS)`,
+          kind: "sms",
         });
       }
     }
@@ -447,17 +811,17 @@ export const getComposerContext = query({
     });
 
     return {
-      fileName: (file as { name?: string; title?: string } | null)?.name ??
-        (file as { title?: string } | null)?.title ??
-        null,
+      fileName: file?.fileName ?? null,
       suggestedRecipients,
       contactName: contact?.name ?? null,
-      lenderName:
-        (lender as { name?: string; company?: string; companyName?: string } | null)?.name ??
-        (lender as { company?: string; companyName?: string } | null)?.company ??
-        (lender as { companyName?: string } | null)?.companyName ??
-        null,
+      lenderName: lender ? lenderDisplayName(lender) : null,
       variables,
+      builtInVariables: BUILT_IN_MERGE_VARIABLES.map((row) => ({
+        key: row.key,
+        label: row.label,
+        description: row.description,
+        group: row.group,
+      })),
     };
   },
 });
@@ -473,22 +837,60 @@ export const previewTemplate = query({
     relatedContactId: v.optional(v.id("contacts")),
     relatedLenderId: v.optional(v.id("lenders")),
     senderName: v.optional(v.string()),
+    customOverrides: v.optional(v.record(v.string(), v.string())),
+    customInputs: v.optional(v.array(customInputV)),
   },
+  returns: v.object({
+    subject: v.string(),
+    bodyText: v.string(),
+    variablesUsed: v.array(v.string()),
+    variables: v.record(v.string(), v.string()),
+  }),
   handler: async (ctx, args) => {
     await assertOrgMember(ctx, args.organizationId, args.memberUserKey);
     const seed = await getTemplateSeed(args.seedTemplateSlug);
+    const customInputs = sanitizeCustomInputs(
+      (args.customInputs ?? []) as CustomInputDefinition[],
+    );
     const variables = await buildVariables(ctx, {
       organizationId: args.organizationId,
       relatedPipelineFileId: args.relatedPipelineFileId,
       relatedContactId: args.relatedContactId,
       relatedLenderId: args.relatedLenderId,
       senderName: args.senderName ?? args.memberUserKey,
+      customOverrides: args.customOverrides,
+      customInputs,
     });
-    return buildCommunicationPreview({
+    const preview = buildCommunicationPreview({
       subjectTemplate: args.subjectTemplate ?? seed?.subjectTemplate,
       bodyTemplate: args.bodyTemplate || seed?.bodyTemplate || "",
       variables,
     });
+    return { ...preview, variables };
+  },
+});
+
+export const listBuiltInMergeVariables = query({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.optional(v.string()),
+  },
+  returns: v.array(
+    v.object({
+      key: v.string(),
+      label: v.string(),
+      description: v.string(),
+      group: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    await assertOrgMember(ctx, args.organizationId, args.memberUserKey);
+    return BUILT_IN_MERGE_VARIABLES.map((row) => ({
+      key: row.key,
+      label: row.label,
+      description: row.description,
+      group: row.group,
+    }));
   },
 });
 
@@ -768,15 +1170,26 @@ export const upsertTemplate = mutation({
     templateId: v.optional(v.id("communicationTemplates")),
     slug: v.string(),
     name: v.string(),
+    description: v.optional(v.string()),
     channel: channelV,
     subjectTemplate: v.optional(v.string()),
     bodyTemplate: v.string(),
+    customInputs: v.optional(v.array(customInputV)),
     publish: v.optional(v.boolean()),
   },
+  returns: v.object({
+    templateId: v.id("communicationTemplates"),
+    versionId: v.id("communicationTemplateVersions"),
+    version: v.number(),
+  }),
   handler: async (ctx, args) => {
     await assertOrgPermission(ctx, args.organizationId, args.memberUserKey, "settings.access");
     const now = Date.now();
     const key = (args.memberUserKey ?? "").trim() || "system";
+    const customInputs = sanitizeCustomInputs(
+      (args.customInputs ?? []) as CustomInputDefinition[],
+    );
+    const description = sanitizeString(args.description, 400);
     let templateId = args.templateId;
     let nextVersion = 1;
 
@@ -784,10 +1197,12 @@ export const upsertTemplate = mutation({
       templateId = await ctx.db.insert("communicationTemplates", {
         organizationId: args.organizationId,
         scope: "organization",
-        slug: args.slug.trim(),
-        name: args.name.trim(),
+        slug: args.slug.trim().slice(0, 80),
+        name: args.name.trim().slice(0, 120),
+        description,
         channel: args.channel,
         status: args.publish ? "published" : "draft",
+        customInputs,
         createdByUserKey: key,
         currentDraftVersion: 1,
         publishedVersion: args.publish ? 1 : undefined,
@@ -796,6 +1211,10 @@ export const upsertTemplate = mutation({
       });
     } else {
       const existingTemplateId = templateId;
+      const existing = await ctx.db.get(existingTemplateId);
+      if (!existing || existing.organizationId !== args.organizationId) {
+        throw new Error("Template not found in this organization.");
+      }
       const versions = await ctx.db
         .query("communicationTemplateVersions")
         .withIndex("by_template_created", (q) =>
@@ -805,12 +1224,14 @@ export const upsertTemplate = mutation({
         .take(1);
       nextVersion = (versions[0]?.version ?? 0) + 1;
       await ctx.db.patch(existingTemplateId, {
-        slug: args.slug.trim(),
-        name: args.name.trim(),
+        slug: args.slug.trim().slice(0, 80),
+        name: args.name.trim().slice(0, 120),
+        description,
         channel: args.channel,
         status: args.publish ? "published" : "draft",
+        customInputs,
         currentDraftVersion: nextVersion,
-        ...(args.publish ? { publishedVersion: nextVersion } : {}),
+        ...(args.publish ? { publishedVersion: nextVersion, archivedAt: undefined } : {}),
         updatedAt: now,
       });
     }
@@ -826,10 +1247,52 @@ export const upsertTemplate = mutation({
       status: args.publish ? "published" : "draft",
       subjectTemplate: sanitizeString(args.subjectTemplate, MAX_SUBJECT),
       bodyTemplate: args.bodyTemplate.slice(0, MAX_BODY),
+      customInputs,
       createdByUserKey: key,
       createdAt: now,
     });
     return { templateId, versionId: version, version: nextVersion };
+  },
+});
+
+export const archiveTemplate = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.optional(v.string()),
+    templateId: v.id("communicationTemplates"),
+    archive: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    ok: v.boolean(),
+    status: templateStatusV,
+  }),
+  handler: async (ctx, args) => {
+    await assertOrgPermission(ctx, args.organizationId, args.memberUserKey, "settings.access");
+    const row = await ctx.db.get(args.templateId);
+    if (!row || row.organizationId !== args.organizationId) {
+      throw new Error("Template not found in this organization.");
+    }
+    const now = Date.now();
+    const shouldArchive = args.archive !== false;
+    if (shouldArchive) {
+      await ctx.db.patch(args.templateId, {
+        status: "archived",
+        archivedAt: now,
+        updatedAt: now,
+      });
+      return { ok: true, status: "archived" as const };
+    }
+    await ctx.db.patch(args.templateId, {
+      status: row.publishedVersion != null ? "published" : "draft",
+      archivedAt: undefined,
+      updatedAt: now,
+    });
+    return {
+      ok: true,
+      status: (row.publishedVersion != null ? "published" : "draft") as
+        | "published"
+        | "draft",
+    };
   },
 });
 

@@ -111,23 +111,28 @@ export function HtmlDocumentEditorCanvas({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  /** Body HTML fetched from storage — applied after the contentEditable mounts. */
+  const [loadedBody, setLoadedBody] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setDirty(false);
+    setLoadedBody(null);
     void (async () => {
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(`Failed to load document (${res.status})`);
         const html = await res.text();
         const body = extractHtmlDocumentBody(html);
-        if (!cancelled && editorRef.current) {
-          editorRef.current.innerHTML = body;
+        if (!cancelled) {
+          setLoadedBody(body);
         }
       } catch (e) {
         if (!cancelled) {
           onError?.(e instanceof Error ? e.message : String(e));
+          // Still mount an empty editor so Cancel works; avoid a permanent blank shell.
+          setLoadedBody("");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -137,6 +142,12 @@ export function HtmlDocumentEditorCanvas({
       cancelled = true;
     };
   }, [url, documentId, onError]);
+
+  // contentEditable is not mounted while loading — apply body only after it exists.
+  useEffect(() => {
+    if (loading || loadedBody === null || !editorRef.current) return;
+    editorRef.current.innerHTML = loadedBody;
+  }, [loading, loadedBody]);
 
   const exec = useCallback((command: string, value?: string) => {
     editorRef.current?.focus();

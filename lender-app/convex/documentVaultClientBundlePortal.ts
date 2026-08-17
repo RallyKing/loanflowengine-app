@@ -35,7 +35,7 @@ import {
 } from "./documentVaultTaskTypes";
 import { ensureExclusiveBlockAssignmentTask } from "./documentVaultFileTasks";
 import { embeddedDealPayloadIsSubstantive } from "../lib/file/embeddedDealPresence";
-import { fileTaskTitleForClientLinkEmail } from "../lib/fileTaskClientTemplates";
+import { clientLinkEmailItemFromFileTask } from "../lib/clientLinkEmailCopy";
 import {
   portalBlockPrefillForTask,
   portalDealSheetDtoFromSources,
@@ -48,7 +48,13 @@ import {
   resolveCompanySlugForPipeline,
 } from "./clientPortalLinks";
 import { assertLinkAccessAllowed } from "./portalAccessVerification";
+import { assertFileTaskPasswordAllowed } from "./portalFileTaskPassword";
+import {
+  bundleIncludesFileTask,
+  resolveBundleFileTaskIds,
+} from "./portalBundleTaskScope";
 import { recordClientVaultUpload } from "./documentVaultActivity";
+import { vaultDocumentOutboundFileName } from "../lib/library/vaultOutboundFileName";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 const BUNDLE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -71,6 +77,25 @@ function portalUrlForSlug(companySlug: string, plainToken: string): string {
 
 function isOutstanding(task: Doc<"documentVaultFileTasks">): boolean {
   return !task.isArchived && task.status !== "complete";
+}
+
+async function loadPipelineVaultTasks(
+  ctx: QueryCtx | MutationCtx,
+  pipelineFileId: Id<"pipeline">,
+) {
+  return await ctx.db
+    .query("documentVaultFileTasks")
+    .withIndex("by_pipeline_sort", (q) => q.eq("pipelineFileId", pipelineFileId))
+    .collect();
+}
+
+async function assertBundleTaskInScope(
+  ctx: QueryCtx | MutationCtx,
+  row: Doc<"documentVaultClientBundleTokens">,
+  fileTaskId: Id<"documentVaultFileTasks">,
+): Promise<boolean> {
+  const allTasks = await loadPipelineVaultTasks(ctx, row.pipelineFileId);
+  return bundleIncludesFileTask(row, allTasks, fileTaskId);
 }
 
 async function loadBundleByPlain(
@@ -139,8 +164,9 @@ export const getPortalDealSheet = query({
     bundleToken: v.string(),
     fileTaskId: v.id("documentVaultFileTasks"),
     accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId, accessProof }) => {
+  handler: async (ctx, { bundleToken, fileTaskId, accessProof, taskAccessProof }) => {
     const auth = await loadBundleByPlain(
       ctx,
       normalizePortalToken(bundleToken),
@@ -150,7 +176,7 @@ export const getPortalDealSheet = query({
     if (!auth.ok) {
       return { status: auth.reason } as const;
     }
-    if (!auth.row.fileTaskIds.some((id) => String(id) === String(fileTaskId))) {
+    if (!(await assertBundleTaskInScope(ctx, auth.row, fileTaskId))) {
       return { status: "unauthorized" as const };
     }
 
@@ -158,9 +184,19 @@ export const getPortalDealSheet = query({
     if (!task || task.isArchived) {
       return { status: "not_found" as const };
     }
+    const passwordGate = await assertFileTaskPasswordAllowed(ctx, {
+      task,
+      tokenHash: auth.row.tokenHash,
+      taskAccessProof,
+    });
+    if (!passwordGate.ok) {
+      return { status: "password_required" as const };
+    }
 
-    const pipeline = await ctx.db.get(auth.row.pipelineFileId);
-    if (!pipeline) return { status: "not_found" as const };
+    const pipeline = await ctx.db.get(task.pipelineFileId);
+    if (!pipeline) {
+      return { status: "not_found" as const };
+    }
 
     const linked =
       pipeline.intakeSheetId != null
@@ -194,6 +230,7 @@ export const getPortalDealSheet = query({
         blockEditable,
         readOnlyPreview: auth.row.readOnlyPreview === true,
         brokerAgentCapable: auth.row.brokerAgentCapable === true,
+        fileTask: task,
       }),
     };
   },
@@ -244,6 +281,8 @@ export const getBundleByToken = query({
     const dealPayload = embeddedDealPayloadIsSubstantive(pipeline.dealData)
       ? (pipeline.dealData as Record<string, unknown>)
       : {};
+    const allPipelineTasks = await loadPipelineVaultTasks(ctx, row.pipelineFileId);
+    const scopedTaskIds = resolveBundleFileTaskIds(row, allPipelineTasks);
 
     const pushTask = async (task: Doc<"documentVaultFileTasks">) => {
       const taskType = resolveTaskTypeFromDoc(task);
@@ -256,7 +295,12 @@ export const getBundleByToken = query({
           blockSettings[blockId] = pipelineSettings[blockId];
         }
       }
-      const blockPrefill = portalBlockPrefillForTask(blockIds, dealPayload);
+      const passwordProtected = Boolean(
+        task.accessPasswordHash?.trim() && task.accessPasswordSalt?.trim(),
+      );
+      const blockPrefill = passwordProtected
+        ? {}
+        : portalBlockPrefillForTask(blockIds, dealPayload, task);
       const clientTemplates: Array<{
         fileName: string;
         mimeType: string;
@@ -285,14 +329,14 @@ export const getBundleByToken = query({
       );
     };
 
-    for (const taskId of row.fileTaskIds) {
+    for (const taskId of scopedTaskIds) {
       const task = await ctx.db.get(taskId);
       if (!task || task.isArchived || !task.isPortalVisible) continue;
       await pushTask(task);
     }
 
-    if (tasks.length === 0 && row.fileTaskIds.length > 0) {
-      for (const taskId of row.fileTaskIds) {
+    if (tasks.length === 0 && scopedTaskIds.length > 0) {
+      for (const taskId of scopedTaskIds) {
         const task = await ctx.db.get(taskId);
         if (!task) continue;
         await pushTask(task);
@@ -452,13 +496,17 @@ export const issueBundleToken = mutation({
     });
 
     const portalUrl = portalUrlForSlug(companySlug, plainToken);
-    const taskTitles = selected.map((id) => {
+    const taskItems = selected.map((id) => {
       const task = allTasks.find((t) => t._id === id);
-      return fileTaskTitleForClientLinkEmail(
-        task?.title?.trim() || "Document request",
-        (task?.clientTemplateAttachments?.length ?? 0) > 0,
-      );
+      return clientLinkEmailItemFromFileTask({
+        title: task?.title,
+        description: task?.description,
+        clientInstructionText: task?.clientInstructionText,
+        instructionUrl: task?.instructionUrl,
+        clientTemplateAttachments: task?.clientTemplateAttachments,
+      });
     });
+    const taskTitles = taskItems.map((item) => item.title);
 
     await registerClientPortalLink(ctx, {
       pipelineFileId,
@@ -481,6 +529,7 @@ export const issueBundleToken = mutation({
       token: plainToken,
       fileTaskCount: selected.length,
       taskTitles,
+      taskItems,
       expiresAt: now + BUNDLE_TTL_MS,
     };
   },
@@ -648,7 +697,7 @@ export const issueTaskUploadTokenForBundle = mutation({
     if (auth.row.readOnlyPreview) {
       throw new Error("This is a read-only preview link.");
     }
-    if (!auth.row.fileTaskIds.some((id) => String(id) === String(fileTaskId))) {
+    if (!(await assertBundleTaskInScope(ctx, auth.row, fileTaskId))) {
       throw new Error("Task not included in this portal link.");
     }
 
@@ -693,6 +742,7 @@ async function authorizeBundleTaskUpload(
   bundleToken: string,
   fileTaskId: Id<"documentVaultFileTasks">,
   accessProof?: string,
+  taskAccessProof?: string,
 ) {
   const auth = await loadBundleByPlain(
     ctx,
@@ -713,7 +763,7 @@ async function authorizeBundleTaskUpload(
   if (auth.row.readOnlyPreview) {
     throw new Error("This is a read-only preview link.");
   }
-  if (!auth.row.fileTaskIds.some((id) => String(id) === String(fileTaskId))) {
+  if (!(await assertBundleTaskInScope(ctx, auth.row, fileTaskId))) {
     throw new Error("Task not included in this portal link.");
   }
   const task = await ctx.db.get(fileTaskId);
@@ -722,6 +772,14 @@ async function authorizeBundleTaskUpload(
   }
   if (task.status === "complete") {
     throw new Error("This task is complete and no longer accepts uploads.");
+  }
+  const passwordGate = await assertFileTaskPasswordAllowed(ctx, {
+    task,
+    tokenHash: auth.row.tokenHash,
+    taskAccessProof,
+  });
+  if (!passwordGate.ok) {
+    throw new Error("This request requires a password.");
   }
   const taskType = resolveTaskTypeFromDoc(task);
   const pipeline = await ctx.db.get(task.pipelineFileId);
@@ -809,7 +867,7 @@ export const getBundleTaskUploadTree = query({
     if (!auth.ok) {
       return { status: auth.reason } as const;
     }
-    if (!auth.row.fileTaskIds.some((id) => String(id) === String(fileTaskId))) {
+    if (!(await assertBundleTaskInScope(ctx, auth.row, fileTaskId))) {
       return { status: "unauthorized" as const };
     }
 
@@ -861,7 +919,7 @@ export const getBundleTaskUploadTree = query({
       documents.push({
         documentId: doc._id,
         title: doc.title,
-        fileName: doc.latestFileName,
+        fileName: vaultDocumentOutboundFileName(doc),
         folderId: link.folderId,
       });
     }
@@ -905,13 +963,15 @@ export const generateBundleUploadUrl = mutation({
     bundleToken: v.string(),
     fileTaskId: v.id("documentVaultFileTasks"),
     accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId, accessProof }) => {
+  handler: async (ctx, { bundleToken, fileTaskId, accessProof, taskAccessProof }) => {
     const { taskType } = await authorizeBundleTaskUpload(
       ctx,
       bundleToken,
       fileTaskId,
       accessProof,
+      taskAccessProof,
     );
     assertTaskAllowsUpload(taskType);
     return await ctx.storage.generateUploadUrl();
@@ -928,6 +988,7 @@ export const ingestBundleUpload = mutation({
     contentType: v.optional(v.string()),
     size: v.optional(v.number()),
     accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { task, pipeline, taskType } = await authorizeBundleTaskUpload(
@@ -935,6 +996,7 @@ export const ingestBundleUpload = mutation({
       args.bundleToken,
       args.fileTaskId,
       args.accessProof,
+      args.taskAccessProof,
     );
     assertTaskAllowsUpload(taskType);
 
@@ -1054,13 +1116,15 @@ export const submitClientBlockFromBundle = mutation({
     blockId: v.string(),
     formData: v.any(),
     accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId, blockId, formData, accessProof }) => {
+  handler: async (ctx, { bundleToken, fileTaskId, blockId, formData, accessProof, taskAccessProof }) => {
     const { task, pipeline } = await authorizeBundleTaskUpload(
       ctx,
       bundleToken,
       fileTaskId,
       accessProof,
+      taskAccessProof,
     );
     const trimmedBlock = blockId.trim();
     if (!trimmedBlock) throw new Error("Block id is required.");
@@ -1086,7 +1150,7 @@ export const submitClientBlockFromBundle = mutation({
       ? (pipeline.dealData as Record<string, unknown>)
       : {};
     const priorSlice = isAtomicPortalBlockId(atomicBlockId)
-      ? extractDealSnapshotSlice(dealPayload, atomicBlockId)
+      ? extractDealSnapshotSlice(dealPayload, atomicBlockId, { fileTask: task })
       : null;
 
     await snapshotBlockSettings(ctx, {
@@ -1105,6 +1169,7 @@ export const submitClientBlockFromBundle = mutation({
         pipeline,
         atomicBlockId,
         formData,
+        task,
       );
     }
 
@@ -1162,13 +1227,15 @@ export const autosaveClientBlockDraftFromBundle = mutation({
     blockId: v.string(),
     formData: v.any(),
     accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
   },
-  handler: async (ctx, { bundleToken, fileTaskId, blockId, formData, accessProof }) => {
+  handler: async (ctx, { bundleToken, fileTaskId, blockId, formData, accessProof, taskAccessProof }) => {
     const { task, pipeline } = await authorizeBundleTaskUpload(
       ctx,
       bundleToken,
       fileTaskId,
       accessProof,
+      taskAccessProof,
     );
     const trimmedBlock = blockId.trim();
     if (!trimmedBlock) throw new Error("Block id is required.");
@@ -1194,6 +1261,7 @@ export const autosaveClientBlockDraftFromBundle = mutation({
         pipeline,
         atomicBlockId,
         formData,
+        task,
       );
     }
 

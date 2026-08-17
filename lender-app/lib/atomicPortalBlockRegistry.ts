@@ -21,6 +21,8 @@ export const ATOMIC_PORTAL_BLOCK_IDS = [
   "construction_budget",
   "investor_experience",
   "pfs_statement",
+  "track_record",
+  "simple_pl",
   "file_tasks",
   "generate_terms",
   // Deal intake sections
@@ -89,6 +91,8 @@ export type AtomicPortalBlockDefinition = {
     | "construction_budget"
     | "investor_experience"
     | "pfs_statement"
+    | "track_record"
+    | "simple_pl"
     | "file_tasks"
     | "generate_terms"
   >;
@@ -207,13 +211,14 @@ const PIPELINE_MODULE_DEFS: AtomicPortalBlockDefinition[] = [
   {
     id: "construction_budget",
     label: "Construction budget",
-    description: "Line-item construction budget with draw tracking.",
+    description:
+      "Construction budget matching the Construction Lender Services template.",
     category: "financial",
     kind: "pipelineModule",
     clientEditable: true,
     pipelineModuleId: "construction_budget",
     dealDataKeys: [],
-    defaultSummary: "Budget lines and draws",
+    defaultSummary: "Template budget, subtotals, and project costs",
     defaultStatus: "Draft",
   },
   {
@@ -236,8 +241,34 @@ const PIPELINE_MODULE_DEFS: AtomicPortalBlockDefinition[] = [
     kind: "pipelineModule",
     clientEditable: true,
     pipelineModuleId: "pfs_statement",
-    dealDataKeys: ["assets", "liabilities", "pfs"],
+    dealDataKeys: ["assets", "liabilities", "pfs", "pfsInstances"],
     defaultSummary: "PFS assets and liabilities",
+    defaultStatus: "Draft",
+  },
+  {
+    id: "track_record",
+    label: "Track record",
+    description:
+      "Investment property track record — rehab and new-construction experience.",
+    category: "financial",
+    kind: "pipelineModule",
+    clientEditable: true,
+    pipelineModuleId: "track_record",
+    dealDataKeys: ["trackRecord", "trackRecordMeta"],
+    defaultSummary: "Rehab and new-construction experience",
+    defaultStatus: "Draft",
+  },
+  {
+    id: "simple_pl",
+    label: "Simple P&L",
+    description:
+      "Simple profit and loss — year-to-date and past-year timeframes matching the CSV template.",
+    category: "financial",
+    kind: "pipelineModule",
+    clientEditable: true,
+    pipelineModuleId: "simple_pl",
+    dealDataKeys: ["simplePl", "simplePlInstances"],
+    defaultSummary: "Revenue, CoGS, expenses, and net profit",
     defaultStatus: "Draft",
   },
   {
@@ -322,6 +353,8 @@ export const LEGACY_BROAD_BLOCK_EXPANSION: Record<string, AtomicPortalBlockId[]>
     "loans",
     "fees_closing",
     "construction_budget",
+    "track_record",
+    "simple_pl",
   ],
   fileDetails: ["file_details"],
   fileNotes: ["file_notes"],
@@ -332,6 +365,8 @@ export const LEGACY_BROAD_BLOCK_EXPANSION: Record<string, AtomicPortalBlockId[]>
   pfs: ["pfs_statement"],
   constructionBudget: ["construction_budget"],
   investorExperience: ["investor_experience"],
+  trackRecord: ["track_record"],
+  simplePl: ["simple_pl"],
 };
 
 /** Legacy camelCase aliases → single atomic id. */
@@ -346,6 +381,8 @@ export const LEGACY_BLOCK_ALIASES: Record<string, AtomicPortalBlockId> = {
   pfs: "pfs_statement",
   constructionBudget: "construction_budget",
   investorExperience: "investor_experience",
+  trackRecord: "track_record",
+  simplePl: "simple_pl",
   tasks: "file_tasks",
   generateTerms: "generate_terms",
   scenarioMatch: "scenario",

@@ -26,18 +26,30 @@ const dlcGitSha = resolveGitSha();
 
 // Set DLC_NEXT_DIST_DIR=1 for `.next-local`, or an absolute path (e.g. under
 // %LOCALAPPDATA%) to avoid OneDrive rename races during multitask builds.
-const dlcDistDirEnv =
-  process.env.VERCEL || process.env.CI
-    ? ""
-    : process.env.DLC_NEXT_DIST_DIR?.trim() || "";
-const dlcDistDir =
+// Never honor custom distDir on Vercel/CI — remote builds must use `.next`.
+const onHostedCi = Boolean(
+  process.env.VERCEL ||
+    process.env.VERCEL_ENV ||
+    process.env.CI ||
+    process.env.VERCEL_URL,
+);
+const dlcDistDirEnv = onHostedCi
+  ? ""
+  : process.env.DLC_NEXT_DIST_DIR?.trim() || "";
+const dlcDistDirRaw =
   dlcDistDirEnv === "1"
     ? ".next-local"
     : dlcDistDirEnv.length > 0
       ? dlcDistDirEnv
       : null;
+// Next joins distDir to the project root; convert absolute Windows paths to
+// a relative path so LocalAppData builds stay outside OneDrive.
+const dlcDistDir =
+  dlcDistDirRaw && path.isAbsolute(dlcDistDirRaw)
+    ? path.relative(__dirname, dlcDistDirRaw)
+    : dlcDistDirRaw;
 const dlcDistDirOutsideProject = Boolean(
-  dlcDistDir && path.isAbsolute(dlcDistDir),
+  dlcDistDirRaw && path.isAbsolute(dlcDistDirRaw),
 );
 
 /** @type {import('next').NextConfig} */
@@ -50,7 +62,7 @@ const nextConfig = {
       process.env.VERCEL_DEPLOYMENT_ID ?? "local",
   },
   /**
-   * Prefer the repo folder (`â€¦/Lender List`) over a stray `package-lock.json`
+   * Prefer the repo folder (`ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/Lender List`) over a stray `package-lock.json`
    * higher in the tree (e.g. user profile) when resolving the tracing root.
    * `node_modules` remains under `lender-app/`.
    *
@@ -63,7 +75,7 @@ const nextConfig = {
   ...(process.env.VERCEL
     ? {}
     : {
-        // Custom distDir (incl. junction → %LOCALAPPDATA%) must resolve
+        // Custom distDir (incl. junction Ã¢â€ â€™ %LOCALAPPDATA%) must resolve
         // node_modules from lender-app, not the repo parent / AppData target.
         outputFileTracingRoot: dlcDistDir
           ? __dirname
@@ -72,7 +84,7 @@ const nextConfig = {
   reactStrictMode: true,
   /**
    * Strip stray `console.log` in production; keep `console.error` / `console.warn` for
-   * diagnostics and error boundaries (reliability under load â€” less main-thread noise).
+   * diagnostics and error boundaries (reliability under load ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â less main-thread noise).
    */
   compiler: {
     removeConsole:
@@ -153,7 +165,7 @@ const nextConfig = {
     ];
   },
   /**
-   * Legacy lender-tool paths (preâ€“unified workspace). Keeps bookmarks and
+   * Legacy lender-tool paths (preÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“unified workspace). Keeps bookmarks and
    * external links working without maintaining duplicate App Router pages.
    */
   async redirects() {

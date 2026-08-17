@@ -13,7 +13,7 @@ import {
   buildLocalDealBlockSuggestions,
 } from "@/lib/dealBlockAiAssistModel";
 import { useDealWorkspaceFileId } from "./DealWorkspaceAiContext";
-import { useUserPreferences } from "@/lib/userPreferencesContext";
+import { useUserPreferencesOptional } from "@/lib/userPreferencesContext";
 import { readAiAssistEnabled } from "@/lib/userPreferencesModel";
 
 const DISMISS_KEY = "dlc.deal-block-ai-dismiss.v1";
@@ -83,7 +83,7 @@ export function DealBlockAiAssistPanel({
 }: DealBlockAiAssistPanelProps) {
   const ctxId = useDealWorkspaceFileId();
   const fileId = fileIdProp ?? ctxId;
-  const { accountId, preferences } = useUserPreferences();
+  const { accountId, preferences } = useUserPreferencesOptional();
   const aiAssistAllowed = useMemo(
     () =>
       Boolean(process.env.NEXT_PUBLIC_CONVEX_URL) &&

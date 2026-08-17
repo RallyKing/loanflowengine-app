@@ -41,8 +41,14 @@ const PIPELINE_LINKS: { href: string; label: string; tourId?: string }[] =
 /**
  * Directory consolidation — secondary / administrative destinations collapse
  * into a "Workspace tools" sub-menu instead of cluttering the primary rail.
+ * Includes Coming soon (WIP home) so unfinished tabs stay off the primary rail.
  */
-const WORKSPACE_TOOLS_NAV_IDS = new Set(["operations", "shared", "activity"]);
+const WORKSPACE_TOOLS_NAV_IDS = new Set([
+  "operations",
+  "shared",
+  "activity",
+  "coming-soon",
+]);
 
 function Section({
   title,

@@ -15,6 +15,11 @@ import {
   coerceRegistryRoleId,
   type RegistryRoleId,
 } from "@/lib/registry/universalRoles";
+import {
+  entityWebsitesSearchBlob,
+  resolveEntityWebsites,
+  type EntityWebsite,
+} from "@/lib/contacts/entityWebsites";
 
 export const REGISTRY_TYPES = ["contact", "entity", "lender"] as const;
 export type RegistryType = (typeof REGISTRY_TYPES)[number];
@@ -35,6 +40,8 @@ export type RegistryItem = {
   lastInteractionAt?: number;
   crmTags?: string[];
   notes?: string;
+  /** Entity websites (clients only). */
+  websites?: EntityWebsite[];
 };
 
 export function mapContactToRegistryItem(
@@ -60,6 +67,7 @@ export function mapContactToRegistryItem(
 
 /** Borrower / partner business entity (`clients` table). */
 export function mapEntityToRegistryItem(client: Doc<"clients">): RegistryItem {
+  const websites = resolveEntityWebsites(client);
   return {
     _id: String(client._id),
     registryType: "entity",
@@ -68,6 +76,7 @@ export function mapEntityToRegistryItem(client: Doc<"clients">): RegistryItem {
     primaryPhone: (client.primaryContactPhone ?? "").trim(),
     roles: [REGISTRY_ROLE_IDS.client],
     updatedAt: client.updatedAt,
+    ...(websites.length > 0 ? { websites } : {}),
   };
 }
 
@@ -92,6 +101,7 @@ export function registrySearchHaystack(item: RegistryItem): string {
     item.notes ?? "",
     ...(item.crmTags ?? []),
     ...item.roles,
+    entityWebsitesSearchBlob(item.websites),
   ]
     .join(" ")
     .toLowerCase();

@@ -69,6 +69,7 @@ type ReoRow = {
   usage?: string;
   purchasedDate?: string;
   marketValue?: string;
+  zillowUrl?: string;
   balance?: string;
   mortgagePayment?: string;
   rate?: string;
@@ -81,6 +82,9 @@ type ReoRow = {
   netRent?: string;
   invested?: string;
   latLong?: string;
+  lotSf?: string;
+  propSf?: string;
+  mostRecent?: string;
 };
 type WeightedInterestRow = {
   account?: string;
@@ -195,6 +199,7 @@ function mapReoRow(row: ReoRow, sortOrder: number) {
     state: str(row.state),
     purchasedDate: str(row.purchasedDate),
     marketValue: str(row.marketValue),
+    zillowUrl: str(row.zillowUrl),
     mortgageBalance: str(row.balance),
     monthlyPayment: str(row.mortgagePayment),
     rate: str(row.rate),
@@ -208,6 +213,9 @@ function mapReoRow(row: ReoRow, sortOrder: number) {
     apn: str(row.apn),
     invested: str(row.invested),
     latLong: str(row.latLong),
+    lotSf: str(row.lotSf),
+    propSf: str(row.propSf),
+    mostRecent: str(row.mostRecent),
   };
 }
 

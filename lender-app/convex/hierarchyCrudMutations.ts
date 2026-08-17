@@ -36,6 +36,7 @@ import {
   findProjectClientLink,
 } from "./pipelineMultiClientLinks";
 import { propagateEntityKycToLinkedFiles } from "./entityCanonicalization";
+import { normalizeEntityWebsites } from "../lib/contacts/entityWebsites";
 import {
   resyncPrimaryFileProjectEdgeFromPipeline,
   enforceSinglePrimaryLoanFileClient,
@@ -772,6 +773,11 @@ export const deleteHubProject = mutation({
   },
 });
 
+const entityWebsiteItem = v.object({
+  url: v.string(),
+  label: v.optional(v.string()),
+});
+
 export const patchClient = mutation({
   args: {
     ...memberArgs,
@@ -793,7 +799,10 @@ export const patchClient = mutation({
     ein: v.optional(v.string()),
     stateOfIncorporation: v.optional(v.string()),
     dateOfFormation: v.optional(v.number()),
+    /** Replace entity websites list (pass [] to clear). Omit to leave unchanged. */
+    websites: v.optional(v.array(entityWebsiteItem)),
   },
+  returns: v.object({ ok: v.literal(true) }),
   handler: async (ctx, args) => {
     await assertOrgMember(ctx, args.organizationId, args.memberUserKey);
     const client = await loadClientInOrg(ctx, args.clientId, args.organizationId);
@@ -831,6 +840,9 @@ export const patchClient = mutation({
     }
     if (args.dateOfFormation !== undefined) {
       patch.dateOfFormation = args.dateOfFormation;
+    }
+    if (args.websites !== undefined) {
+      patch.websites = normalizeEntityWebsites(args.websites);
     }
     const previousDisplayName = client.displayName;
     await ctx.db.patch(args.clientId, patch);

@@ -172,6 +172,20 @@ async function deletePipelineDocumentVaultGraph(
     .collect()) {
     await ctx.db.delete(line._id);
   }
+
+  for (const sheet of await ctx.db
+    .query("constructionBudgetSheets")
+    .withIndex("by_file", (q) => q.eq("fileId", fileId))
+    .collect()) {
+    await ctx.db.delete(sheet._id);
+  }
+
+  for (const run of await ctx.db
+    .query("dueDiligenceRuns")
+    .withIndex("by_pipeline_created", (q) => q.eq("pipelineFileId", fileId))
+    .collect()) {
+    await ctx.db.delete(run._id);
+  }
 }
 
 /**

@@ -7,6 +7,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { OverlayShell } from "@/components/ui/OverlayShell";
 import { EntityKycPanel } from "@/components/contacts/EntityKycPanel";
+import { EntityWebsitesPanel } from "@/components/contacts/EntityWebsitesPanel";
 import { OperationalSkeletonList } from "@/components/ui/OperationalSkeleton";
 import { cn } from "@/lib/cn";
 import { OP_WORKSPACE_ISLAND } from "@/lib/ui/operationalInputs";
@@ -87,6 +88,14 @@ export function EntityProfileModal({
         ) : (
           <>
             <EntityKycPanel
+              organizationId={organizationId}
+              memberUserKey={memberUserKey}
+              entityId={entityId!}
+              client={client}
+              canEdit={canEdit}
+            />
+
+            <EntityWebsitesPanel
               organizationId={organizationId}
               memberUserKey={memberUserKey}
               entityId={entityId!}

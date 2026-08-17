@@ -25,6 +25,10 @@ import type { RegistryItem, RegistryType } from "@/lib/registry/registryItem";
 import { registryRoleDisplayName } from "@/lib/registry/universalRoles";
 import { formatRelativeTimestamp } from "@/lib/formatRelativeTimestamp";
 import { formatPhoneDisplay } from "@/lib/contact/contactMethods";
+import {
+  websiteDisplayLabel,
+  websiteHref,
+} from "@/lib/contacts/entityWebsites";
 import { OperationalSkeletonList } from "@/components/ui/OperationalSkeleton";
 import {
   DropdownMenu,
@@ -220,6 +224,7 @@ function buildColumns(
       header: "Name",
       cell: ({ row }) => {
         const Icon = TYPE_ICONS[row.original.registryType];
+        const firstSite = row.original.websites?.[0];
         return (
           <div className="flex min-w-0 items-center gap-2">
             <Icon
@@ -233,9 +238,26 @@ function buildColumns(
               )}
               aria-hidden
             />
-            <span className="min-w-0 truncate font-medium">
-              {row.original.displayName}
-            </span>
+            <div className="min-w-0">
+              <span className="block min-w-0 truncate font-medium">
+                {row.original.displayName}
+              </span>
+              {firstSite ? (
+                <a
+                  href={websiteHref(firstSite.url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-0.5 block min-w-0 truncate text-xs text-primary hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                  title={firstSite.url}
+                >
+                  {websiteDisplayLabel(firstSite)}
+                  {(row.original.websites?.length ?? 0) > 1
+                    ? ` +${(row.original.websites?.length ?? 1) - 1}`
+                    : ""}
+                </a>
+              ) : null}
+            </div>
           </div>
         );
       },

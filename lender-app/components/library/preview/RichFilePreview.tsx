@@ -276,7 +276,7 @@ export function RichFilePreview({
   }, [activeSheet, fileName, kind, url]);
 
   const viewport = cn(
-    "relative h-full min-h-[min(70vh,32rem)] w-full overflow-auto bg-muted/20",
+    "relative h-full min-h-0 w-full min-w-0 overflow-auto bg-muted/20",
     viewportClassName,
   );
 
@@ -294,12 +294,19 @@ export function RichFilePreview({
 
   if (kind === "image") {
     return (
-      <div className={cn(className, viewport)} data-testid="rich-file-preview-image">
+      <div
+        className={cn(
+          "flex items-center justify-center",
+          className,
+          viewport,
+        )}
+        data-testid="rich-file-preview-image"
+      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={url}
           alt={fileName}
-          className="mx-auto max-h-full w-auto max-w-full object-contain p-3"
+          className="max-h-full max-w-full object-contain p-3"
           draggable={!protectMedia}
           onContextMenu={protectMedia ? (e) => e.preventDefault() : undefined}
         />
@@ -319,11 +326,14 @@ export function RichFilePreview({
       );
     }
     return (
-      <div className={cn(className, viewport)} data-testid="rich-file-preview-pdf">
+      <div
+        className={cn(className, viewport, "overflow-hidden")}
+        data-testid="rich-file-preview-pdf"
+      >
         <iframe
           title={fileName}
           src={blobUrl}
-          className="h-full min-h-[min(70vh,32rem)] w-full border-0 bg-white"
+          className="absolute inset-0 h-full w-full border-0 bg-white"
         />
       </div>
     );

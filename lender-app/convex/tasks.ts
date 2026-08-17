@@ -244,8 +244,20 @@ async function syncAssigneeNotification(
 }
 
 /**
- * Tasks assigned to the viewer that need attention: overdue due date, due
- * soon, or reminder time reached (open tasks only; respects snooze).
+ * Candidate tasks for the "Due & reminders" section of the notifications bell:
+ * open tasks assigned to the viewer that carry a due date or a reminder.
+ *
+ * This query is deliberately **clock-free**. It used to compare `dueDate` /
+ * `reminderAt` / `snoozedUntil` against `Date.now()`, which makes the result
+ * non-deterministic so Convex cannot cache it — expensive for a query subscribed
+ * from the always-mounted app header. Instead it returns a bounded candidate set
+ * ordered by earliest trigger time, and `deriveAssigneeAttentionRows`
+ * (`lib/notifications/assigneeAttention.ts`) decides overdue / due-soon / reminder
+ * on the client. That also makes the badge advance as time passes rather than only
+ * when task data changes.
+ *
+ * `reason` is the strongest time-independent classification available: a task with
+ * a due date starts as `due_soon` and the client upgrades it to `overdue`.
  *
  * Identity prefers the Convex JWT subject when present; otherwise `userKey` /
  * `memberUserKey` args provide the caller. This avoids stale client identities
@@ -257,19 +269,13 @@ export const assigneeAttentionPreview = query({
     organizationId: v.id("organizations"),
     userKey: v.optional(v.string()),
     memberUserKey: v.optional(v.string()),
-    dueHorizonMs: v.optional(v.number()),
     maxRows: v.optional(v.number()),
   },
-  handler: async (
-    ctx,
-    { organizationId, userKey, memberUserKey, dueHorizonMs, maxRows },
-  ) => {
+  handler: async (ctx, { organizationId, userKey, memberUserKey, maxRows }) => {
     // `requireTaskOrg` resolves identity from JWT and ignores client args;
     // it returns the canonical userKey for this caller.
     const k = await requireTaskOrg(ctx, organizationId, memberUserKey ?? userKey);
     if (!k) return [];
-    const now = Date.now();
-    const horizon = dueHorizonMs ?? 1000 * 60 * 60 * 48;
     const cap = Math.min(Math.max(maxRows ?? 40, 1), 120);
     const rows = await ctx.db
       .query("tasks")
@@ -278,26 +284,32 @@ export const assigneeAttentionPreview = query({
       .take(cap * 8);
     const visible = await filterTaskRowsForMember(ctx, rows, organizationId, k);
     const visibleIds = new Set(visible.map((t) => t._id));
-    const out: Array<{
+    const candidates: Array<{
       task: Doc<"tasks">;
       reason: "overdue" | "due_soon" | "reminder";
+      triggerAt: number;
     }> = [];
     for (const t of rows) {
       if (!visibleIds.has(t._id)) continue;
       if (t.status === "done" || t.status === "archived") continue;
-      if (t.snoozedUntil != null && t.snoozedUntil > now) continue;
-      let reason: "overdue" | "due_soon" | "reminder" | null = null;
-      if (t.dueDate != null && t.dueDate < now) reason = "overdue";
-      else if (t.reminderAt != null && t.reminderAt <= now) reason = "reminder";
-      else if (t.dueDate != null && t.dueDate <= now + horizon) {
-        reason = "due_soon";
-      }
-      if (reason != null) {
-        out.push({ task: t, reason });
-        if (out.length >= cap) break;
-      }
+      const due = t.dueDate ?? null;
+      const remind = t.reminderAt ?? null;
+      if (due == null && remind == null) continue;
+      candidates.push({
+        task: t,
+        reason: due != null ? "due_soon" : "reminder",
+        triggerAt: Math.min(due ?? Infinity, remind ?? Infinity),
+      });
     }
-    return out;
+    /**
+     * Everything the client can qualify triggers at or before `now + horizon`, so
+     * the earliest-trigger slice is a superset of the rows it will display. `cap * 3`
+     * keeps the payload bounded while leaving headroom above the `cap` it renders.
+     */
+    candidates.sort((a, b) => a.triggerAt - b.triggerAt);
+    return candidates
+      .slice(0, cap * 3)
+      .map(({ task, reason }) => ({ task, reason }));
   },
 });
 

@@ -26,6 +26,10 @@ const orgIntegrationRuleV = v.object({
       kind: v.union(v.literal("action"), v.literal("sync_push")),
       connectorPublicId: v.optional(v.string()),
     }),
+    v.object({
+      type: v.literal("upsert_pipeline_lead"),
+      defaultStatus: v.optional(v.string()),
+    }),
   ),
 });
 

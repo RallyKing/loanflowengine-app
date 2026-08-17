@@ -178,11 +178,16 @@ function FloatingBlockWindowHost({
             }
           >
             {body?.description ? (
-              <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+              <p className="mb-3 shrink-0 px-3 pt-3 text-xs leading-relaxed text-muted-foreground sm:px-3.5 sm:pt-3.5">
                 {body.description}
               </p>
             ) : null}
-            <div className={cn("min-w-0", body?.contentClassName)}>
+            <div
+              className={cn(
+                "flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain touch-scroll-y p-3 sm:p-3.5",
+                body?.contentClassName,
+              )}
+            >
               {body?.content}
             </div>
           </FloatingWindow>

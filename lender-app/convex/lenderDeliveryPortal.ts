@@ -10,6 +10,7 @@ import {
   resolveCompanySlugForPipeline,
 } from "./clientPortalLinks";
 import { buildClientPortalUrl } from "../lib/clientPortalUrl";
+import { buildLenderDeliveryEmailItemsFromSelection } from "../lib/lenderDeliveryEmailCopy";
 import { assertLinkAccessAllowed } from "./portalAccessVerification";
 import {
   normalizeAssignedBlockEntriesFromDoc,
@@ -28,6 +29,11 @@ import {
   scheduleWebhookQueueEvent,
   webhookVaultContext,
 } from "./webhookEventHelpers";
+import { collectPackageFolderIds } from "../lib/library/lenderDeliveryPackageTree";
+import {
+  resolveVaultOutboundFileName,
+  vaultDocumentOutboundFileName,
+} from "../lib/library/vaultOutboundFileName";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -119,27 +125,6 @@ async function loadDeliveryRow(ctx: QueryCtx, tokenHash: string) {
     .first();
 }
 
-function collectFolderSubtreeIds(
-  folders: { _id: Id<"documentFolders">; parentFolderId?: Id<"documentFolders"> }[],
-  rootFolderId: Id<"documentFolders">,
-): Set<string> {
-  const out = new Set<string>([String(rootFolderId)]);
-  const queue: Id<"documentFolders">[] = [rootFolderId];
-  while (queue.length > 0) {
-    const id = queue.pop()!;
-    for (const f of folders) {
-      if (f.parentFolderId === id) {
-        const key = String(f._id);
-        if (!out.has(key)) {
-          out.add(key);
-          queue.push(f._id);
-        }
-      }
-    }
-  }
-  return out;
-}
-
 async function authorizeDeliveryTask(
   ctx: QueryCtx,
   token: string,
@@ -200,31 +185,6 @@ export const getDeliveryByToken = query({
       .withIndex("by_pipeline", (q) => q.eq("pipelineFileId", row.pipelineFileId))
       .collect();
 
-    const includedFolderSubtree = new Set<string>();
-    for (const folderId of row.includedFolderIds) {
-      for (const id of collectFolderSubtreeIds(allFolders, folderId)) {
-        includedFolderSubtree.add(id);
-      }
-    }
-    for (const taskId of row.includedFileTaskIds) {
-      const taskRoots = allFolders.filter((f) => f.fileTaskId === taskId);
-      for (const root of taskRoots) {
-        for (const id of collectFolderSubtreeIds(allFolders, root._id)) {
-          includedFolderSubtree.add(id);
-        }
-      }
-    }
-
-    const folders = allFolders
-      .filter((f) => includedFolderSubtree.has(String(f._id)))
-      .map((f) => ({
-        _id: f._id,
-        name: f.name,
-        parentFolderId: f.parentFolderId,
-        fileTaskId: f.fileTaskId,
-        sortOrder: f.sortOrder,
-      }));
-
     const documents: {
       documentId: Id<"libraryDocuments">;
       versionId?: Id<"libraryDocumentVersions">;
@@ -264,7 +224,7 @@ export const getDeliveryByToken = query({
         documentId: doc._id,
         versionId: doc.latestVersionId,
         title: doc.title,
-        fileName: doc.latestFileName,
+        fileName: vaultDocumentOutboundFileName(doc),
         contentType: doc.latestContentType,
         size: doc.latestSize,
         url,
@@ -273,6 +233,66 @@ export const getDeliveryByToken = query({
       });
     }
 
+    /**
+     * Mirror Document Vault organization for included files only: each doc's
+     * folder plus ancestors (empty sibling folders omitted). Explicitly
+     * selected folder/task subtrees still contribute docs via
+     * resolveIncludedDocuments; display prunes to paths that own those docs.
+     */
+    const packageFolderIdSet = collectPackageFolderIds(
+      allFolders.map((f) => ({
+        _id: f._id,
+        name: f.name,
+        parentFolderId: f.parentFolderId,
+        fileTaskId: f.fileTaskId,
+        sortOrder: f.sortOrder,
+      })),
+      documents.map((d) => d.folderId),
+    );
+
+    const folders = allFolders
+      .filter((f) => packageFolderIdSet.has(String(f._id)))
+      .map((f) => ({
+        _id: f._id,
+        name: f.name,
+        parentFolderId: f.parentFolderId,
+        fileTaskId: f.fileTaskId,
+        sortOrder: f.sortOrder,
+      }));
+
+    /** Organizational File Task containers (vault titles) for package tree. */
+    const packageTaskIdSet = new Set<string>();
+    for (const doc of documents) {
+      if (doc.fileTaskId) packageTaskIdSet.add(String(doc.fileTaskId));
+    }
+    for (const folder of folders) {
+      if (folder.fileTaskId) packageTaskIdSet.add(String(folder.fileTaskId));
+    }
+
+    const packageContainers: {
+      fileTaskId: Id<"documentVaultFileTasks">;
+      title: string;
+      sortOrder?: number;
+    }[] = [];
+    for (const taskIdStr of packageTaskIdSet) {
+      const task = await ctx.db.get(taskIdStr as Id<"documentVaultFileTasks">);
+      // Include archived tasks so the package still shows the vault container
+      // title the docs were organized under when delivered.
+      if (!task) continue;
+      packageContainers.push({
+        fileTaskId: task._id,
+        title: task.title,
+        sortOrder: task.sortOrder,
+      });
+    }
+    packageContainers.sort((a, b) => {
+      const ao = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      const bo = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      if (ao !== bo) return ao - bo;
+      return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+    });
+
+    /** Deal-data blocks: only explicitly included tasks with assignable blocks. */
     const fileTasks: {
       fileTaskId: Id<"documentVaultFileTasks">;
       title: string;
@@ -318,6 +338,8 @@ export const getDeliveryByToken = query({
       companySlug: registry?.companySlug,
       documents,
       folders,
+      /** Read-only vault File Task containers that own package docs. */
+      packageContainers,
       fileTasks,
       expiresAt: row.expiresAt,
     };
@@ -415,7 +437,7 @@ export const getDeliveryDocumentUrl = query({
       status: "ok" as const,
       url,
       permission: row.permission,
-      fileName: ver.fileName,
+      fileName: resolveVaultOutboundFileName(doc.title, ver.fileName),
       contentType: ver.contentType,
     };
   },
@@ -493,12 +515,64 @@ export const issueDeliveryToken = mutation({
     });
 
     const deliveryUrl = buildClientPortalUrl(companySlug, plainToken);
+
+    const [fileTasks, folders, docs] = await Promise.all([
+      Promise.all(args.includedFileTaskIds.map((id) => ctx.db.get(id))),
+      Promise.all(args.includedFolderIds.map((id) => ctx.db.get(id))),
+      Promise.all(args.includedDocumentIds.map((id) => ctx.db.get(id))),
+    ]);
+
+    const docRows = docs.filter(
+      (d): d is NonNullable<typeof d> => d != null,
+    );
+    const linksByDoc = new Map<string, Id<"documentVaultFileTasks"> | undefined>();
+    if (docRows.length > 0) {
+      const links = await ctx.db
+        .query("libraryDocumentLinks")
+        .withIndex("by_pipeline_linkedAt", (q) =>
+          q.eq("pipelineFileId", args.pipelineFileId),
+        )
+        .collect();
+      for (const link of links) {
+        if (link.fileTaskId) {
+          linksByDoc.set(String(link.documentId), link.fileTaskId);
+        }
+      }
+    }
+
+    const packageItems = buildLenderDeliveryEmailItemsFromSelection({
+      selectedTaskIds: new Set(args.includedFileTaskIds.map(String)),
+      selectedFolderIds: new Set(args.includedFolderIds.map(String)),
+      selectedDocumentIds: new Set(args.includedDocumentIds.map(String)),
+      fileTasks: fileTasks
+        .filter((t): t is NonNullable<typeof t> => t != null)
+        .map((t) => ({
+          _id: t._id,
+          title: t.title,
+          description: t.description,
+          isArchived: t.isArchived,
+        })),
+      folders: folders
+        .filter((f): f is NonNullable<typeof f> => f != null)
+        .map((f) => ({
+          _id: f._id,
+          name: f.name,
+          fileTaskId: f.fileTaskId,
+        })),
+      documents: docRows.map((d) => ({
+        _id: d._id,
+        title: d.title,
+        fileTaskId: linksByDoc.get(String(d._id)),
+      })),
+    });
+
     return {
       ok: true as const,
       token: plainToken,
       deliveryUrl,
       companySlug,
       documentCount: resolvedDocIds.length,
+      packageItems,
       expiresAt,
     };
   },

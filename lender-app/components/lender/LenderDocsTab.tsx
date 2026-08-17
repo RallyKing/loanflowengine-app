@@ -87,7 +87,7 @@ export function LenderDocsTab({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [downloadBusy, setDownloadBusy] = useState(false);
 
-  const rows = (files ?? []) as LenderFileRow[];
+  const rows = useMemo(() => (files ?? []) as LenderFileRow[], [files]);
 
   const groupNames = useMemo(() => {
     const set = new Set<string>();

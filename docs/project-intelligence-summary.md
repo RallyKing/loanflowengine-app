@@ -64,14 +64,15 @@ Authoritative engineering philosophy is captured in `docs/ai-development-rules.m
 | **Messaging** | Per-file threads (`fileMessages`) with optional contact linkage. | `pipeline`, `contacts`, org permissions. | **Implemented** (`FileMessagingPanel` in quick panels). | Notifications, read receipts, external channel bridges via integrations. |
 | **Email** | Transactional/system email paths (e.g. notifications, portal flows) via Convex modules and env-configured providers. | Auth users, org settings, `systemEmails`-class flows where present. | **Partial**—depends on env and feature flags. | Consolidate provider abstraction; template management per org. |
 | **Portal** | Client-facing constrained access: invites, grants, audit, requests (`clientPortalAdmin` APIs, `ClientPortalInviteBlock`). | `pipeline`, sign-in URLs returned from invite mutations, org scope. | **Implemented** for core invite/link flows. | Expand permissions, branding, and document workflows for clients. |
-| **Documents** | Library storage and linking (task attachments, lender attachments, hub UIs like `LibraryDocumentsPanel`). | Convex `_storage`, contacts, tasks, lenders. | **Mature** patterns; multiple surfaces. | Single mental model for “library vs task-only” docs across UX copy. |
+| **Documents** | Library storage and linking (task attachments, lender attachments, hub UIs like `LibraryDocumentsPanel`). Explorer starring is per-user `vaultStars` (not org-wide pins). | Convex `_storage`, contacts, tasks, lenders, `vaultStars`. | **Mature** patterns; multiple surfaces. | Single mental model for “library vs task-only” docs across UX copy. |
 | **Snooze** | Hide files from default pipeline until `snoozedUntil`; tasks have analogous `snoozedUntil`. | Pipeline list/board filters; `SnoozeMenu` UI. | **Implemented.** | Server-side reminders optional; timezone clarity in UI. |
+| **Auto-archive on inactivity** | If `pipeline.updatedAt` (fallback `createdAt`) has no new activity for N days, soft-archive via the same `archive` path. Separate from snooze. | File chrome next to snooze; hub marker; **manual** `runDueAutoArchives` from Pipeline (no cron). | **Implemented.** | Optional per-file reminders before archive. |
 | **Layout engine** | `AppChrome` + `MobileChromeProvider` + route-aware padding; pipeline shell width via `WorkspaceContentContainer`. | Single scroll contract, bottom nav, focus mode. | **Stabilized** (documented in `AGENTS.md`). | Continue ruthless elimination of competing scrollports. |
 | **Modular block system** | Registered pipeline drawer blocks with defaults, visibility rules, per-file layout, global admin config, settings schemas. | `pipelineBlockRegistry`, `fileDrawerLayout`, `pipelineGlobalBlockConfig`, `PipelineDrawer` / parallel layout. | **Mature** registry; some blocks still implemented inside large files (`component: null`). | Finish component extraction; expand `settingsSchema` coverage. |
 | **Shared data layer** | `fileSharedState` + `fileBlockFieldOverrides` — canonical numeric/text snapshot and per-block overrides. | All blocks that show loan amount, rate, term, revenue fields; `fileSharedState` Convex helpers. | **Implemented** with normalization (`lib/fileSharedFields.ts`). | More fields bus-backed if duplication appears; clear UI for override vs sync. |
-| **Automation** | `userSimpleWorkflows` (trigger → action), outbound webhooks, integration job enqueue placeholders. | Pipeline mutations, `userSimpleWorkflowExecutor`, outbound subscription tables. | **Foundational**—rules exist; not all actions are feature-complete end-to-end. | Expand triggers; UI for non-dev configuration; observability. |
+| **Automation** | `userSimpleWorkflows` (trigger → action), outbound webhooks, integration job enqueue placeholders. | Pipeline mutations, `userSimpleWorkflowExecutor`, outbound subscription tables. Convex crons are **backup sweeps** (15 min) plus daily digest/backup — not idle `runAfter(0)` pumps. | **Foundational**—rules exist; not all actions are feature-complete end-to-end. | Expand triggers; UI for non-dev configuration; observability. |
 | **Webhooks** | Org-scoped outbound subscriptions; signed/delivered events (HTTP worker path); includes pipeline patch context. | `webhookOutbound.ts`, product mutations emit via scheduler. | **Implemented** core enqueue/delivery pattern. | More event types; retry dashboards; inbound connector parity. |
-| **AI systems** | **Lender discovery** (OpenAI/Perplexity web-assisted candidate generation → `lenderCandidates` review). | `convex/discovery.ts`, env API keys. | **Operational** with external API dependency. | Guardrails, cost controls, optional closed-network mode; assistive AI elsewhere kept architectural per `ai-development-rules.md`. |
+| **AI systems** | **Lender discovery** (platform `OPENAI_API_KEY` / Perplexity → `lenderCandidates`) plus **org-owned AI API keys** (`orgAiProviders`) and **AI Due Diligence** (`dueDiligencePrompts` / `dueDiligenceRuns`). | `convex/discovery.ts`, `convex/orgAiProviders.ts`, `convex/dueDiligence*.ts`, Settings → AI API keys, Document Vault. | **Operational** discovery; **new** org BYOK + due diligence. | Prefer org provider for user-facing analysis; keep env keys for platform discovery/assist. |
 
 ---
 
@@ -153,7 +154,7 @@ Authoritative engineering philosophy is captured in `docs/ai-development-rules.m
 
 **Active blocks:** Union of registry eligibility, org/product gates, deal-context visibility, and per-file hidden list.
 
-**Block IDs (canonical):** `fileDetails`, `fileNotes`, `dealWorkspace`, `licensing`, `scenarioMatch`, `generateTerms`, `lenders`, `contacts`, `feesSplits`, `tasks`, `people`, `archive`, `dangerZone`.
+**Block IDs (canonical):** `fileDetails`, `fileNotes`, `dealWorkspace`, `licensing`, `scenarioMatch`, `generateTerms`, `lenders`, `contacts`, `feesSplits`, `tasks`, `people`, `archive`, `dangerZone`, `constructionBudget`, `investorExperience`, `pfs`, `trackRecord`, `simplePl`.
 
 **Visibility:** `hidden` array in layout; mandatory blocks ignore hide. `visibilityWhen` can hide blocks (e.g. `generateTerms` for refi-related deal types).
 
@@ -270,6 +271,7 @@ Authoritative engineering philosophy is captured in `docs/ai-development-rules.m
 | `selectedLenderId` | Chosen lender | Funding choice among attached lenders. |
 | `scenarioCriteria` | Scenario filters | Structured match inputs on file. |
 | `Snooze` / `snoozedUntil` | Hide until date | File or task deferral. |
+| `autoArchiveInactivityDays` / `autoArchiveAfterAt` | Auto-archive timer | Archive after N days with no `updatedAt` activity (not snooze). |
 | `ledger` | Revenue ledger | Funded deal economics record. |
 | `tasks` | Task hub items | Work tracking rows. |
 | `fileMessages` | File messaging | Threaded in-app messages on file. |

@@ -46,16 +46,19 @@ export function LenderTemplatesTab({
         : "skip",
     ) ?? [];
 
-  const triageLabels =
-    useQuery(
-      api.organizationTriageLabels.listTriageLabels,
-      orgScope
-        ? {
-            organizationId: orgScope.organizationId,
-            memberUserKey: orgScope.memberUserKey,
-          }
-        : "skip",
-    ) ?? [];
+  const triageLabelsRaw = useQuery(
+    api.organizationTriageLabels.listTriageLabels,
+    orgScope
+      ? {
+          organizationId: orgScope.organizationId,
+          memberUserKey: orgScope.memberUserKey,
+        }
+      : "skip",
+  );
+  const triageLabels = useMemo(
+    () => triageLabelsRaw ?? [],
+    [triageLabelsRaw],
+  );
 
   const [selectedGroupId, setSelectedGroupId] =
     useState<Id<"taskTemplateGroups"> | null>(null);

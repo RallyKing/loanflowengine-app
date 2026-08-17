@@ -3,6 +3,8 @@ import type { ContactBusinessDebtShape } from "@/lib/contacts/businessDebtFromDe
 import type { DealBusinessDebtRow } from "@/lib/contacts/businessDebtFromDeal";
 import type { DealReoRow } from "@/lib/contacts/reoFromDeal";
 import type { ContactReoPropertyShape } from "@/lib/contacts/reoFromDeal";
+import { sanitizeDealBusinessDebtRow } from "@/lib/businessDebt/scheduleOfBusinessDebtModel";
+import { sanitizeDealReoRow } from "@/lib/reo/scheduleOfReoModel";
 
 export function contactPiiToDealStringFields(
   contact: Pick<Doc<"contacts">, "fico" | "ssn" | "dob">,
@@ -19,13 +21,14 @@ export function contactPiiToDealStringFields(
 export function reoProfileShapeToDealRow(
   row: ContactReoPropertyShape,
 ): DealReoRow {
-  return {
+  return sanitizeDealReoRow({
     ...(row.propertyAddress ? { address: row.propertyAddress } : {}),
     ...(row.propertyType ? { propertyType: row.propertyType } : {}),
     ...(row.usage ? { usage: row.usage } : {}),
     ...(row.state ? { state: row.state } : {}),
     ...(row.purchasedDate ? { purchasedDate: row.purchasedDate } : {}),
     ...(row.marketValue ? { marketValue: row.marketValue } : {}),
+    ...(row.zillowUrl ? { zillowUrl: row.zillowUrl } : {}),
     ...(row.mortgageBalance ? { balance: row.mortgageBalance } : {}),
     ...(row.monthlyPayment ? { mortgagePayment: row.monthlyPayment } : {}),
     ...(row.rate ? { rate: row.rate } : {}),
@@ -39,19 +42,28 @@ export function reoProfileShapeToDealRow(
     ...(row.apn ? { apn: row.apn } : {}),
     ...(row.invested ? { invested: row.invested } : {}),
     ...(row.latLong ? { latLong: row.latLong } : {}),
-  };
+    ...(row.lotSf ? { lotSf: row.lotSf } : {}),
+    ...(row.propSf ? { propSf: row.propSf } : {}),
+    ...(row.mostRecent ? { mostRecent: row.mostRecent } : {}),
+  });
 }
 
 export function businessDebtScheduleToDealRow(
   row: ContactBusinessDebtShape,
 ): DealBusinessDebtRow {
-  return {
+  return sanitizeDealBusinessDebtRow({
     ...(row.creditor ? { account: row.creditor } : {}),
     ...(row.balance ? { balance: row.balance } : {}),
     ...(row.monthlyPayment ? { monthlyPayment: row.monthlyPayment } : {}),
     ...(row.position ? { note: row.position } : {}),
+    ...(row.debtType ? { debtType: row.debtType } : {}),
+    ...(row.debtTypeOther ? { debtTypeOther: row.debtTypeOther } : {}),
+    ...(row.originalAmount ? { originalAmount: row.originalAmount } : {}),
+    ...(row.originationDate ? { originationDate: row.originationDate } : {}),
+    ...(row.ratePct ? { ratePct: row.ratePct } : {}),
+    ...(row.maturityDate ? { maturityDate: row.maturityDate } : {}),
     include: true,
-  };
+  });
 }
 
 export function dealRowPiiToContactPatch(

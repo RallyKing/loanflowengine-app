@@ -283,7 +283,7 @@ export function FloatingWindow({
       </header>
 
       <div
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-scroll-y p-3 sm:p-3.5"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
         data-floating-window-body
       >
         {children}

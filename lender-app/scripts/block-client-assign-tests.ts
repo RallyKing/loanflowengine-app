@@ -29,6 +29,12 @@ function testPfsIsAssignable() {
     clientPortalBlockLabel("pfs_statement"),
     "Personal financial statement",
   );
+  assert.equal(isClientPortalAssignableBlock("track_record"), true);
+  assert.equal(isClientPortalAssignableBlock("trackRecord"), true);
+  assert.equal(clientPortalBlockLabel("track_record"), "Track record");
+  assert.equal(isClientPortalAssignableBlock("simple_pl"), true);
+  assert.equal(isClientPortalAssignableBlock("simplePl"), true);
+  assert.equal(clientPortalBlockLabel("simple_pl"), "Simple P&L");
 }
 
 function testExclusiveSanitize() {
@@ -99,6 +105,30 @@ function testGlobalAssignMap() {
       pipelineBlockId: "constructionBudget",
     }),
     "construction_budget",
+  );
+  assert.equal(
+    resolveClientAssignAtomicBlockId({
+      sectionId: MODULAR_BLOCK_SECTION_IDS.trackRecord,
+    }),
+    "track_record",
+  );
+  assert.equal(
+    resolveClientAssignAtomicBlockId({
+      pipelineBlockId: "trackRecord",
+    }),
+    "track_record",
+  );
+  assert.equal(
+    resolveClientAssignAtomicBlockId({
+      sectionId: MODULAR_BLOCK_SECTION_IDS.simplePl,
+    }),
+    "simple_pl",
+  );
+  assert.equal(
+    resolveClientAssignAtomicBlockId({
+      pipelineBlockId: "simplePl",
+    }),
+    "simple_pl",
   );
   assert.equal(
     resolveClientAssignAtomicBlockId({

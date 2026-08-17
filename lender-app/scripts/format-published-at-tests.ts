@@ -51,11 +51,17 @@ function main() {
   assert.match(utcWall, /5:35/);
   assert.notEqual(chicago, utcWall);
 
-  // Helper uses viewer locale/zone (not forced UTC) and returns a non-empty label.
+  // Helper defaults to Central (not browser-local / not forced UTC).
   const label = formatPublishedAt(utcMs);
   assert.ok(label.length > 0);
   assert.match(label, /2026/);
+  assert.match(label, /12:35/);
   assert.doesNotMatch(label, /1970/);
+  assert.match(label, /C[DS]T|GMT-5|GMT-6/i);
+
+  const eastern = formatPublishedAt(utcMs, "America/New_York");
+  assert.match(eastern, /1:35/);
+  assert.notEqual(label, eastern);
 
   console.log("format-published-at-tests: ok");
 }

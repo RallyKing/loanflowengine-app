@@ -17,13 +17,21 @@ import {
   loan,
   payoffState,
   propertyRecord,
+  reoBlockMeta,
   reoRow,
+  trackRecordBlockMeta,
+  trackRecordRow,
   scenarioState,
+  businessDebtBlockMeta,
   weightedInterestInstanceData,
   weightedInterestRow,
   workflowItem,
 } from "./intakeSchemaPart";
-import { personalFinancialStatementV } from "./pfsStatementValidators";
+import {
+  personalFinancialStatementV,
+  pfsInstanceV,
+} from "./pfsStatementValidators";
+import { simplePlInstanceV, simplePlStatementV } from "./simplePlValidators";
 
 /**
  * Top-level fields allowed on intake-shaped documents (standalone `intakeSheets`
@@ -60,6 +68,12 @@ export const intakePatchableFields = {
   liabilities: v.optional(v.array(liabilityRow)),
   /** SBA-style Personal Financial Statement (pipeline PFS block). */
   pfs: v.optional(personalFinancialStatementV),
+  /** First-class per-borrower PFS documents on this file. */
+  pfsInstances: v.optional(v.array(pfsInstanceV)),
+  /** Simple P&L matching the CSV template (pipeline Simple P&L block). */
+  simplePl: v.optional(simplePlStatementV),
+  /** First-class per-timeframe Simple P&L documents on this file. */
+  simplePlInstances: v.optional(v.array(simplePlInstanceV)),
   dependentsCount: v.optional(v.string()),
   dependentsAges: v.optional(v.string()),
   workflow: v.optional(v.array(workflowItem)),
@@ -71,9 +85,13 @@ export const intakePatchableFields = {
   dti: v.optional(dtiState),
   dtiInstances: v.optional(v.array(analysisInstance(dtiState))),
   reo: v.optional(v.array(reoRow)),
+  reoMeta: v.optional(reoBlockMeta),
+  trackRecord: v.optional(v.array(trackRecordRow)),
+  trackRecordMeta: v.optional(trackRecordBlockMeta),
   comparison: v.optional(comparisonState),
   comparisonInstances: v.optional(v.array(analysisInstance(comparisonState))),
   weightedInterest: v.optional(v.array(weightedInterestRow)),
+  businessDebtMeta: v.optional(businessDebtBlockMeta),
   weightedInterestInstances: v.optional(
     v.array(analysisInstance(weightedInterestInstanceData)),
   ),

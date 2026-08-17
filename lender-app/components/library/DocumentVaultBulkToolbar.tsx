@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, FolderInput, Trash2, X } from "lucide-react";
+import { Download, FolderInput, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 
@@ -10,6 +10,7 @@ export type DocumentVaultBulkToolbarProps = {
   onMove: () => void;
   onDelete: () => void;
   onDownload: () => void;
+  onDueDiligence?: () => void;
   onClear: () => void;
   className?: string;
 };
@@ -20,6 +21,7 @@ export function DocumentVaultBulkToolbar({
   onMove,
   onDelete,
   onDownload,
+  onDueDiligence,
   onClear,
   className,
 }: DocumentVaultBulkToolbarProps) {
@@ -60,6 +62,20 @@ export function DocumentVaultBulkToolbar({
           <Download className="h-3.5 w-3.5" />
           Download zip
         </Button>
+        {onDueDiligence ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1 px-2 text-xs"
+            disabled={busy}
+            onClick={onDueDiligence}
+            data-testid="document-vault-due-diligence"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Due Diligence
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="outline"

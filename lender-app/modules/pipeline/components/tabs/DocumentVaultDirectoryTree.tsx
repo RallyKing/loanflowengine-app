@@ -9,7 +9,7 @@ import {
   memo,
   type KeyboardEvent,
 } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useDroppable } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import {
@@ -69,6 +69,20 @@ import {
 } from "@/lib/library/documentVaultOsFileDrop";
 import { FolderNameDialog } from "@/components/pipeline/tabs/DocumentVaultFolderDialogs";
 import { DocumentVaultExplorerFileRow } from "@/components/library/DocumentVaultExplorerFileRow";
+import { DocumentVaultExplorerFilterStrip } from "@/components/library/DocumentVaultExplorerFilterStrip";
+import { DocumentVaultExplorerStarButton } from "@/components/library/DocumentVaultExplorerStarButton";
+import {
+  explorerFilterEmptyMessage,
+  filterExplorerDocuments,
+  filterExplorerFolderTree,
+  filterExplorerTasks,
+  folderIsInStarredSubtree,
+  matchesExplorerQuery,
+  normalizeExplorerQuery,
+  type ExplorerFilterOptions,
+  type ExplorerFolderNode,
+  type VaultStarredIds,
+} from "@/lib/library/vaultExplorerFilter";
 import { VaultRegistryAssignMicroAction } from "@/components/library/VaultRegistryAssignMicroAction";
 import {
   FileTaskContainer,
@@ -84,6 +98,7 @@ import {
 } from "@/lib/documentVaultTaskTypes";
 import type { LibraryDocumentListRow } from "@/components/library/LibraryDocumentsList";
 import type { LibraryDocumentsProof } from "@/components/LibraryDocumentsPanel";
+import { vaultDocumentOutboundFileName } from "@/lib/library/vaultOutboundFileName";
 
 export type VaultTreeDocument = {
   _id: Id<"libraryDocuments">;
@@ -121,6 +136,7 @@ export type DocumentVaultExplorerFileHandlers = {
   onAssignToRegistry: (row: LibraryDocumentListRow) => void;
   onDownload: (row: LibraryDocumentListRow) => void;
   onDownloadAsPdf: (row: LibraryDocumentListRow) => void;
+  onDownloadOriginal?: (row: LibraryDocumentListRow) => void;
   downloadingDocId: Id<"libraryDocuments"> | null;
   exportingPdfDocId: Id<"libraryDocuments"> | null;
   onRemoveLink: (
@@ -149,6 +165,7 @@ export type DocumentVaultDirectoryTreeProps = {
   onImportFromContact?: () => void;
   onError: (message: string) => void;
   vaultSearchQuery?: string;
+  onSearchChange?: (value: string) => void;
   dropEnabled?: boolean;
   osFileDropEnabled?: boolean;
   onOsFilesDropped?: (
@@ -230,29 +247,54 @@ const ROW_H = "h-7";
 
 type TreeDoc = VaultTreeDocument | LibraryDocumentListRow;
 
-function filterFolderTree(
-  nodes: FolderTreeNode[],
-  query: string,
-  docsByFolderKey: Map<string, TreeDoc[]>,
-): FolderTreeNode[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return nodes;
+function treeDocId(doc: TreeDoc): string {
+  return String("_id" in doc ? doc._id : (doc as VaultTreeDocument)._id);
+}
 
-  const filtered: FolderTreeNode[] = [];
-  for (const node of nodes) {
-    const childFiltered = filterFolderTree(
-      node.children,
-      query,
-      docsByFolderKey,
+function treeDocTitle(doc: TreeDoc): string {
+  return "title" in doc ? doc.title : (doc as VaultTreeDocument).title;
+}
+
+function toExplorerFolderNode(
+  node: FolderTreeNode,
+): ExplorerFolderNode<DocumentFolderRow> {
+  return {
+    id: String(node.folder._id),
+    name: node.folder.name,
+    children: node.children.map(toExplorerFolderNode),
+    source: node.folder,
+  };
+}
+
+function fromExplorerFolderNode(
+  node: ExplorerFolderNode<DocumentFolderRow>,
+): FolderTreeNode {
+  return {
+    folder: node.source,
+    children: node.children.map(fromExplorerFolderNode),
+  };
+}
+
+function filterVaultFolderTree(
+  nodes: FolderTreeNode[],
+  docsByFolderKey: Map<string, TreeDoc[]>,
+  options: ExplorerFilterOptions,
+): FolderTreeNode[] {
+  const docsByFolderId = new Map<
+    string,
+    Array<{ id: string; title: string }>
+  >();
+  for (const [key, docs] of docsByFolderKey) {
+    docsByFolderId.set(
+      key,
+      docs.map((doc) => ({ id: treeDocId(doc), title: treeDocTitle(doc) })),
     );
-    const folderMatches = node.folder.name.toLowerCase().includes(q);
-    const hasDocs =
-      (docsByFolderKey.get(String(node.folder._id)) ?? []).length > 0;
-    if (folderMatches || childFiltered.length > 0 || hasDocs) {
-      filtered.push({ ...node, children: childFiltered });
-    }
   }
-  return filtered;
+  return filterExplorerFolderTree(
+    nodes.map(toExplorerFolderNode),
+    docsByFolderId,
+    options,
+  ).map(fromExplorerFolderNode);
 }
 
 function FolderDropZone({
@@ -531,6 +573,8 @@ function DocumentTreeRow({
   row,
   organizationId,
   memberUserKey,
+  isStarred = false,
+  onToggleStar,
 }: {
   doc: VaultTreeDocument;
   depth: number;
@@ -548,6 +592,8 @@ function DocumentTreeRow({
   row?: LibraryDocumentListRow;
   organizationId?: Id<"organizations">;
   memberUserKey?: string;
+  isStarred?: boolean;
+  onToggleStar?: () => void;
 }) {
   if (fileRowHandlers && row) {
     const handlers = fileRowHandlers;
@@ -564,6 +610,8 @@ function DocumentTreeRow({
         canMutate={canMutate}
         isBulkChecked={handlers.bulkSelectedIds.has(String(row._id))}
         showBulkCheckbox={showBulkCheckbox}
+        isStarred={isStarred}
+        onToggleStar={onToggleStar}
         dragEnabled={handlers.dragEnabled}
         busyDoc={handlers.busyDoc}
         isEditing={isEditing}
@@ -580,7 +628,7 @@ function DocumentTreeRow({
             handlers.onPreview(
               row._id,
               row.latestVersionId,
-              row.latestFileName ?? row.title,
+              vaultDocumentOutboundFileName(row),
               row.latestContentType,
             );
           }
@@ -591,7 +639,7 @@ function DocumentTreeRow({
                 handlers.onOpenInWindow!(
                   row._id,
                   row.latestVersionId!,
-                  row.latestFileName ?? row.title,
+                  vaultDocumentOutboundFileName(row),
                   row.latestContentType,
                 );
               }
@@ -610,6 +658,11 @@ function DocumentTreeRow({
         onAssignToRegistry={() => handlers.onAssignToRegistry(row)}
         onDownload={() => handlers.onDownload(row)}
         onDownloadAsPdf={() => handlers.onDownloadAsPdf(row)}
+        onDownloadOriginal={
+          handlers.onDownloadOriginal
+            ? () => handlers.onDownloadOriginal!(row)
+            : undefined
+        }
         downloading={handlers.downloadingDocId === row._id}
         exportingPdf={handlers.exportingPdfDocId === row._id}
         onRemoveLink={() =>
@@ -761,6 +814,12 @@ function TreeNode({
   folderDownloadableCountById,
   crossFileTransferEnabled = false,
   onMoveCopyFolder,
+  isStarred = false,
+  onToggleStar,
+  folderIsStarred,
+  onToggleFolderStar,
+  documentIsStarred,
+  onToggleDocumentStar,
 }: {
   node: FolderTreeNode;
   depth: number;
@@ -804,6 +863,12 @@ function TreeNode({
     folderId: Id<"documentFolders">,
     folderName: string,
   ) => void;
+  isStarred?: boolean;
+  onToggleStar?: () => void;
+  folderIsStarred?: (folderId: Id<"documentFolders">) => boolean;
+  onToggleFolderStar?: (folderId: Id<"documentFolders">) => void;
+  documentIsStarred?: (documentId: Id<"libraryDocuments">) => boolean;
+  onToggleDocumentStar?: (documentId: Id<"libraryDocuments">) => void;
 }) {
   const id = node.folder._id;
   const folderItemBadge = folderCountById?.get(String(id));
@@ -894,6 +959,15 @@ function TreeNode({
             <ChevronRight className="h-3 w-3" aria-hidden />
           )}
         </button>
+        {onToggleStar ? (
+          <DocumentVaultExplorerStarButton
+            starred={isStarred}
+            label={node.folder.name}
+            onToggle={onToggleStar}
+            compact={compact}
+            testId={`document-vault-folder-star-${id}`}
+          />
+        ) : null}
         <button
           type="button"
           className={cn(
@@ -1165,6 +1239,16 @@ function TreeNode({
                 folderDownloadableCountById={folderDownloadableCountById}
                 crossFileTransferEnabled={crossFileTransferEnabled}
                 onMoveCopyFolder={onMoveCopyFolder}
+                isStarred={folderIsStarred?.(child.folder._id) ?? false}
+                onToggleStar={
+                  onToggleFolderStar
+                    ? () => onToggleFolderStar(child.folder._id)
+                    : undefined
+                }
+                folderIsStarred={folderIsStarred}
+                onToggleFolderStar={onToggleFolderStar}
+                documentIsStarred={documentIsStarred}
+                onToggleDocumentStar={onToggleDocumentStar}
               />
             ))}
           {folderDocs.map((doc) => {
@@ -1198,6 +1282,12 @@ function TreeNode({
               fileRowHandlers={fileRowHandlers}
               organizationId={organizationId}
               memberUserKey={memberUserKey}
+              isStarred={documentIsStarred?.(docId) ?? false}
+              onToggleStar={
+                onToggleDocumentStar
+                  ? () => onToggleDocumentStar(docId)
+                  : undefined
+              }
               onStartEdit={() =>
                 onStartEdit({
                   id: `document:${docId}`,
@@ -1233,6 +1323,7 @@ export function DocumentVaultDirectoryTree({
   onImportFromContact,
   onError,
   vaultSearchQuery = "",
+  onSearchChange,
   dropEnabled = false,
   osFileDropEnabled = false,
   onOsFilesDropped,
@@ -1268,6 +1359,13 @@ export function DocumentVaultDirectoryTree({
     selectDocument,
   } = useDocumentVaultState();
   const openDocument = onOpenDocument ?? selectDocument;
+  const toggleVaultStar = useMutation(api.vaultStars.toggle);
+  const vaultStarList = useQuery(
+    api.vaultStars.listForPipeline,
+    memberUserKey
+      ? { pipelineFileId, memberUserKey }
+      : "skip",
+  );
   const createFolder = useMutation(api.documentFolders.createFolder);
   const renameFolder = useMutation(api.documentFolders.renameFolder);
   const patchDocumentTitle = useMutation(api.libraryDocuments.patchDocumentTitle);
@@ -1301,6 +1399,9 @@ export function DocumentVaultDirectoryTree({
   );
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [starredOnly, setStarredOnly] = useState(false);
+  const [searchInput, setSearchInput] = useState(vaultSearchQuery);
+  const [debouncedSearch, setDebouncedSearch] = useState(vaultSearchQuery);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderTaskId, setNewFolderTaskId] =
     useState<Id<"documentVaultFileTasks"> | null>(null);
@@ -1447,18 +1548,165 @@ export function DocumentVaultDirectoryTree({
     return map;
   }, [fileTasks, folders, vaultDocRefs]);
 
+  useEffect(() => {
+    setSearchInput(vaultSearchQuery);
+    setDebouncedSearch(vaultSearchQuery);
+  }, [vaultSearchQuery]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedSearch(searchInput);
+      if (searchInput !== vaultSearchQuery) {
+        onSearchChange?.(searchInput);
+      }
+    }, 180);
+    return () => window.clearTimeout(handle);
+  }, [onSearchChange, searchInput, vaultSearchQuery]);
+
+  const starredIds = useMemo((): VaultStarredIds => {
+    return {
+      documentIds: new Set(
+        (vaultStarList?.documentIds ?? []).map((id) => String(id)),
+      ),
+      folderIds: new Set(
+        (vaultStarList?.folderIds ?? []).map((id) => String(id)),
+      ),
+    };
+  }, [vaultStarList]);
+
+  const filterOptions = useMemo((): ExplorerFilterOptions => {
+    return {
+      query: debouncedSearch,
+      starredOnly,
+      starred: starredIds,
+    };
+  }, [debouncedSearch, starredIds, starredOnly]);
+
+  const folderParentById = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const folder of folders ?? []) {
+      map.set(String(folder._id), folder.parentFolderId ? String(folder.parentFolderId) : null);
+    }
+    return map;
+  }, [folders]);
+
+  const visibleDocsByFolderKey = useMemo(() => {
+    const q = normalizeExplorerQuery(filterOptions.query);
+    const next = new Map<string, TreeDoc[]>();
+    for (const [key, docs] of docsByFolderKey) {
+      const insideStarredFolder =
+        key !== ROOT_KEY &&
+        !key.startsWith("task:") &&
+        folderIsInStarredSubtree(key, folderParentById, starredIds.folderIds);
+      const folderRow = (folders ?? []).find((f) => String(f._id) === key);
+      const parentMatchedQuery = folderRow
+        ? matchesExplorerQuery(folderRow.name, q)
+        : false;
+      const mapped = docs.map((doc) => ({
+        id: treeDocId(doc),
+        title: treeDocTitle(doc),
+        doc,
+      }));
+      const kept = filterExplorerDocuments(
+        mapped,
+        filterOptions,
+        insideStarredFolder,
+        parentMatchedQuery && (!starredOnly || insideStarredFolder),
+      );
+      next.set(
+        key,
+        kept.map((item) => item.doc),
+      );
+    }
+    return next;
+  }, [
+    docsByFolderKey,
+    filterOptions,
+    folderParentById,
+    folders,
+    starredIds.folderIds,
+    starredOnly,
+  ]);
+
   const visibleTree = useMemo(
-    () => filterFolderTree(tree, vaultSearchQuery, docsByFolderKey),
-    [tree, vaultSearchQuery, docsByFolderKey],
+    () => filterVaultFolderTree(tree, docsByFolderKey, filterOptions),
+    [tree, docsByFolderKey, filterOptions],
   );
 
-  const rootDocs = docsByFolderKey.get(ROOT_KEY) ?? [];
-  const searchActive = vaultSearchQuery.trim().length > 0;
-  const explorerVisible =
-    !searchActive ||
+  const visibleFileTasks = useMemo(() => {
+    const content = new Map<string, boolean>();
+    for (const task of orderedFileTasks) {
+      const taskTree = filterVaultFolderTree(
+        buildFolderTree(folders ?? [], null, optimisticSiblingOrder, task._id),
+        docsByFolderKey,
+        filterOptions,
+      );
+      const taskDocs = visibleDocsByFolderKey.get(taskRootKey(task._id)) ?? [];
+      content.set(String(task._id), taskTree.length > 0 || taskDocs.length > 0);
+    }
+    return filterExplorerTasks(
+      orderedFileTasks.map((task) => ({ id: String(task._id), name: task.title, task })),
+      content,
+      filterOptions,
+    ).map((item) => item.task);
+  }, [
+    docsByFolderKey,
+    filterOptions,
+    folders,
+    optimisticSiblingOrder,
+    orderedFileTasks,
+    visibleDocsByFolderKey,
+  ]);
+
+  const rootDocs = visibleDocsByFolderKey.get(ROOT_KEY) ?? [];
+  const searchActive = normalizeExplorerQuery(debouncedSearch).length > 0;
+  const filterActive = searchActive || starredOnly;
+  const explorerHasRows =
     rootDocs.length > 0 ||
     visibleTree.length > 0 ||
-    (orderedFileTasks?.length ?? 0) > 0;
+    visibleFileTasks.length > 0;
+  const explorerVisible = !filterActive || explorerHasRows;
+
+  const starredCount =
+    starredIds.documentIds.size + starredIds.folderIds.size;
+
+  const handleToggleDocumentStar = useCallback(
+    (documentId: Id<"libraryDocuments">) => {
+      if (!memberUserKey) return;
+      void toggleVaultStar({
+        pipelineFileId,
+        memberUserKey,
+        targetKind: "document",
+        documentId,
+      });
+    },
+    [memberUserKey, pipelineFileId, toggleVaultStar],
+  );
+
+  const handleToggleFolderStar = useCallback(
+    (folderId: Id<"documentFolders">) => {
+      if (!memberUserKey) return;
+      void toggleVaultStar({
+        pipelineFileId,
+        memberUserKey,
+        targetKind: "folder",
+        folderId,
+      });
+    },
+    [memberUserKey, pipelineFileId, toggleVaultStar],
+  );
+
+  const documentIsStarred = useCallback(
+    (documentId: Id<"libraryDocuments">) =>
+      starredIds.documentIds.has(String(documentId)),
+    [starredIds.documentIds],
+  );
+
+  const folderIsStarredFn = useCallback(
+    (folderId: Id<"documentFolders">) =>
+      starredIds.folderIds.has(String(folderId)),
+    [starredIds.folderIds],
+  );
 
   useEffect(() => {
     if (!fileTasks?.length) return;
@@ -1509,10 +1757,17 @@ export function DocumentVaultDirectoryTree({
   }, [currentFolderId, selectedDocumentId, folders, docsForEdit]);
 
   useEffect(() => {
-    if (!searchActive || !folders) return;
+    if (!filterActive || !folders) return;
     const allFolderIds = folders.map((f) => String(f._id));
     setExpandedIds((prev) => new Set([...prev, ...allFolderIds]));
-  }, [searchActive, folders, vaultSearchQuery]);
+    setExpandedFileTaskIds((prev) => {
+      const next = new Set(prev);
+      for (const task of visibleFileTasks) {
+        next.add(String(task._id));
+      }
+      return next;
+    });
+  }, [filterActive, folders, debouncedSearch, starredOnly, visibleFileTasks]);
 
   const toggleExpand = useCallback((id: Id<"documentFolders">) => {
     setExpandedIds((prev) => {
@@ -1810,6 +2065,14 @@ export function DocumentVaultDirectoryTree({
         </div>
       </div>
 
+      <DocumentVaultExplorerFilterStrip
+        searchValue={searchInput}
+        onSearchChange={setSearchInput}
+        starredOnly={starredOnly}
+        onStarredOnlyChange={setStarredOnly}
+        starredCount={starredCount}
+      />
+
       <nav
         className="min-w-0 px-1 pt-1 pb-0"
         data-testid="document-vault-explorer-scroll"
@@ -1823,23 +2086,23 @@ export function DocumentVaultDirectoryTree({
           <ul className="min-w-0 space-y-0">
             {explorerVisible ? (
               <>
-                {orderedFileTasks.length > 0 ? (
+                {visibleFileTasks.length > 0 ? (
                   <li className="min-w-0">
                     <ul className="min-w-0 space-y-2">
-                      {orderedFileTasks.map((task) => {
+                      {visibleFileTasks.map((task) => {
                           const taskTree = buildFolderTree(
                             folders ?? [],
                             null,
                             optimisticSiblingOrder,
                             task._id,
                           );
-                          const taskVisibleTree = filterFolderTree(
+                          const taskVisibleTree = filterVaultFolderTree(
                             taskTree,
-                            vaultSearchQuery,
                             docsByFolderKey,
+                            filterOptions,
                           );
                           const taskRootDocs =
-                            docsByFolderKey.get(taskRootKey(task._id)) ?? [];
+                            visibleDocsByFolderKey.get(taskRootKey(task._id)) ?? [];
                           const taskExpanded = expandedFileTaskIds.has(
                             String(task._id),
                           );
@@ -1968,6 +2231,12 @@ export function DocumentVaultDirectoryTree({
                                       fileRowHandlers={fileRowHandlers}
                                       organizationId={organizationId}
                                       memberUserKey={memberUserKey}
+                                      isStarred={documentIsStarred(docId)}
+                                      onToggleStar={
+                                        memberUserKey
+                                          ? () => handleToggleDocumentStar(docId)
+                                          : undefined
+                                      }
                                       isEditing={
                                         editing?.type === "document" &&
                                         editing.documentId === docId
@@ -2006,7 +2275,7 @@ export function DocumentVaultDirectoryTree({
                                     currentFolderId={currentFolderId}
                                     selectedDocumentId={selectedDocumentId}
                                     expandedIds={expandedIds}
-                                    docsByFolderKey={docsByFolderKey}
+                                    docsByFolderKey={visibleDocsByFolderKey}
                                     editing={editing}
                                     canMutate={canMutate}
                                     dropEnabled={dropEnabled}
@@ -2041,6 +2310,17 @@ export function DocumentVaultDirectoryTree({
                                       crossFileTransferEnabled
                                     }
                                     onMoveCopyFolder={onMoveCopyFolder}
+                                    isStarred={folderIsStarredFn(node.folder._id)}
+                                    onToggleStar={
+                                      memberUserKey
+                                        ? () =>
+                                            handleToggleFolderStar(node.folder._id)
+                                        : undefined
+                                    }
+                                    folderIsStarred={folderIsStarredFn}
+                                    onToggleFolderStar={handleToggleFolderStar}
+                                    documentIsStarred={documentIsStarred}
+                                    onToggleDocumentStar={handleToggleDocumentStar}
                                   />
                                 ))}
                               </ul>
@@ -2052,7 +2332,7 @@ export function DocumentVaultDirectoryTree({
                 ) : null}
 
                 <li className="min-w-0">
-                  {orderedFileTasks.length > 0 ? (
+                  {visibleFileTasks.length > 0 ? (
                     <div className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Unassigned
                     </div>
@@ -2067,17 +2347,26 @@ export function DocumentVaultDirectoryTree({
                   >
                     {rootDocs.length === 0 &&
                     visibleTree.length === 0 &&
-                    orderedFileTasks.length === 0 ? (
+                    visibleFileTasks.length === 0 ? (
                       <div
                         className="px-3 py-4 text-center"
                         data-testid="document-vault-explorer-empty"
                       >
                         <p className="text-xs text-muted-foreground">
-                          Drop files here, upload, or use{" "}
-                          <span className="font-medium text-foreground">
-                            + Tasks
-                          </span>{" "}
-                          to get started.
+                          {filterActive
+                            ? explorerFilterEmptyMessage(
+                                starredOnly,
+                                debouncedSearch,
+                              )
+                            : "Drop files here, upload, or use "}
+                          {!filterActive ? (
+                            <>
+                              <span className="font-medium text-foreground">
+                                + Tasks
+                              </span>{" "}
+                              to get started.
+                            </>
+                          ) : null}
                         </p>
                       </div>
                     ) : null}
@@ -2109,6 +2398,12 @@ export function DocumentVaultDirectoryTree({
                           fileRowHandlers={fileRowHandlers}
                           organizationId={organizationId}
                           memberUserKey={memberUserKey}
+                          isStarred={documentIsStarred(docId)}
+                          onToggleStar={
+                            memberUserKey
+                              ? () => handleToggleDocumentStar(docId)
+                              : undefined
+                          }
                           isEditing={
                             editing?.type === "document" &&
                             editing.documentId === docId
@@ -2147,7 +2442,7 @@ export function DocumentVaultDirectoryTree({
                             currentFolderId={currentFolderId}
                         selectedDocumentId={selectedDocumentId}
                         expandedIds={expandedIds}
-                        docsByFolderKey={docsByFolderKey}
+                        docsByFolderKey={visibleDocsByFolderKey}
                         editing={editing}
                         canMutate={canMutate}
                         dropEnabled={dropEnabled}
@@ -2180,6 +2475,16 @@ export function DocumentVaultDirectoryTree({
                             }
                             crossFileTransferEnabled={crossFileTransferEnabled}
                             onMoveCopyFolder={onMoveCopyFolder}
+                            isStarred={folderIsStarredFn(node.folder._id)}
+                            onToggleStar={
+                              memberUserKey
+                                ? () => handleToggleFolderStar(node.folder._id)
+                                : undefined
+                            }
+                            folderIsStarred={folderIsStarredFn}
+                            onToggleFolderStar={handleToggleFolderStar}
+                            documentIsStarred={documentIsStarred}
+                            onToggleDocumentStar={handleToggleDocumentStar}
                           />
                         ))}
                       </ul>
@@ -2236,8 +2541,11 @@ export function DocumentVaultDirectoryTree({
                   </li>
               </>
             ) : (
-              <li className="px-2 py-3 text-xs text-muted-foreground">
-                No folders or files match your search.
+              <li
+                className="px-2 py-3 text-center text-xs text-muted-foreground"
+                data-testid="document-vault-explorer-filter-empty"
+              >
+                {explorerFilterEmptyMessage(starredOnly, debouncedSearch)}
               </li>
             )}
           </ul>

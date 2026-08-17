@@ -36,6 +36,21 @@ import {
   computeWeightedAverageRateByBalance,
   sumWeightedInterestMonthlyPayments,
 } from "../lib/intake/weightedInterestBlend";
+import {
+  computeBusinessDebtScheduleTotals,
+  formatBusinessDebtTypeLabel,
+  businessDebtRowIsComplete,
+  ensureDealBusinessDebtRowId,
+  normalizeBusinessDebtType,
+  sanitizeDealBusinessDebtRow,
+} from "../lib/businessDebt/scheduleOfBusinessDebtModel";
+import { businessDebtScheduleToDealRow } from "../lib/contacts/contactProfileToDeal";
+import { toHtmlDateInputValue } from "../lib/schedule/dateInput";
+import {
+  applyBusinessDebtCopyPlan,
+  planBusinessDebtCopy,
+} from "../lib/businessDebt/businessDebtCopy";
+import { businessDebtRowToScheduleShape } from "../lib/contacts/businessDebtFromDeal";
 import { mergeIntakeDraftWithServer } from "../lib/share/mergeIntakeDraftWithServer";
 import { embeddedDealPayloadIsSubstantive } from "../lib/file/embeddedDealPresence";
 import {
@@ -44,6 +59,11 @@ import {
   sanitizeZipPathSegment,
 } from "../lib/library/vaultZipPaths";
 import { dedupeZipPath } from "../lib/library/downloadVaultDocumentsZip";
+import {
+  defaultVaultDownloadFormat,
+  isCreatedVaultHtmlDocument,
+  vaultOutboundPdfFileName,
+} from "../lib/library/vaultOutboundFileName";
 import JSZip from "jszip";
 import { isDealBackedPipelineRow } from "../lib/pipeline/dealBackedRow";
 import {
@@ -92,6 +112,10 @@ import {
   PIPELINE_BLOCK_IDS,
 } from "../lib/pipelineBlockRegistry";
 import { pickIntakeShapedPreviewPayload } from "../lib/pipeline/pickIntakeShapedPreviewPayload";
+import {
+  fileTaskOutcomeHeadline,
+  formatFileTaskOutcomeNote,
+} from "../lib/pipeline/formatFileTaskOutcomeNote";
 import {
   DEFAULT_PIPELINE_DRAWER_ORDER,
   defaultPipelineDrawerLayout,
@@ -145,6 +169,22 @@ import {
   buildLenderScenarioSeed,
   unhideDealWorkspaceTabInDealData,
 } from "../lib/dealDataAutomationHelpers";
+import {
+  AUTO_ARCHIVE_CRON_ENABLED,
+  AUTO_ARCHIVE_PRESET_DAYS,
+  AUTO_ARCHIVE_SWEEP_BATCH,
+  autoArchiveFieldsForActivity,
+  computeAutoArchiveAfterAt,
+  dueIndexPatchWhenNotActuallyDue,
+  formatAutoArchiveRemainingShort,
+  isAutoArchiveDue,
+  lastPipelineActivityAt,
+  MS_PER_DAY,
+  normalizeAutoArchiveInactivityDays,
+  remainingAutoArchiveMs,
+  shouldChainAutoArchiveSweep,
+} from "../lib/pipelineAutoArchive";
+import { DURABLE_JOB_BACKUP_SWEEP_MINUTES } from "../lib/convexCronIntervals";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -157,6 +197,147 @@ function test(name: string, fn: () => void) {
     throw e;
   }
 }
+
+test("pipeline auto-archive: presets, custom clamp, inactivity clock", () => {
+  assert.deepEqual([...AUTO_ARCHIVE_PRESET_DAYS], [15, 30, 45, 60]);
+  assert.equal(normalizeAutoArchiveInactivityDays(30), 30);
+  assert.equal(normalizeAutoArchiveInactivityDays(90.4), 90);
+  assert.equal(normalizeAutoArchiveInactivityDays(0), null);
+  assert.equal(normalizeAutoArchiveInactivityDays(731), null);
+
+  const last = Date.UTC(2026, 0, 1);
+  assert.equal(lastPipelineActivityAt({ updatedAt: last, createdAt: 1 }), last);
+  assert.equal(lastPipelineActivityAt({ createdAt: 42 }), 42);
+
+  const due = computeAutoArchiveAfterAt(last, 30);
+  assert.equal(due, last + 30 * MS_PER_DAY);
+
+  assert.equal(
+    isAutoArchiveDue({
+      now: last + 29 * MS_PER_DAY,
+      lastActivityAt: last,
+      inactivityDays: 30,
+    }),
+    false,
+  );
+  assert.equal(
+    isAutoArchiveDue({
+      now: last + 30 * MS_PER_DAY,
+      lastActivityAt: last,
+      inactivityDays: 30,
+    }),
+    true,
+  );
+  assert.equal(
+    isAutoArchiveDue({
+      now: last + 40 * MS_PER_DAY,
+      lastActivityAt: last,
+      inactivityDays: 30,
+      archivedAt: last + 1,
+    }),
+    false,
+  );
+
+  const refreshed = last + 10 * MS_PER_DAY;
+  assert.equal(
+    isAutoArchiveDue({
+      now: last + 30 * MS_PER_DAY,
+      lastActivityAt: refreshed,
+      inactivityDays: 30,
+    }),
+    false,
+  );
+  assert.deepEqual(autoArchiveFieldsForActivity({ autoArchiveInactivityDays: 15 }, refreshed), {
+    autoArchiveAfterAt: refreshed + 15 * MS_PER_DAY,
+  });
+  assert.deepEqual(autoArchiveFieldsForActivity({}, refreshed), {});
+  assert.deepEqual(
+    autoArchiveFieldsForActivity(
+      { autoArchiveInactivityDays: 15, archivedAt: refreshed },
+      refreshed,
+    ),
+    {},
+  );
+
+  assert.equal(
+    formatAutoArchiveRemainingShort(
+      remainingAutoArchiveMs({
+        now: last + 28 * MS_PER_DAY,
+        lastActivityAt: last,
+        inactivityDays: 30,
+      }),
+    ),
+    "2d",
+  );
+  assert.equal(
+    formatAutoArchiveRemainingShort(
+      remainingAutoArchiveMs({
+        now: last + 30 * MS_PER_DAY,
+        lastActivityAt: last,
+        inactivityDays: 30,
+      }),
+    ),
+    "Due",
+  );
+});
+
+test("pipeline auto-archive: no cron chain; stuck due rows leave the index", () => {
+  assert.equal(AUTO_ARCHIVE_CRON_ENABLED, false);
+  assert.equal(shouldChainAutoArchiveSweep(64), false);
+  assert.equal(shouldChainAutoArchiveSweep(0), false);
+  assert.equal(AUTO_ARCHIVE_SWEEP_BATCH, 64);
+
+  const last = Date.UTC(2026, 0, 1);
+  const now = last + 40 * MS_PER_DAY;
+  assert.deepEqual(
+    dueIndexPatchWhenNotActuallyDue({
+      now,
+      lastActivityAt: last + 20 * MS_PER_DAY,
+      inactivityDays: 30,
+    }),
+    { kind: "reschedule", autoArchiveAfterAt: last + 50 * MS_PER_DAY },
+  );
+  assert.deepEqual(
+    dueIndexPatchWhenNotActuallyDue({
+      now,
+      lastActivityAt: 0,
+      inactivityDays: 30,
+    }),
+    { kind: "clear" },
+  );
+});
+
+test("durable job backup sweeps are 15 minutes, not every minute", () => {
+  assert.equal(DURABLE_JOB_BACKUP_SWEEP_MINUTES, 15);
+});
+
+test("fileTaskOutcomeHeadline: complete and delete prefixes", () => {
+  assert.equal(
+    fileTaskOutcomeHeadline("complete", "  Call borrower  "),
+    "Completed task: Call borrower",
+  );
+  assert.equal(
+    fileTaskOutcomeHeadline("delete", ""),
+    "Deleted task: Untitled task",
+  );
+});
+
+test("formatFileTaskOutcomeNote: empty / whitespace → null", () => {
+  assert.equal(formatFileTaskOutcomeNote("complete", "Call borrower"), null);
+  assert.equal(formatFileTaskOutcomeNote("delete", "Call borrower", "   "), null);
+  assert.equal(formatFileTaskOutcomeNote("complete", "Call borrower", null), null);
+});
+
+test("formatFileTaskOutcomeNote: prefixes user note for file Notes block", () => {
+  assert.equal(
+    formatFileTaskOutcomeNote("complete", "Call borrower", "Left voicemail"),
+    "Completed task: Call borrower\n\nLeft voicemail",
+  );
+  assert.equal(
+    formatFileTaskOutcomeNote("delete", "Send LOI", "  Duplicate  "),
+    "Deleted task: Send LOI\n\nDuplicate",
+  );
+});
 
 test("mergePartialCoverOnPatch: undefined/null patch → undefined", () => {
   assert.equal(mergePartialCoverOnPatch({ a: 1 }, undefined), undefined);
@@ -369,6 +550,208 @@ test("weighted interest: empty and unbalanced", () => {
   assert.equal(computeWeightedAverageRateByBalance([]), 0);
   assert.equal(computeWeightedAverageRateByBalance([{ balance: "0", ratePct: "5%" }]), 0);
   assert.equal(sumWeightedInterestMonthlyPayments([{ monthlyPayment: "" }]), 0);
+});
+
+test("business debt totals exclude inactive rows", () => {
+  const totals = computeBusinessDebtScheduleTotals([
+    {
+      account: "MCA Co",
+      originalAmount: "100000",
+      balance: "80000",
+      monthlyPayment: "4000",
+      include: true,
+    },
+    {
+      account: "Old LOC",
+      originalAmount: "50000",
+      balance: "20000",
+      monthlyPayment: "500",
+      include: false,
+    },
+  ]);
+  assert.equal(totals.originalAmount, 100000);
+  assert.equal(totals.presentBalance, 80000);
+  assert.equal(totals.monthlyPayment, 4000);
+});
+
+test("business debt Other type label and completeness", () => {
+  assert.equal(
+    formatBusinessDebtTypeLabel({ debtType: "Other", debtTypeOther: "Factor" }),
+    "Other — Factor",
+  );
+  assert.equal(
+    businessDebtRowIsComplete({
+      account: "Bank",
+      debtType: "Term Loan",
+      originalAmount: "250000",
+      originationDate: "2024-01-01",
+      balance: "180000",
+      ratePct: "9.5",
+      maturityDate: "2028-01-01",
+      monthlyPayment: "3200",
+    }),
+    true,
+  );
+  assert.equal(
+    businessDebtRowIsComplete({
+      account: "Vendor X",
+      debtType: "Other",
+      originalAmount: "10000",
+      originationDate: "2024-01-01",
+      balance: "8000",
+      ratePct: "1.2",
+      maturityDate: "2025-01-01",
+      monthlyPayment: "900",
+    }),
+    false,
+  );
+});
+
+test("business debt copy-to-file keeps destination rows and block assignees", () => {
+  const plan = planBusinessDebtCopy({
+    mode: "block",
+    sourceRows: [
+      { account: "MCA Co", balance: "80k", monthlyPayment: "4k", include: true },
+    ],
+    sourceMeta: { assignedContactIds: ["c1", "c1", "c2"] },
+  });
+  assert.equal(plan.copyBlockAssignees, true);
+  assert.deepEqual(plan.meta.assignedContactIds, ["c1", "c2"]);
+  const merged = applyBusinessDebtCopyPlan({
+    targetRows: [{ account: "Existing", balance: "10", monthlyPayment: "1" }],
+    targetMeta: { assignedContactIds: ["c9"] },
+    plan,
+  });
+  assert.equal(merged.rows.length, 2);
+  assert.equal(merged.rows[0]?.account, "Existing");
+  assert.equal(merged.rows[1]?.account, "MCA Co");
+  assert.ok(merged.rows[1]?.rowId);
+  assert.equal(merged.rows[1]?.rowId, plan.rows[0]?.rowId);
+  assert.deepEqual(merged.meta.assignedContactIds, ["c9", "c1", "c2"]);
+
+  const rowPlan = planBusinessDebtCopy({
+    mode: "rows",
+    sourceRows: [
+      { account: "A", balance: "1", monthlyPayment: "1" },
+      { account: "B", balance: "2", monthlyPayment: "2" },
+    ],
+    rowIndexes: [1],
+  });
+  assert.equal(rowPlan.copyBlockAssignees, false);
+  assert.equal(rowPlan.rows.length, 1);
+  assert.equal(rowPlan.rows[0]?.account, "B");
+});
+
+test("sanitizeDealBusinessDebtRow keeps every schedule field and drops extras", () => {
+  const row = sanitizeDealBusinessDebtRow({
+    rowId: "bd-1",
+    account: "MCA Co",
+    debtType: "mca",
+    debtTypeOther: "",
+    originalAmount: 100000,
+    originationDate: "01/15/2023",
+    balance: "80000",
+    ratePct: "1.29",
+    maturityDate: "2025-06-01T00:00:00.000Z",
+    monthlyPayment: "4200",
+    note: "1st",
+    include: true,
+    assignedContactIds: ["c9", "c9"],
+    ghost: true,
+  });
+  assert.equal(row.account, "MCA Co");
+  assert.equal(row.debtType, "MCA");
+  assert.equal(row.originalAmount, "100000");
+  assert.equal(row.originationDate, "2023-01-15");
+  assert.equal(row.balance, "80000");
+  assert.equal(row.ratePct, "1.29");
+  assert.equal(row.maturityDate, "2025-06-01");
+  assert.equal(row.monthlyPayment, "4200");
+  assert.equal(row.note, "1st");
+  assert.equal(row.include, true);
+  assert.deepEqual(row.assignedContactIds, ["c9"]);
+  assert.equal((row as { ghost?: boolean }).ghost, undefined);
+});
+
+test("business debt Other fill-in persists and date inputs normalize", () => {
+  assert.equal(normalizeBusinessDebtType("line of credit"), "Line of Credit");
+  const other = sanitizeDealBusinessDebtRow({
+    account: "Vendor X",
+    debtType: "Other",
+    debtTypeOther: "Factor advance",
+    originalAmount: "10000",
+    originationDate: "3/1/24",
+    balance: "8000",
+    ratePct: "1.2",
+    maturityDate: "1/1/25",
+    monthlyPayment: "900",
+  });
+  assert.equal(other.debtType, "Other");
+  assert.equal(other.debtTypeOther, "Factor advance");
+  assert.equal(toHtmlDateInputValue(other.originationDate), "2024-03-01");
+  assert.equal(toHtmlDateInputValue(other.maturityDate), "2025-01-01");
+  assert.equal(businessDebtRowIsComplete(other), true);
+  assert.equal(
+    businessDebtRowIsComplete({ ...other, debtTypeOther: "" }),
+    false,
+  );
+});
+
+test("ensureDealBusinessDebtRowId is stable", () => {
+  const a = ensureDealBusinessDebtRowId({ account: "Bank", rowId: "bd-keep" });
+  assert.equal(ensureDealBusinessDebtRowId(a).rowId, "bd-keep");
+});
+
+test("business debt CRM round-trip keeps type, dates, rate, and amounts", () => {
+  const deal = sanitizeDealBusinessDebtRow({
+    account: "SBA Lender",
+    debtType: "sba",
+    originalAmount: "500000",
+    originationDate: "06/01/2023",
+    balance: "410000",
+    ratePct: "11",
+    maturityDate: "6/1/2030",
+    monthlyPayment: "6200",
+    note: "1st",
+  });
+  const shape = businessDebtRowToScheduleShape(deal, 0);
+  const back = businessDebtScheduleToDealRow(shape);
+  assert.equal(shape.creditor, "SBA Lender");
+  assert.equal(shape.debtType, "SBA");
+  assert.equal(shape.originalAmount, "500000");
+  assert.equal(shape.originationDate, "2023-06-01");
+  assert.equal(shape.ratePct, "11");
+  assert.equal(shape.maturityDate, "2030-06-01");
+  assert.equal(shape.position, "1st");
+  assert.equal(back.account, "SBA Lender");
+  assert.equal(back.debtType, "SBA");
+  assert.equal(back.originationDate, "2023-06-01");
+  assert.equal(back.maturityDate, "2030-06-01");
+  assert.equal(back.include, true);
+});
+
+test("business debt CRM shape maps new schedule fields", () => {
+  const shape = businessDebtRowToScheduleShape(
+    {
+      account: "SBA Lender",
+      debtType: "SBA",
+      originalAmount: "500000",
+      originationDate: "2023-06-01",
+      balance: "410000",
+      ratePct: "11",
+      maturityDate: "2030-06-01",
+      monthlyPayment: "6200",
+      note: "1st",
+    },
+    0,
+  );
+  assert.equal(shape.creditor, "SBA Lender");
+  assert.equal(shape.debtType, "SBA");
+  assert.equal(shape.originalAmount, "500000");
+  assert.equal(shape.originationDate, "2023-06-01");
+  assert.equal(shape.ratePct, "11");
+  assert.equal(shape.maturityDate, "2030-06-01");
+  assert.equal(shape.position, "1st");
 });
 
 test("parseDealWorkspaceLayoutFromUnknown: null / junk / duplicate ids", () => {
@@ -1019,14 +1402,59 @@ test("patchWithConflictRetry: retries once without expectedUpdatedAt", async () 
   assert.equal(result.ok, true);
 });
 
+test("patchWithConflictRetry: retries production-redacted Server Error", async () => {
+  let calls = 0;
+  const result = await patchWithConflictRetry(
+    { id: "p1", scenario: "Exit Strategy", expectedUpdatedAt: 42 },
+    async (args) => {
+      calls += 1;
+      if (calls === 1) {
+        assert.equal(args.expectedUpdatedAt, 42);
+        // Production redacts Uncaught Error — only this wrapper reaches the client.
+        throw new Error(
+          "[CONVEX M(pipeline:patch)] [Request ID: db69a3097b0139b5] Server Error",
+        );
+      }
+      assert.equal(args.expectedUpdatedAt, undefined);
+      return { ok: true as const };
+    },
+  );
+  assert.equal(calls, 2);
+  assert.equal(result.ok, true);
+});
+
+test("patchWithConflictRetry: retries ConvexError conflict data", async () => {
+  let calls = 0;
+  const result = await patchWithConflictRetry(
+    { id: "p1", scenario: "x", expectedUpdatedAt: 7 },
+    async (args) => {
+      calls += 1;
+      if (calls === 1) {
+        const err = new Error(
+          "[CONVEX M(pipeline:patch)] [Request ID: x] Server Error",
+        ) as Error & { data?: { code: string } };
+        err.data = { code: "CONFLICT_DATA_CHANGED" };
+        throw err;
+      }
+      assert.equal(args.expectedUpdatedAt, undefined);
+      return { ok: true as const };
+    },
+  );
+  assert.equal(calls, 2);
+  assert.equal(result.ok, true);
+});
+
 test("patchWithConflictRetry: does not retry non-conflict errors", async () => {
+  let calls = 0;
   await assert.rejects(
     () =>
       patchWithConflictRetry({ id: "p1", expectedUpdatedAt: 1 }, async () => {
+        calls += 1;
         throw new Error("fundingAmount must be a non-negative number");
       }),
     /fundingAmount must be a non-negative number/,
   );
+  assert.equal(calls, 1);
 });
 
 test("isTermOptionsOnlyPipelinePatch", () => {
@@ -1042,6 +1470,35 @@ test("isTermOptionsOnlyPipelinePatch", () => {
     isTermOptionsOnlyPipelinePatch({ id: "x", term: "30", termOptions: [] }),
     false,
   );
+  assert.equal(
+    isTermOptionsOnlyPipelinePatch({
+      id: "x",
+      term: "12months",
+      preferencesAccountId: "a",
+      memberUserKey: "a",
+    }),
+    false,
+  );
+});
+
+test("patchWithConflictRetry: term free-text survives redacted Server Error", async () => {
+  let calls = 0;
+  const result = await patchWithConflictRetry(
+    { id: "p1", term: "12months", expectedUpdatedAt: 99 },
+    async (args) => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error(
+          "[CONVEX M(pipeline:patch)] [Request ID: 0e56365204c62ef1] Server Error",
+        );
+      }
+      assert.equal(args.expectedUpdatedAt, undefined);
+      assert.equal(args.term, "12months");
+      return { ok: true as const };
+    },
+  );
+  assert.equal(calls, 2);
+  assert.equal(result.ok, true);
 });
 
 test("convexClientErrorMessage: extracts CONFLICT_DATA_CHANGED", () => {
@@ -1610,5 +2067,44 @@ console.log("vault zip path hierarchy");
     2,
   );
 }
+
+test("created vault HTML docs default download format to PDF", () => {
+  assert.equal(
+    isCreatedVaultHtmlDocument({
+      latestContentType: "text/html",
+      latestFileName: "Term Sheet.html",
+      title: "Term Sheet",
+    }),
+    true,
+  );
+  assert.equal(
+    isCreatedVaultHtmlDocument({
+      latestContentType: "application/pdf",
+      latestFileName: "W-2.pdf",
+      title: "W-2",
+    }),
+    false,
+  );
+  assert.equal(
+    defaultVaultDownloadFormat({
+      latestContentType: "text/html",
+      latestFileName: "Term Sheet.html",
+      title: "Acme Term Sheet",
+    }),
+    "pdf",
+  );
+  assert.equal(
+    defaultVaultDownloadFormat({
+      latestContentType: "application/pdf",
+      latestFileName: "bank-stmt.pdf",
+      title: "Bank statement",
+    }),
+    "original",
+  );
+  assert.equal(
+    vaultOutboundPdfFileName("Acme Term Sheet", "Term Sheet.html"),
+    "Acme Term Sheet.pdf",
+  );
+});
 
 console.log(`\ncore-edge-tests: ${passed} cases passed.\n`);

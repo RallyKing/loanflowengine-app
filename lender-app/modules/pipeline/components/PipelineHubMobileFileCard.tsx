@@ -27,6 +27,11 @@ import {
 } from "@/lib/pipeline/hubTriageHighlight";
 import { PipelineFileRowHierarchyStack } from "@/components/pipeline/PipelineFileRowHierarchyStack";
 import { PipelineFileArchivedIndicator } from "@/components/pipeline/PipelineFileArchivedIndicator";
+import { PipelineFileAutoArchiveMarker } from "@/components/pipeline/PipelineFileAutoArchiveMarker";
+import {
+  hubIconQuietClass,
+  hubMobileFileCardClass,
+} from "@/lib/ui/pipelineHubSurfaces";
 
 /** High-density mobile hub row: scan-friendly without replacing the full data grid on desktop. */
 export function PipelineHubMobileFileCard({
@@ -70,11 +75,10 @@ export function PipelineHubMobileFileCard({
     <HubTriageHighlightFrame
       highlight={fileHighlight}
       className={cn(
-        "rounded-xl border border-border/80 bg-background shadow-sm transition-colors",
-        "active:bg-muted/30",
+        hubMobileFileCardClass,
         archived && "opacity-65",
         selected &&
-          "ring-2 ring-brand-accent/40 ring-offset-2 ring-offset-background",
+          "ring-2 ring-primary/30 ring-offset-2 ring-offset-background",
         fileHighlight && "md:pr-28",
       )}
       badgeClassName="top-2 right-2"
@@ -87,7 +91,7 @@ export function PipelineHubMobileFileCard({
         <div className="flex min-w-0 items-start gap-2">
           <div className="mt-0.5 flex shrink-0 flex-col items-center gap-1">
             <FileText
-              className="h-4 w-4 text-muted-foreground"
+              className={cn("h-4 w-4", hubIconQuietClass)}
               aria-hidden
             />
             <PipelineFileArchivedIndicator
@@ -139,13 +143,19 @@ export function PipelineHubMobileFileCard({
           />
           {r.isSnoozed && snoozedUntilToMs(r.snoozedUntil) != null && (
             <span
-              className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-800 dark:border-blue-700 dark:bg-blue-950/60 dark:text-blue-200"
+              className="inline-flex items-center gap-1 rounded-dlc-full border border-blue-300/80 bg-blue-50/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-800 shadow-dlc-1 dark:border-blue-700 dark:bg-blue-950/60 dark:text-blue-200"
               title={`Snoozed until ${new Date(snoozedUntilToMs(r.snoozedUntil)!).toLocaleString()}`}
             >
               <BellOff className="h-2.5 w-2.5" aria-hidden />
               Snoozed
             </span>
           )}
+          <PipelineFileAutoArchiveMarker
+            autoArchiveInactivityDays={r.autoArchiveInactivityDays}
+            autoArchiveAfterAt={r.autoArchiveAfterAt}
+            lastActivityAt={r.updatedAt}
+            compact
+          />
           <TaskRollupBadge counts={fileTaskCounts} />
         </div>
         {r.ownership?.ownershipLine ? (
@@ -171,7 +181,7 @@ export function PipelineHubMobileFileCard({
           </p>
         ) : null}
         <div
-          className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-2"
+          className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2"
           onClick={(e) => e.stopPropagation()}
         >
             <InlineSelect
@@ -185,7 +195,7 @@ export function PipelineHubMobileFileCard({
             <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
               {r.assigneeId ? (
                 <span
-                  className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-1.5 py-0.5"
+                  className="inline-flex items-center gap-1 rounded-dlc-full border border-border/55 bg-dlc-surface-low/70 px-1.5 py-0.5"
                   title={`Assigned to ${assigneeLabel(r.assigneeId)}`}
                 >
                   <User className="h-3 w-3" aria-hidden />

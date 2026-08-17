@@ -112,6 +112,8 @@ export const MODULAR_BLOCK_SECTION_IDS = {
   constructionBudget: "pipeline-financials-construction-budget",
   investorExperience: "pipeline-deal-info-investor-experience",
   pfs: "pipeline-financials-pfs",
+  trackRecord: "pipeline-financials-track-record",
+  simplePl: "pipeline-financials-simple-pl",
 } as const;
 
 /** Stable section anchors inside the Deal Info tab panel. */
@@ -180,6 +182,8 @@ const DRAWER_BLOCK_TO_TAB: Partial<
   constructionBudget: "financials",
   investorExperience: "dealInfo",
   pfs: "financials",
+  trackRecord: "financials",
+  simplePl: "financials",
 };
 
 const DRAWER_BLOCK_TO_SETTINGS_ANCHOR: Partial<
@@ -213,6 +217,8 @@ const DRAWER_BLOCK_TO_DEAL_WORKSPACE_ANCHOR: Partial<
   feesSplits: DEAL_WORKSPACE_WORKSPACE_SECTION_IDS.feesSplits,
   constructionBudget: MODULAR_BLOCK_SECTION_IDS.constructionBudget,
   pfs: MODULAR_BLOCK_SECTION_IDS.pfs,
+  trackRecord: MODULAR_BLOCK_SECTION_IDS.trackRecord,
+  simplePl: MODULAR_BLOCK_SECTION_IDS.simplePl,
 };
 
 const DEAL_TAB_TO_FILE_TAB: Partial<Record<DealTabId, FileWorkspaceTabId>> = {

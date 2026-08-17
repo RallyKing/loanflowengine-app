@@ -1,5 +1,15 @@
 import type { AssignedBlockEntry } from "@/lib/documentVaultTaskTypes";
 import {
+  findPfsInstance,
+  findPfsInstanceByVaultTask,
+  normalizePfsInstances,
+} from "@/lib/pfs/pfsInstances";
+import {
+  findSimplePlInstance,
+  findSimplePlInstanceByVaultTask,
+  normalizeSimplePlInstances,
+} from "@/lib/simplePl/simplePlInstances";
+import {
   ATOMIC_PORTAL_BLOCK_IDS,
   atomicPortalBlockDescription,
   atomicPortalBlockLabel,
@@ -83,6 +93,13 @@ function stringField(
 export function prefillValuesForPortalBlock(
   blockId: string,
   dealData: Record<string, unknown> | null | undefined,
+  options?: {
+    fileTask?: {
+      _id?: string;
+      sourceKind?: string | null;
+      sourceInstanceId?: string | null;
+    };
+  },
 ): Record<string, string> {
   const deal = dealData ?? {};
   const out: Record<string, string> = {};
@@ -132,7 +149,16 @@ export function prefillValuesForPortalBlock(
     }
 
     if (atom === "pfs_statement") {
-      const pfs = asRecord(deal.pfs);
+      const instances = normalizePfsInstances(deal);
+      const inst =
+        (options?.fileTask?.sourceKind === "pfs_instance"
+          ? findPfsInstance(instances, options.fileTask.sourceInstanceId)
+          : undefined) ??
+        (options?.fileTask?._id
+          ? findPfsInstanceByVaultTask(instances, String(options.fileTask._id))
+          : undefined) ??
+        (instances.length === 1 ? instances[0] : undefined);
+      const pfs = asRecord(inst?.data ?? (instances.length <= 1 ? deal.pfs : undefined));
       for (const k of [
         "totalAssets",
         "totalLiabilities",
@@ -142,6 +168,44 @@ export function prefillValuesForPortalBlock(
         "notes",
       ] as const) {
         if (stringField(pfs, k)) out[k] = stringField(pfs, k)!;
+      }
+    }
+
+    if (atom === "track_record") {
+      const rows = Array.isArray(deal.trackRecord) ? deal.trackRecord : [];
+      out.propertyCount = String(rows.length);
+    }
+
+    if (atom === "simple_pl") {
+      const instances = normalizeSimplePlInstances(deal);
+      const inst =
+        (options?.fileTask?.sourceKind === "simple_pl_instance"
+          ? findSimplePlInstance(instances, options.fileTask.sourceInstanceId)
+          : undefined) ??
+        (options?.fileTask?._id
+          ? findSimplePlInstanceByVaultTask(
+              instances,
+              String(options.fileTask._id),
+            )
+          : undefined) ??
+        (instances.length === 1 ? instances[0] : undefined);
+      const pl = asRecord(
+        inst?.data ?? (instances.length <= 1 ? deal.simplePl : undefined),
+      );
+      const header = asRecord(pl.header);
+      for (const k of ["companyName", "periodEnded"] as const) {
+        if (stringField(header, k)) out[k] = stringField(header, k)!;
+      }
+      for (const k of [
+        "totalRevenue",
+        "totalCogs",
+        "grossProfitLoss",
+        "totalExpenses",
+        "netOperatingProfitLoss",
+        "totalOtherExpenses",
+        "netProfitLoss",
+      ] as const) {
+        if (stringField(pl, k)) out[k] = stringField(pl, k)!;
       }
     }
   }

@@ -761,7 +761,8 @@ export const get = query({
         jwtIssuer: identity?.issuer?.trim() || null,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw err;
+      /** Fail closed for UI: avoids Convex client `useQuery` throwing on execution errors. */
+      return null;
     }
   },
 });

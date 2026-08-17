@@ -120,13 +120,20 @@ export const listActiveInOrganization = query({
     const key = await resolveMemberUserKey(ctx, memberUserKey);
     const { id: orgId } = await assertOrganizationId(ctx, organizationId);
     await assertOrgPermission(ctx, orgId, key, "files.view");
-    const now = Date.now();
+    /**
+     * Liveness (`expiresAt > now`) is evaluated by the caller, not here: reading
+     * the clock in a query makes the result uncacheable, so every subscriber
+     * would re-execute it. Ordering by `expiresAt` descending puts the freshest
+     * heartbeats first so the bound below never drops a live member.
+     * `memberPresence` holds one row per (org, member) and `purgeExpired` prunes
+     * stale rows, so this set is bounded by team size.
+     */
     let rows = await ctx.db
       .query("memberPresence")
       .withIndex("by_org_expires", (q) =>
         q.eq("organizationId", organizationId),
       )
-      .filter((qq) => qq.gt(qq.field("expiresAt"), now))
+      .order("desc")
       .take(200);
     if (pipelineFileId) {
       rows = rows.filter(

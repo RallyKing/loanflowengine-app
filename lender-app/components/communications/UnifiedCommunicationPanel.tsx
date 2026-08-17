@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { postFileToConvexUploadUrl } from "@/lib/uploadToConvexStorage";
 import { buildCommunicationPreview } from "@/lib/comms/templateRender";
+import { tokenForKey, type CustomInputDefinition } from "@/lib/comms/mergeVariables";
 import { cn } from "@/lib/cn";
 import { useDocumentTabVisible } from "@/lib/hooks/useDocumentTabVisible";
 import { CommunicationHistoryPanel } from "@/components/communications/CommunicationHistoryPanel";
@@ -15,9 +17,9 @@ import {
   useConvexSubMountTrace,
   useConvexSubQueryArgsTrace,
 } from "@/lib/convexSubDiagnosticsHooks";
-import { Mail, MessageSquareMore, Paperclip, Send, Wand2, X } from "lucide-react";
+import { Mail, MessageSquare, MessageSquareMore, Paperclip, Send, Wand2, X } from "lucide-react";
 
-type Channel = "email" | "portal";
+type Channel = "email" | "sms" | "portal";
 
 function splitRecipients(raw: string): string[] {
   return raw
@@ -50,8 +52,11 @@ export function UnifiedCommunicationPanel(props: {
   relatedContactId?: Id<"contacts">;
   relatedLenderId?: Id<"lenders">;
   className?: string;
+  /** Hide history when embedded in a surface that already shows it. */
+  hideHistory?: boolean;
+  defaultChannel?: Channel;
 }) {
-  const [channel, setChannel] = useState<Channel>("email");
+  const [channel, setChannel] = useState<Channel>(props.defaultChannel ?? "email");
   const [draftId, setDraftId] = useState<Id<"outboundMessages"> | null>(null);
   const [recipientsInput, setRecipientsInput] = useState("");
   const [subject, setSubject] = useState("");
@@ -60,66 +65,60 @@ export function UnifiedCommunicationPanel(props: {
   const [scheduleAt, setScheduleAt] = useState<string>("");
   const [testMode, setTestMode] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [activeCustomInputs, setActiveCustomInputs] = useState<CustomInputDefinition[]>([]);
+  const [customOverrides, setCustomOverrides] = useState<Record<string, string>>({});
+  const [showResolvedPreview, setShowResolvedPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const hydratedKeyRef = useRef<string>("");
   const tabVisible = useDocumentTabVisible();
 
-  const templateCatalogArgs = useMemo(
-    () => {
-      if (!tabVisible) return "skip" as const;
-      return {
-        organizationId: props.organizationId,
-        memberUserKey: props.memberUserKey,
-        channel,
-      };
-    },
-    [tabVisible, props.organizationId, props.memberUserKey, channel],
-  );
-
-  const composerContextArgs = useMemo(
-    () => {
-      if (!tabVisible) return "skip" as const;
-      return {
-        organizationId: props.organizationId,
-        memberUserKey: props.memberUserKey,
-        relatedPipelineFileId: props.relatedPipelineFileId,
-        relatedContactId: props.relatedContactId,
-        relatedLenderId: props.relatedLenderId,
-      };
-    },
-    [
-      tabVisible,
-      props.organizationId,
-      props.memberUserKey,
-      props.relatedPipelineFileId,
-      props.relatedContactId,
-      props.relatedLenderId,
-    ],
-  );
-
-  const draftArgs = useMemo(
-    () => {
-      if (!tabVisible) return "skip" as const;
-      return {
-        organizationId: props.organizationId,
-        memberUserKey: props.memberUserKey,
-        channel,
-        relatedPipelineFileId: props.relatedPipelineFileId,
-        relatedContactId: props.relatedContactId,
-        relatedLenderId: props.relatedLenderId,
-      };
-    },
-    [
-      tabVisible,
-      props.organizationId,
-      props.memberUserKey,
+  const templateCatalogArgs = useMemo(() => {
+    if (!tabVisible) return "skip" as const;
+    return {
+      organizationId: props.organizationId,
+      memberUserKey: props.memberUserKey,
       channel,
-      props.relatedPipelineFileId,
-      props.relatedContactId,
-      props.relatedLenderId,
-    ],
-  );
+    };
+  }, [tabVisible, props.organizationId, props.memberUserKey, channel]);
+
+  const composerContextArgs = useMemo(() => {
+    if (!tabVisible) return "skip" as const;
+    return {
+      organizationId: props.organizationId,
+      memberUserKey: props.memberUserKey,
+      relatedPipelineFileId: props.relatedPipelineFileId,
+      relatedContactId: props.relatedContactId,
+      relatedLenderId: props.relatedLenderId,
+    };
+  }, [
+    tabVisible,
+    props.organizationId,
+    props.memberUserKey,
+    props.relatedPipelineFileId,
+    props.relatedContactId,
+    props.relatedLenderId,
+  ]);
+
+  const draftArgs = useMemo(() => {
+    if (!tabVisible) return "skip" as const;
+    return {
+      organizationId: props.organizationId,
+      memberUserKey: props.memberUserKey,
+      channel,
+      relatedPipelineFileId: props.relatedPipelineFileId,
+      relatedContactId: props.relatedContactId,
+      relatedLenderId: props.relatedLenderId,
+    };
+  }, [
+    tabVisible,
+    props.organizationId,
+    props.memberUserKey,
+    channel,
+    props.relatedPipelineFileId,
+    props.relatedContactId,
+    props.relatedLenderId,
+  ]);
 
   useConvexSubMountTrace("UnifiedCommunicationPanel");
   useConvexSubQueryArgsTrace("UnifiedCommunicationPanel:draft", draftArgs, {
@@ -168,8 +167,33 @@ export function UnifiedCommunicationPanel(props: {
     setPriority(draft?.priority ?? "normal");
     setTestMode(Boolean(draft?.isTestMode));
     setScheduleAt(toDatetimeLocalValue(draft?.scheduledFor ?? null));
+    setSelectedTemplate("");
+    setActiveCustomInputs([]);
+    setCustomOverrides({});
     setErr(null);
   }, [channel, composerScopeKey, draft]);
+
+  const mergedVariables = useMemo(() => {
+    const base = { ...(context?.variables ?? {}) };
+    for (const input of activeCustomInputs) {
+      base[input.key] =
+        customOverrides[input.key] ?? input.defaultValue ?? "";
+    }
+    for (const [key, value] of Object.entries(customOverrides)) {
+      base[key] = value;
+    }
+    return base;
+  }, [activeCustomInputs, context?.variables, customOverrides]);
+
+  const resolvedPreview = useMemo(
+    () =>
+      buildCommunicationPreview({
+        subjectTemplate: subject,
+        bodyTemplate: body,
+        variables: mergedVariables,
+      }),
+    [body, mergedVariables, subject],
+  );
 
   const ensureDraftSaved = useCallback(async () => {
     if (!props.memberUserKey?.trim()) {
@@ -188,7 +212,7 @@ export function UnifiedCommunicationPanel(props: {
       relatedPipelineFileId: props.relatedPipelineFileId,
       relatedContactId: props.relatedContactId,
       relatedLenderId: props.relatedLenderId,
-      subject,
+      subject: channel === "sms" ? undefined : subject,
       bodyText: body,
       recipientSummary: normalizedRecipients,
       priority,
@@ -222,20 +246,57 @@ export function UnifiedCommunicationPanel(props: {
     return () => window.clearTimeout(handle);
   }, [ensureDraftSaved, props.memberUserKey, recipientsInput, subject, body, channel]);
 
+  const applyResolvedToCompose = useCallback(() => {
+    setSubject(resolvedPreview.subject);
+    setBody(resolvedPreview.bodyText);
+    setShowResolvedPreview(false);
+  }, [resolvedPreview]);
+
   const onPickTemplate = useCallback(
     (slug: string) => {
       setSelectedTemplate(slug);
       const template = templates?.find((row) => row.slug === slug);
-      if (!template || !context?.variables) return;
+      if (!template || !context?.variables) {
+        setActiveCustomInputs([]);
+        setCustomOverrides({});
+        return;
+      }
+      const inputs = (template.customInputs ?? []) as CustomInputDefinition[];
+      setActiveCustomInputs(inputs);
+      const overrides: Record<string, string> = {};
+      for (const input of inputs) {
+        if (input.defaultValue) overrides[input.key] = input.defaultValue;
+      }
+      setCustomOverrides(overrides);
+      const variables = { ...context.variables, ...overrides };
+      for (const input of inputs) {
+        if (!(input.key in variables)) {
+          variables[input.key] = input.defaultValue ?? "";
+        }
+      }
       const preview = buildCommunicationPreview({
         subjectTemplate: template.subjectTemplate,
         bodyTemplate: template.bodyTemplate,
-        variables: context.variables,
+        variables,
       });
-      setSubject(preview.subject);
-      setBody(preview.bodyText);
-      if (channel === "email" && !recipientsInput.trim() && context.suggestedRecipients?.length) {
-        setRecipientsInput(context.suggestedRecipients.map((row) => row.value).join(", "));
+      // Keep tokens in draft when custom inputs exist so user can tweak then resolve.
+      if (inputs.length) {
+        setSubject(template.subjectTemplate ?? "");
+        setBody(template.bodyTemplate);
+        setShowResolvedPreview(true);
+      } else {
+        setSubject(preview.subject);
+        setBody(preview.bodyText);
+        setShowResolvedPreview(false);
+      }
+      const kind = channel === "sms" ? "sms" : channel === "email" ? "email" : null;
+      if (kind && !recipientsInput.trim() && context.suggestedRecipients?.length) {
+        const matches = context.suggestedRecipients.filter(
+          (row) => !row.kind || row.kind === kind,
+        );
+        if (matches.length) {
+          setRecipientsInput(matches.map((row) => row.value).join(", "));
+        }
       }
     },
     [channel, context?.suggestedRecipients, context?.variables, recipientsInput, templates],
@@ -285,7 +346,33 @@ export function UnifiedCommunicationPanel(props: {
     setBusy(true);
     setErr(null);
     try {
+      // Resolve remaining tokens before queue when custom inputs were filled.
+      if (activeCustomInputs.length || /\{\{/.test(body) || /\{\{/.test(subject)) {
+        setSubject(resolvedPreview.subject);
+        setBody(resolvedPreview.bodyText);
+      }
       const outboundMessageId = draftId ?? (await ensureDraftSaved());
+      // If we just resolved, persist resolved body once more.
+      if (activeCustomInputs.length || /\{\{/.test(body) || /\{\{/.test(subject)) {
+        await saveDraft({
+          organizationId: props.organizationId,
+          memberUserKey: props.memberUserKey,
+          channel,
+          relatedPipelineFileId: props.relatedPipelineFileId,
+          relatedContactId: props.relatedContactId,
+          relatedLenderId: props.relatedLenderId,
+          subject: channel === "sms" ? undefined : resolvedPreview.subject,
+          bodyText: resolvedPreview.bodyText,
+          recipientSummary:
+            channel === "portal"
+              ? splitRecipients(recipientsInput).length
+                ? splitRecipients(recipientsInput)
+                : ["Portal participants"]
+              : splitRecipients(recipientsInput),
+          priority,
+          isTestMode: testMode,
+        });
+      }
       const scheduledFor = scheduleAt ? new Date(scheduleAt).getTime() : undefined;
       await queueDraft({
         organizationId: props.organizationId,
@@ -299,6 +386,8 @@ export function UnifiedCommunicationPanel(props: {
       setBody("");
       setScheduleAt("");
       setSelectedTemplate("");
+      setActiveCustomInputs([]);
+      setCustomOverrides({});
       hydratedKeyRef.current = "";
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Could not queue message.");
@@ -306,14 +395,35 @@ export function UnifiedCommunicationPanel(props: {
       setBusy(false);
     }
   }, [
+    activeCustomInputs.length,
+    body,
     channel,
     draftId,
     ensureDraftSaved,
+    priority,
     props.memberUserKey,
     props.organizationId,
+    props.relatedContactId,
+    props.relatedLenderId,
+    props.relatedPipelineFileId,
     queueDraft,
+    recipientsInput,
+    resolvedPreview.bodyText,
+    resolvedPreview.subject,
+    saveDraft,
     scheduleAt,
+    subject,
+    testMode,
   ]);
+
+  const suggestedForChannel = useMemo(() => {
+    const kind = channel === "sms" ? "sms" : channel === "email" ? "email" : null;
+    if (!kind || !context?.suggestedRecipients) return [];
+    return context.suggestedRecipients.filter((row) => !row.kind || row.kind === kind);
+  }, [channel, context?.suggestedRecipients]);
+
+  const channelLabel =
+    channel === "email" ? "email" : channel === "sms" ? "text" : "portal update";
 
   return (
     <div className={cn("space-y-4", props.className)} data-testid="unified-communications-panel">
@@ -322,15 +432,24 @@ export function UnifiedCommunicationPanel(props: {
           <div>
             <div className="text-sm font-semibold">Outbound communications</div>
             <p className="text-xs text-muted-foreground">
-              Provider-agnostic compose with draft autosave, templates, scheduling, and
-              unified history.
+              Compose with templates, merge variables, draft autosave, and unified
+              history.{" "}
+              <Link
+                href="/automations"
+                className="font-medium text-primary underline-offset-2 hover:underline"
+              >
+                Manage templates
+              </Link>
             </p>
           </div>
           <div className="inline-flex rounded-xl border border-border/60 bg-background p-1">
-            {([
-              { value: "email", label: "Email", icon: Mail },
-              { value: "portal", label: "Portal", icon: MessageSquareMore },
-            ] as const).map((option) => {
+            {(
+              [
+                { value: "email" as const, label: "Email", icon: Mail },
+                { value: "sms" as const, label: "Text", icon: MessageSquare },
+                { value: "portal" as const, label: "Portal", icon: MessageSquareMore },
+              ] as const
+            ).map((option) => {
               const Icon = option.icon;
               const active = channel === option.value;
               return (
@@ -353,6 +472,13 @@ export function UnifiedCommunicationPanel(props: {
           </div>
         </div>
 
+        {channel === "sms" ? (
+          <p className="mt-2 text-[11px] text-muted-foreground" role="status">
+            SMS delivery uses the org SMS provider when configured; otherwise messages
+            are queued through the stub adapter for history and testing.
+          </p>
+        ) : null}
+
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
           <div className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -370,15 +496,17 @@ export function UnifiedCommunicationPanel(props: {
                   placeholder={
                     channel === "email"
                       ? "email@example.com, teammate@example.com"
-                      : "Portal participants"
+                      : channel === "sms"
+                        ? "+1 555 010 2000, +1 555 010 3000"
+                        : "Portal participants"
                   }
                   className="text-xs"
                 />
-                {context?.suggestedRecipients?.length && channel === "email" ? (
+                {suggestedForChannel.length ? (
                   <div className="flex flex-wrap gap-1.5">
-                    {context.suggestedRecipients.slice(0, 6).map((recipient) => (
+                    {suggestedForChannel.slice(0, 6).map((recipient) => (
                       <button
-                        key={`${recipient.value}-${recipient.contactId ?? ""}`}
+                        key={`${recipient.value}-${recipient.contactId ?? ""}-${recipient.kind ?? ""}`}
                         type="button"
                         className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/30 hover:text-foreground"
                         onClick={() =>
@@ -413,6 +541,7 @@ export function UnifiedCommunicationPanel(props: {
                   {(templates ?? []).map((template) => (
                     <option key={`${template.source}-${template.slug}`} value={template.slug}>
                       {template.name}
+                      {template.source === "seed" ? " (starter)" : ""}
                     </option>
                   ))}
                 </select>
@@ -438,21 +567,23 @@ export function UnifiedCommunicationPanel(props: {
                   <option value="critical">Critical</option>
                 </select>
               </div>
-              <div className="space-y-1 sm:col-span-2">
-                <label
-                  htmlFor="communications-subject"
-                  className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
-                >
-                  Subject
-                </label>
-                <Input
-                  id="communications-subject"
-                  value={subject}
-                  onChange={(event) => setSubject(event.target.value)}
-                  placeholder={channel === "email" ? "Subject" : "Optional title"}
-                  className="text-xs"
-                />
-              </div>
+              {channel !== "sms" ? (
+                <div className="space-y-1 sm:col-span-2">
+                  <label
+                    htmlFor="communications-subject"
+                    className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
+                  >
+                    Subject
+                  </label>
+                  <Input
+                    id="communications-subject"
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    placeholder={channel === "email" ? "Subject" : "Optional title"}
+                    className="text-xs"
+                  />
+                </div>
+              ) : null}
               <div className="space-y-1 sm:col-span-2">
                 <label
                   htmlFor="communications-body"
@@ -468,12 +599,68 @@ export function UnifiedCommunicationPanel(props: {
                   placeholder={
                     channel === "email"
                       ? "Write the message that will go to the selected recipients…"
-                      : "Write the portal update that borrowers will see in their thread…"
+                      : channel === "sms"
+                        ? "Keep SMS short. Use {{contactName}} and other merge tokens…"
+                        : "Write the portal update that borrowers will see in their thread…"
                   }
-                  maxLength={50000}
+                  maxLength={channel === "sms" ? 1600 : 50000}
                 />
               </div>
             </div>
+
+            {activeCustomInputs.length ? (
+              <div className="space-y-2 rounded-xl border border-border/60 bg-background/70 p-3">
+                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                  Template inputs
+                </p>
+                {activeCustomInputs.map((input) => (
+                  <div key={input.key} className="space-y-1">
+                    <label
+                      htmlFor={`custom-input-${input.key}`}
+                      className="text-xs text-muted-foreground"
+                    >
+                      {input.label}{" "}
+                      <span className="text-[10px]">{tokenForKey(input.key)}</span>
+                    </label>
+                    <Input
+                      id={`custom-input-${input.key}`}
+                      value={customOverrides[input.key] ?? input.defaultValue ?? ""}
+                      onChange={(event) =>
+                        setCustomOverrides((prev) => ({
+                          ...prev,
+                          [input.key]: event.target.value,
+                        }))
+                      }
+                      className="text-xs"
+                    />
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={applyResolvedToCompose}
+                >
+                  Apply resolved preview to message
+                </Button>
+              </div>
+            ) : null}
+
+            {(showResolvedPreview || activeCustomInputs.length > 0) &&
+            (resolvedPreview.bodyText || resolvedPreview.subject) ? (
+              <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 p-3">
+                <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                  <Wand2 className="h-3.5 w-3.5" aria-hidden />
+                  Resolved preview
+                </div>
+                {channel !== "sms" && resolvedPreview.subject ? (
+                  <p className="mb-1 text-xs font-semibold">{resolvedPreview.subject}</p>
+                ) : null}
+                <pre className="whitespace-pre-wrap text-xs text-foreground">
+                  {resolvedPreview.bodyText}
+                </pre>
+              </div>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-3">
               <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
@@ -485,19 +672,22 @@ export function UnifiedCommunicationPanel(props: {
                 />
                 Test mode
               </label>
-              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                <Paperclip className="h-3.5 w-3.5" aria-hidden />
-                <span>Attach files</span>
-                <input
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(event) => void onUploadFiles(event.target.files)}
-                />
-              </label>
+              {channel === "email" ? (
+                <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  <Paperclip className="h-3.5 w-3.5" aria-hidden />
+                  <span>Attach files</span>
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => void onUploadFiles(event.target.files)}
+                  />
+                </label>
+              ) : null}
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Wand2 className="h-3.5 w-3.5" aria-hidden />
-                Variables ready for {context?.fileName ?? context?.contactName ?? "this record"}
+                Variables ready for{" "}
+                {context?.fileName ?? context?.contactName ?? context?.lenderName ?? "this record"}
               </div>
             </div>
 
@@ -552,8 +742,8 @@ export function UnifiedCommunicationPanel(props: {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Drafts autosave while you type. Queued email uses the shared provider router,
-              and portal sends mirror into the live borrower thread.
+              Drafts autosave while you type. Email uses Resend; SMS uses the
+              configured provider (stub until live SMS is enabled).
             </p>
             <Button
               type="button"
@@ -565,20 +755,22 @@ export function UnifiedCommunicationPanel(props: {
               {busy
                 ? "Queueing…"
                 : scheduleAt
-                  ? `Schedule ${channel === "email" ? "email" : "portal update"}`
-                  : `Send ${channel === "email" ? "email" : "portal update"}`}
+                  ? `Schedule ${channelLabel}`
+                  : `Send ${channelLabel}`}
             </Button>
           </div>
         </div>
       </div>
 
-      <CommunicationHistoryPanel
-        organizationId={props.organizationId}
-        memberUserKey={props.memberUserKey}
-        relatedPipelineFileId={props.relatedPipelineFileId}
-        relatedContactId={props.relatedContactId}
-        relatedLenderId={props.relatedLenderId}
-      />
+      {!props.hideHistory ? (
+        <CommunicationHistoryPanel
+          organizationId={props.organizationId}
+          memberUserKey={props.memberUserKey}
+          relatedPipelineFileId={props.relatedPipelineFileId}
+          relatedContactId={props.relatedContactId}
+          relatedLenderId={props.relatedLenderId}
+        />
+      ) : null}
     </div>
   );
 }

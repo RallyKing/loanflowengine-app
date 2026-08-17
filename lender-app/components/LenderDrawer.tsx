@@ -45,6 +45,7 @@ import {
 } from "@/components/RecordInspectorShell";
 import { useWorkspaceSheetDragLock } from "@/components/PipelineWorkspaceMobileVaulFrame";
 import { CommunicationHistoryPanel } from "@/components/communications/CommunicationHistoryPanel";
+import { UnifiedCommunicationPanel } from "@/components/communications/UnifiedCommunicationPanel";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
 import { simpleDeleteConfirm } from "@/lib/ui/confirmDestructive";
 import {
@@ -665,13 +666,22 @@ export function LenderDrawer({
                     </span>
                   }
                 >
-                  <CommunicationHistoryPanel
-                    organizationId={draft.organizationId}
-                    memberUserKey={accountId.trim() || undefined}
-                    relatedLenderId={id ?? undefined}
-                    emptyLabel="No outbound communication logged for this lender yet."
-                    maxHeightClassName="max-h-56"
-                  />
+                  <div className="space-y-4">
+                    <UnifiedCommunicationPanel
+                      organizationId={draft.organizationId}
+                      memberUserKey={accountId.trim() || undefined}
+                      relatedLenderId={id ?? undefined}
+                      hideHistory
+                      defaultChannel="email"
+                    />
+                    <CommunicationHistoryPanel
+                      organizationId={draft.organizationId}
+                      memberUserKey={accountId.trim() || undefined}
+                      relatedLenderId={id ?? undefined}
+                      emptyLabel="No outbound communication logged for this lender yet."
+                      maxHeightClassName="max-h-56"
+                    />
+                  </div>
                 </CollapsibleSection>
               ) : null}
 

@@ -45,4 +45,5 @@ Every subsystem MUST declare where truth lives. Conflicting sources of truth cau
 - `no-shadow-systems-policy.md`
 - `canonical-system-map.md`
 - `state-management-policy.md`
+- `convex-reactivity-policy.md`
 - `route-ownership-policy.md`

@@ -302,15 +302,19 @@ export function useOfflineSync(): OfflineCtxValue {
   return v;
 }
 
-/** Snapshot key for `api.pipeline.listTablePreview` query args. */
+/**
+ * Snapshot key for `api.pipeline.listTablePreview` query args.
+ *
+ * No snooze dimension: the query returns snoozed rows unconditionally now and the
+ * hub filters them locally, so one snapshot serves both toggle states.
+ */
 export function pipelineListSnapshotKey(args: {
   includeArchived: boolean;
-  includeSnoozed: boolean;
   organizationId?: string;
 }): string {
   const org = args.organizationId ?? "none";
   const dep = convexPublicHostnameForSnapshotKey();
-  return `snapshot:pipeline.listTablePreview:${dep}:${org}:${args.includeArchived ? "a1" : "a0"}:${args.includeSnoozed ? "z1" : "z0"}`;
+  return `snapshot:pipeline.listTablePreview:v2:${dep}:${org}:${args.includeArchived ? "a1" : "a0"}`;
 }
 
 export function tasksListSnapshotKey(): string {

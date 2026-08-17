@@ -15,6 +15,12 @@ export type OrgInboundAutomationAction =
       providerKey: string;
       kind: "action" | "sync_push";
       connectorPublicId?: string;
+    }
+  | {
+      /** Create/update a pipeline file + contact from inbound CRM webhook payload. */
+      type: "upsert_pipeline_lead";
+      /** Fallback status/slug when payload has no mappable stage. */
+      defaultStatus?: string;
     };
 
 export type OrganizationIntegrationRule = {
@@ -64,6 +70,16 @@ function parseAction(
       providerKey: pkTrim,
       kind,
       connectorPublicId,
+    };
+  }
+  if (type === "upsert_pipeline_lead") {
+    const defaultStatus =
+      typeof o.defaultStatus === "string" && o.defaultStatus.trim()
+        ? o.defaultStatus.trim().slice(0, 64)
+        : undefined;
+    return {
+      type: "upsert_pipeline_lead",
+      defaultStatus,
     };
   }
   return null;

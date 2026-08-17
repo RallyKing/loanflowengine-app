@@ -14,6 +14,7 @@ import {
   RecordInspectorShell,
 } from "@/components/RecordInspectorShell";
 import { RegistryRoleMultiSelect } from "@/components/registry/RegistryRoleMultiSelect";
+import { EntityWebsitesPanel } from "@/components/contacts/EntityWebsitesPanel";
 import type { RegistryItem } from "@/lib/registry/registryItem";
 import { REGISTRY_ROLE_IDS, type RegistryRoleId } from "@/lib/registry/universalRoles";
 import { contactRoleIdsMutationPayload } from "@/lib/contact/contactRoles";
@@ -69,6 +70,17 @@ export function RegistryEditModal({
     api.lenders.get,
     open && lenderId
       ? { id: lenderId, organizationId, memberUserKey }
+      : "skip",
+  );
+
+  const entityHubDetail = useQuery(
+    api.pipelineHierarchyQueries.getClientHubDetail,
+    open && item?.registryType === "entity"
+      ? {
+          organizationId,
+          clientId: item._id as Id<"clients">,
+          memberUserKey,
+        }
       : "skip",
   );
 
@@ -221,6 +233,16 @@ export function RegistryEditModal({
           disabled={submitting || lenderLoading}
           aria-label="Registry roles"
         />
+
+        {item.registryType === "entity" && entityHubDetail?.client ? (
+          <EntityWebsitesPanel
+            organizationId={organizationId}
+            memberUserKey={memberUserKey}
+            entityId={item._id as Id<"clients">}
+            client={entityHubDetail.client}
+            canEdit={entityHubDetail.canEdit ?? true}
+          />
+        ) : null}
 
         {lenderLoading ? (
           <p className="text-sm text-muted-foreground">Loading lender details…</p>

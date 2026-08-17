@@ -135,3 +135,18 @@ export const personalFinancialStatementV = v.object({
   liquidAssets: v.optional(v.string()),
   annualIncome: v.optional(v.string()),
 });
+
+/**
+ * First-class PFS on a pipeline file (one per borrower / guarantor).
+ * Legacy `dealData.pfs` remains the mirror of the first instance.
+ */
+export const pfsInstanceV = v.object({
+  id: v.string(),
+  name: v.string(),
+  assignedContactIds: v.optional(v.array(v.string())),
+  /** Document Vault `block_assignment` task for this instance. */
+  vaultFileTaskId: v.optional(v.string()),
+  /** Forms & Applications intake form titled for this instance. */
+  intakeFormId: v.optional(v.string()),
+  data: personalFinancialStatementV,
+});

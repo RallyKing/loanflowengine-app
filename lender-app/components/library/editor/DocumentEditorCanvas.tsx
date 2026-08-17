@@ -288,6 +288,8 @@ export function DocumentEditorCanvas({
     });
     setCrop({ x: 0, y: 0 });
     setZoom(1);
+    // reactivity-allow: reset crop UI when page identity/geometry changes, not on every selectedPage object identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedPage primitives above
   }, [selectedPage?._id, selectedPage?.cropData, selectedPage?.sourceWidth, selectedPage?.sourceHeight]);
 
   const reportError = useCallback(

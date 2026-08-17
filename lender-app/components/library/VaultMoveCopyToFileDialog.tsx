@@ -33,6 +33,89 @@ const KIND_LABEL: Record<VaultMoveCopyEntity["kind"], string> = {
   fileTask: "task",
 };
 
+type DestinationSibling = {
+  _id: Id<"pipeline">;
+  fileName: string;
+  status: string;
+  updatedAt: number;
+  sameProject: boolean;
+  primaryBorrowerLabel: string;
+};
+
+function DestinationFileOption({
+  file,
+  selected,
+  disabled,
+  onSelect,
+}: {
+  file: DestinationSibling;
+  selected: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+}) {
+  const borrowers =
+    file.primaryBorrowerLabel.trim() || "No primary borrower";
+  return (
+    <li>
+      <button
+        type="button"
+        role="option"
+        aria-selected={selected}
+        aria-label={`${file.fileName}. Borrowers: ${borrowers}`}
+        disabled={disabled}
+        className={cn(
+          "flex w-full min-h-10 flex-col items-stretch justify-center gap-0.5 rounded-dlc-sm px-3 py-2 text-left",
+          "hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none",
+          "transition-colors duration-dlc-short ease-dlc-standard",
+          selected && "bg-primary/10 ring-1 ring-primary/30",
+        )}
+        onClick={onSelect}
+      >
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">
+          {file.fileName}
+        </span>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          {borrowers}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function DestinationFileGroup({
+  label,
+  files,
+  targetId,
+  busy,
+  onSelect,
+}: {
+  label: string;
+  files: DestinationSibling[];
+  targetId: Id<"pipeline"> | null;
+  busy: boolean;
+  onSelect: (id: Id<"pipeline">) => void;
+}) {
+  if (files.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <p className="sticky top-0 z-[1] bg-dlc-surface/95 px-1 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur-sm">
+        {label}
+      </p>
+      <ul className="space-y-1" role="group" aria-label={label}>
+        {files.map((file) => (
+          <DestinationFileOption
+            key={file._id}
+            file={file}
+            selected={targetId === file._id}
+            disabled={busy}
+            onSelect={() => onSelect(file._id)}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function VaultMoveCopyToFileDialog({
   open,
   onClose,
@@ -55,6 +138,14 @@ export function VaultMoveCopyToFileDialog({
 
   const transfer = useMutation(api.documentVaultCrossFile.transferToSiblingFile);
 
+  const sameProjectFiles = useMemo(
+    () => (siblingQuery?.siblings ?? []).filter((f) => f.sameProject),
+    [siblingQuery],
+  );
+  const otherFiles = useMemo(
+    () => (siblingQuery?.siblings ?? []).filter((f) => !f.sameProject),
+    [siblingQuery],
+  );
   const siblings = siblingQuery?.siblings ?? [];
 
   const entityResetKey =
@@ -169,38 +260,28 @@ export function VaultMoveCopyToFileDialog({
             <legend className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Destination file
             </legend>
-            <ul
-              className="mt-2 max-h-[min(40dvh,280px)] space-y-1 overflow-y-auto overscroll-contain"
+            <div
+              className="mt-2 max-h-[min(40dvh,280px)] space-y-3 overflow-y-auto overscroll-contain"
               role="listbox"
               aria-label="Destination loan files"
             >
-              {siblings.map((file) => {
-                const selected = targetId === file._id;
-                return (
-                  <li key={file._id}>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      disabled={busy}
-                      className={cn(
-                        "flex w-full min-h-10 items-center gap-2 rounded-dlc-sm px-3 py-2 text-left text-sm",
-                        "hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none",
-                        selected && "bg-primary/10 ring-1 ring-primary/30",
-                      )}
-                      onClick={() => setTargetId(file._id)}
-                    >
-                      <span className="min-w-0 flex-1 truncate font-medium">
-                        {file.fileName}
-                      </span>
-                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        {file.sameProject ? "Project" : file.status}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+              <DestinationFileGroup
+                label="Same project"
+                files={sameProjectFiles}
+                targetId={targetId}
+                busy={busy}
+                onSelect={setTargetId}
+              />
+              <DestinationFileGroup
+                label={
+                  sameProjectFiles.length > 0 ? "Other files" : "All files"
+                }
+                files={otherFiles}
+                targetId={targetId}
+                busy={busy}
+                onSelect={setTargetId}
+              />
+            </div>
           </fieldset>
         </>
       )}

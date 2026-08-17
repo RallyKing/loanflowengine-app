@@ -3,8 +3,8 @@
 /**
  * Personal Financial Statement block — layout & formulas mirror
  * `5 - Personal Financial Statement.xlsx` (see `lib/pfs/personalFinancialStatementModel.ts`).
- * Persists under deal `pfs` via the deal workspace editor; dual-writes legacy
- * assets/liabilities for contact sticky sync.
+ * Multiple first-class instances per file (`pfsInstances`); legacy `pfs` mirrors
+ * the first. Dual-writes legacy assets/liabilities for contact sticky sync.
  */
 import {
   useCallback,
@@ -28,6 +28,7 @@ import {
 } from "@/lib/blockPdfExport";
 import { useDealWorkspaceEditor } from "@/lib/file/useDealWorkspaceEditor";
 import { useContactFirstBorrowerUpdate } from "@/lib/contacts/borrowerTabWriteAdapter";
+import { useClientPortalBlockSessionOptional } from "@/lib/clientPortalDraftStore";
 import type { VaultUploadMutations } from "@/lib/library/uploadFileToVault";
 import { MODULAR_BLOCK_SECTION_IDS } from "@/lib/pipeline/fileWorkspaceTabRouting";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
@@ -37,7 +38,6 @@ import {
   computeStockBondRowTotal,
   createEmptyPersonalFinancialStatement,
   formatPfsMoney,
-  normalizePersonalFinancialStatement,
   pfsToLegacyAssetLiabilityRows,
   seedPfsFromLegacyAssetLiabilityRows,
   type PersonalFinancialStatement,
@@ -45,6 +45,19 @@ import {
   type PfsRealEstateParcel,
   type PfsStockBondRow,
 } from "@/lib/pfs/personalFinancialStatementModel";
+import { pfsAssociatedFormTitle } from "@/lib/pfs/pfsFormAssociation";
+import {
+  createEmptyPfsInstance,
+  defaultPfsInstanceName,
+  findPfsInstance,
+  normalizePfsInstances,
+  pfsDealPatchFromInstances,
+  pfsInstanceDisplayName,
+  removePfsInstance,
+  replacePfsInstanceData,
+  type PfsInstance,
+} from "@/lib/pfs/pfsInstances";
+import { PfsInstanceChrome } from "./PfsInstanceChrome";
 import {
   PFS_COMPUTED_VALUE_CLASS,
   PFS_FIELD_INPUT_CLASS,
@@ -236,15 +249,28 @@ export function PfsBlock({
     preferencesAccountId,
   } = useDealWorkspaceEditor();
   const { update: dualWrite, assetsSaving } = useContactFirstBorrowerUpdate();
+  const portalSession = useClientPortalBlockSessionOptional();
+  const portalMode = Boolean(portalSession);
   const seededRef = useRef(false);
   const hydratedFileRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
+  const instancesRef = useRef<PfsInstance[]>([]);
+  const activeIdRef = useRef<string | null>(null);
+  const associatedFileRef = useRef<string | null>(null);
+  const renameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ensureAssociations = useMutation(
+    api.documentVaultFileTasks.ensurePfsInstanceAssociations,
+  );
 
   const memberUserKey = (
     memberUserKeyProp ?? preferencesAccountId ?? ""
   ).trim();
   const vaultEnabled = Boolean(memberUserKey) && !readOnly;
+  const organizationId = dealBundle?.pipeline?.organizationId;
+  const [instances, setInstances] = useState<PfsInstance[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const generateUploadUrl = useMutation(api.libraryDocuments.generateUploadUrl);
   const createDocument = useMutation(api.libraryDocuments.createDocument);
@@ -284,15 +310,20 @@ export function PfsBlock({
     dealBundle?.pipeline?.fileName?.trim() ||
     local.header.names?.trim() ||
     "file";
+  const activeInstance = findPfsInstance(instances, activeId) ?? instances[0];
+  const pdfTitle = activeInstance
+    ? pfsAssociatedFormTitle(activeInstance)
+    : "Personal Financial Statement";
 
   const buildPdfSpec = useCallback(() => {
     return buildPfsBlockPdfSpec(local, {
+      title: pdfTitle,
       fileName: buildBlockPdfVaultFileName(
-        "Personal-Financial-Statement",
+        pdfTitle.replace(/\s+/g, "-"),
         pipelineFileLabel,
       ),
     });
-  }, [local, pipelineFileLabel]);
+  }, [local, pdfTitle, pipelineFileLabel]);
 
   const savePdfToVault = useCallback(async () => {
     if (!memberUserKey) {
@@ -314,7 +345,7 @@ export function PfsBlock({
       memberUserKey,
       mutations: vaultMutations,
       folderId,
-      title: "Personal Financial Statement",
+      title: pdfTitle,
     });
     showOperationalToast({
       title: "Saved to Document Vault",
@@ -329,6 +360,65 @@ export function PfsBlock({
     createFolder,
     vaultMutations,
     buildPdfSpec,
+    pdfTitle,
+  ]);
+
+  useEffect(() => {
+    instancesRef.current = instances;
+  }, [instances]);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  const persistInstances = useCallback(
+    (next: PfsInstance[], options?: { dualWritePrimary?: boolean }) => {
+      const patch = pfsDealPatchFromInstances(next);
+      setInstances(patch.pfsInstances);
+      instancesRef.current = patch.pfsInstances;
+      if (readOnly) return;
+      (update as (key: string, value: unknown) => void)(
+        "pfsInstances",
+        patch.pfsInstances,
+      );
+      (update as (key: string, value: unknown) => void)("pfs", patch.pfs);
+      if (options?.dualWritePrimary !== false && patch.pfsInstances[0]) {
+        const legacy = pfsToLegacyAssetLiabilityRows(patch.pfsInstances[0].data);
+        dualWrite("assets", legacy.assets);
+        dualWrite("liabilities", legacy.liabilities);
+      }
+    },
+    [dualWrite, readOnly, update],
+  );
+
+  useEffect(() => {
+    if (!memberUserKey || readOnly || portalMode) return;
+    if (!draft || instances.length === 0) return;
+    const fileKey = String(fileId);
+    if (associatedFileRef.current === fileKey) return;
+    associatedFileRef.current = fileKey;
+    void ensureAssociations({
+      pipelineFileId: fileId,
+      memberUserKey,
+    })
+      .then((result) => {
+        if (result.pfsInstances?.length) {
+          persistInstances(result.pfsInstances as PfsInstance[], {
+            dualWritePrimary: false,
+          });
+        }
+      })
+      .catch(() => {
+        associatedFileRef.current = null;
+      });
+  }, [
+    draft,
+    ensureAssociations,
+    fileId,
+    instances.length,
+    memberUserKey,
+    persistInstances,
+    portalMode,
+    readOnly,
   ]);
 
   useEffect(() => {
@@ -338,29 +428,47 @@ export function PfsBlock({
       hydratedFileRef.current = fileKey;
       seededRef.current = false;
       dirtyRef.current = false;
+      setActiveId(null);
+      activeIdRef.current = null;
     } else if (dirtyRef.current) {
       return;
     }
 
-    const fromDeal = normalizePersonalFinancialStatement(
-      (draft as { pfs?: unknown }).pfs,
-    );
+    const nextInstances = normalizePfsInstances(draft);
+    const currentActive = activeIdRef.current;
+    const nextActive =
+      (currentActive &&
+        nextInstances.some((inst) => inst.id === currentActive) &&
+        currentActive) ||
+      nextInstances[0]?.id ||
+      null;
+    const active = findPfsInstance(nextInstances, nextActive) ?? nextInstances[0];
     const seeded = seedPfsFromLegacyAssetLiabilityRows(
-      fromDeal,
-      draft.assets ?? [],
-      draft.liabilities ?? [],
+      active?.data ?? createEmptyPersonalFinancialStatement(),
+      active && nextInstances[0]?.id === active.id ? (draft.assets ?? []) : [],
+      active && nextInstances[0]?.id === active.id
+        ? (draft.liabilities ?? [])
+        : [],
     );
+    setInstances(nextInstances);
+    instancesRef.current = nextInstances;
+    setActiveId(nextActive);
+    activeIdRef.current = nextActive;
     setLocal(seeded);
     if (
       !seededRef.current &&
       !(draft as { pfs?: unknown }).pfs &&
-      (seeded.assets.otherAssets || seeded.liabilities.otherLiabilities)
+      !(draft as { pfsInstances?: unknown }).pfsInstances &&
+      (seeded.assets.otherAssets || seeded.liabilities.otherLiabilities) &&
+      active
     ) {
       seededRef.current = true;
       dirtyRef.current = true;
-      (update as (key: string, value: unknown) => void)("pfs", seeded);
+      persistInstances(
+        replacePfsInstanceData(nextInstances, active.id, seeded),
+      );
     }
-  }, [draft, update]);
+  }, [draft, persistInstances]);
 
   const computed = useMemo(
     () => computePersonalFinancialStatement(local),
@@ -381,18 +489,34 @@ export function PfsBlock({
           totalLiabilities: String(Math.round(totals.totalLiabilities)),
           netWorth: String(Math.round(totals.netWorth)),
         };
-        (update as (key: string, value: unknown) => void)("pfs", payload);
-        const legacy = pfsToLegacyAssetLiabilityRows(next);
-        dualWrite("assets", legacy.assets);
-        dualWrite("liabilities", legacy.liabilities);
+        const currentInstances = instancesRef.current;
+        const currentActive =
+          activeIdRef.current ?? currentInstances[0]?.id;
+        if (!currentActive) {
+          persistInstances([
+            {
+              ...createEmptyPfsInstance(),
+              data: payload,
+            },
+          ]);
+          return;
+        }
+        persistInstances(
+          replacePfsInstanceData(currentInstances, currentActive, payload),
+          {
+            dualWritePrimary:
+              currentInstances[0]?.id === currentActive,
+          },
+        );
       }, 400);
     },
-    [dualWrite, readOnly, update],
+    [persistInstances, readOnly],
   );
 
   useEffect(
     () => () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (renameTimer.current) clearTimeout(renameTimer.current);
     },
     [],
   );
@@ -405,18 +529,31 @@ export function PfsBlock({
   );
 
   const meta = useMemo(() => {
+    const filledCount = instances.filter((inst) => {
+      const c = computePersonalFinancialStatement(inst.data);
+      return (
+        c.totalAssets > 0 ||
+        c.totalLiabilities > 0 ||
+        Boolean(inst.data.header.names?.trim()) ||
+        Boolean(inst.name?.trim() && inst.name !== "PFS 1")
+      );
+    }).length;
     const filled =
       computed.totalAssets > 0 ||
       computed.totalLiabilities > 0 ||
-      Boolean(local.header.names?.trim());
+      Boolean(local.header.names?.trim()) ||
+      filledCount > 0;
+    const active = findPfsInstance(instances, activeId);
     return {
       status: filled ? "Configured" : "Draft",
       summary: filled
-        ? `Net worth ${formatPfsMoney(computed.netWorth)} · Assets ${formatPfsMoney(computed.totalAssets)}`
+        ? instances.length > 1
+          ? `${instances.length} PFSs · ${pfsInstanceDisplayName(active ?? instances[0]!)} · Net worth ${formatPfsMoney(computed.netWorth)}`
+          : `Net worth ${formatPfsMoney(computed.netWorth)} · Assets ${formatPfsMoney(computed.totalAssets)}`
         : "SBA-style PFS — assets, liabilities, schedules & net worth",
-      indicatorCount: filled ? 1 : undefined,
+      indicatorCount: filledCount > 0 ? filledCount : undefined,
     };
-  }, [computed, local.header.names]);
+  }, [activeId, computed, instances, local.header.names]);
 
   if (!draft) {
     return (
@@ -447,10 +584,11 @@ export function PfsBlock({
       lazyMount
       animated
       contentClassName="space-y-5"
+      clientAssignBlockId={false}
       headerRight={
         <BlockPdfExportButton
           testId="pfs-block-pdf-export"
-          label="Fillable Personal Financial Statement PDF"
+          label={`Fillable ${pdfTitle} PDF`}
           buildSpec={buildPdfSpec}
           onSaveToVault={vaultEnabled ? savePdfToVault : undefined}
         />
@@ -460,8 +598,155 @@ export function PfsBlock({
         Complete a PFS for: (1) each Borrower or (2) each limited partner who
         owns 20% or more interest and each general partner, or (3) each
         stockholder owning 20% or more of voting stock, or (4) any person or
-        entity providing a guaranty on the loan.
+        entity providing a guaranty on the loan. Create one PFS per person and
+        assign contacts; each can have its own Document Vault task and password.
       </p>
+
+      {!portalMode && activeId ? (
+        <PfsInstanceChrome
+          instances={instances}
+          activeId={activeId}
+          selectedIds={selectedIds}
+          fileId={fileId}
+          organizationId={organizationId}
+          memberUserKey={memberUserKey || undefined}
+          readOnly={readOnly}
+          onSelect={(id) => {
+            if (saveTimer.current) {
+              clearTimeout(saveTimer.current);
+              saveTimer.current = null;
+            }
+            dirtyRef.current = false;
+            setActiveId(id);
+            activeIdRef.current = id;
+            const next = findPfsInstance(instancesRef.current, id);
+            setLocal(
+              next?.data ?? createEmptyPersonalFinancialStatement(),
+            );
+          }}
+          onToggleSelected={(id) => {
+            setSelectedIds((prev) =>
+              prev.includes(id)
+                ? prev.filter((x) => x !== id)
+                : [...prev, id],
+            );
+          }}
+          onCreate={() => {
+            if (!memberUserKey) {
+              const nextInst = createEmptyPfsInstance({
+                name: defaultPfsInstanceName(instancesRef.current.length),
+              });
+              persistInstances([...instancesRef.current, nextInst], {
+                dualWritePrimary: false,
+              });
+              setActiveId(nextInst.id);
+              activeIdRef.current = nextInst.id;
+              setLocal(nextInst.data);
+              dirtyRef.current = false;
+              return;
+            }
+            void ensureAssociations({
+              pipelineFileId: fileId,
+              memberUserKey,
+              createInstance: true,
+              instanceName: defaultPfsInstanceName(instancesRef.current.length),
+            })
+              .then((result) => {
+                if (result.pfsInstances?.length) {
+                  persistInstances(result.pfsInstances as PfsInstance[], {
+                    dualWritePrimary: false,
+                  });
+                }
+                const newId = result.createdInstanceId;
+                if (newId) {
+                  setActiveId(newId);
+                  activeIdRef.current = newId;
+                  const created = findPfsInstance(
+                    (result.pfsInstances as PfsInstance[] | undefined) ??
+                      instancesRef.current,
+                    newId,
+                  );
+                  setLocal(
+                    created?.data ?? createEmptyPersonalFinancialStatement(),
+                  );
+                }
+                dirtyRef.current = false;
+                showOperationalToast({
+                  title: "PFS created",
+                  description:
+                    "Linked to its own Forms & Applications title and Document Vault task.",
+                  variant: "success",
+                });
+              })
+              .catch((e) => {
+                showOperationalToast({
+                  title: "Could not create PFS",
+                  description:
+                    e instanceof Error ? e.message : "Try again.",
+                  variant: "destructive",
+                });
+              });
+          }}
+          onRename={(id, name) => {
+            persistInstances(
+              instancesRef.current.map((inst) =>
+                inst.id === id ? { ...inst, name } : inst,
+              ),
+              { dualWritePrimary: false },
+            );
+            if (!memberUserKey) return;
+            if (renameTimer.current) clearTimeout(renameTimer.current);
+            renameTimer.current = setTimeout(() => {
+              void ensureAssociations({
+                pipelineFileId: fileId,
+                memberUserKey,
+                pfsInstanceId: id,
+                instanceName: name,
+              })
+                .then((result) => {
+                  if (result.pfsInstances?.length) {
+                    persistInstances(result.pfsInstances as PfsInstance[], {
+                      dualWritePrimary: false,
+                    });
+                  }
+                })
+                .catch(() => undefined);
+            }, 450);
+          }}
+          onAssignContacts={(id, contactIds) => {
+            persistInstances(
+              instancesRef.current.map((inst) =>
+                inst.id === id
+                  ? { ...inst, assignedContactIds: contactIds }
+                  : inst,
+              ),
+              { dualWritePrimary: false },
+            );
+          }}
+          onVaultTaskReady={(id, vaultFileTaskId) => {
+            persistInstances(
+              instancesRef.current.map((inst) =>
+                inst.id === id ? { ...inst, vaultFileTaskId } : inst,
+              ),
+              { dualWritePrimary: false },
+            );
+          }}
+          onRemove={(id) => {
+            const next = removePfsInstance(instancesRef.current, id);
+            persistInstances(next);
+            const nextActive =
+              activeIdRef.current === id
+                ? next[0]?.id ?? null
+                : activeIdRef.current;
+            setActiveId(nextActive);
+            activeIdRef.current = nextActive;
+            const active = findPfsInstance(next, nextActive);
+            setLocal(active?.data ?? createEmptyPersonalFinancialStatement());
+            setSelectedIds((prev) => prev.filter((x) => x !== id));
+            dirtyRef.current = false;
+          }}
+        />
+      ) : null}
 
       {/* Header */}
       <section className="space-y-2" aria-label="Statement header">

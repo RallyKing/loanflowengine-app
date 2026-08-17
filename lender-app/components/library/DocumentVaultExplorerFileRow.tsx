@@ -41,6 +41,11 @@ import {
 } from "lucide-react";
 import { LIBRARY_DOCUMENT_CATEGORY_LABELS } from "@/lib/library/documentVaultTaxonomy";
 import { VaultRegistryAssignMicroAction } from "@/components/library/VaultRegistryAssignMicroAction";
+import { DocumentVaultExplorerStarButton } from "@/components/library/DocumentVaultExplorerStarButton";
+import {
+  isCreatedVaultHtmlDocument,
+  isVaultImageDocument,
+} from "@/lib/library/vaultOutboundFileName";
 
 function formatDate(ts: number | undefined) {
   if (ts == null) return "—";
@@ -68,6 +73,8 @@ export type DocumentVaultExplorerFileRowProps = {
   canMutate: boolean;
   isBulkChecked: boolean;
   showBulkCheckbox: boolean;
+  isStarred?: boolean;
+  onToggleStar?: () => void;
   dragEnabled: boolean;
   busyDoc: Id<"libraryDocuments"> | null;
   isEditing: boolean;
@@ -92,6 +99,7 @@ export type DocumentVaultExplorerFileRowProps = {
   onAssignToRegistry: () => void;
   onDownload: () => void;
   onDownloadAsPdf: () => void;
+  onDownloadOriginal?: () => void;
   downloading?: boolean;
   exportingPdf?: boolean;
   onRemoveLink: () => void;
@@ -110,6 +118,8 @@ export function DocumentVaultExplorerFileRow({
   canMutate,
   isBulkChecked,
   showBulkCheckbox,
+  isStarred = false,
+  onToggleStar,
   dragEnabled,
   busyDoc,
   isEditing,
@@ -131,6 +141,7 @@ export function DocumentVaultExplorerFileRow({
   onAssignToRegistry,
   onDownload,
   onDownloadAsPdf,
+  onDownloadOriginal,
   downloading = false,
   exportingPdf = false,
   onRemoveLink,
@@ -142,6 +153,10 @@ export function DocumentVaultExplorerFileRow({
   const [rejectOpen, setRejectOpen] = useState(false);
   const isCompact = density === "compact";
   const isRejected = row.reviewStatus === "rejected";
+  const isCreatedHtml = isCreatedVaultHtmlDocument(row);
+  const isVaultImage = isVaultImageDocument(row);
+  const downloadLabel = isCreatedHtml ? "Download PDF" : "Download";
+  const downloadBusy = downloading || (isCreatedHtml && exportingPdf);
   const showDragHandle =
     dragEnabled && row.linkScope === "pipeline" && canMutate && !isRejected;
 
@@ -208,6 +223,16 @@ export function DocumentVaultExplorerFileRow({
               <span className="inline-block h-3.5 w-3.5" aria-hidden />
             )}
           </div>
+
+          {onToggleStar ? (
+            <DocumentVaultExplorerStarButton
+              starred={isStarred}
+              label={row.title}
+              onToggle={onToggleStar}
+              compact
+              testId={`document-vault-star-${row._id}`}
+            />
+          ) : null}
 
           <button
             type="button"
@@ -293,17 +318,37 @@ export function DocumentVaultExplorerFileRow({
                 type="button"
                 className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
                 onClick={onDownload}
-                disabled={downloading}
-                title="Download"
-                aria-label={`Download ${row.title}`}
+                disabled={downloadBusy}
+                title={downloadLabel}
+                aria-label={`${downloadLabel} ${row.title}`}
                 data-testid={`document-vault-download-${row._id}`}
               >
-                {downloading ? (
+                {downloadBusy ? (
                   <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
                 ) : (
                   <Download className="h-2.5 w-2.5" aria-hidden />
                 )}
-                Download
+                {isCreatedHtml ? "PDF" : "Download"}
+              </button>
+            ) : null}
+            {isVaultImage &&
+            row.latestVersionNumber > 0 &&
+            row.latestVersionId ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                onClick={onDownloadAsPdf}
+                disabled={exportingPdf}
+                title="Download PDF"
+                aria-label={`Download PDF ${row.title}`}
+                data-testid={`document-vault-download-pdf-${row._id}`}
+              >
+                {exportingPdf ? (
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
+                ) : (
+                  <FileDown className="h-2.5 w-2.5" aria-hidden />
+                )}
+                PDF
               </button>
             ) : null}
             {canMutate &&
@@ -431,6 +476,15 @@ export function DocumentVaultExplorerFileRow({
             <span className="inline-block h-3.5 w-3.5" aria-hidden />
           )}
         </div>
+
+        {onToggleStar ? (
+          <DocumentVaultExplorerStarButton
+            starred={isStarred}
+            label={row.title}
+            onToggle={onToggleStar}
+            testId={`document-vault-star-${row._id}`}
+          />
+        ) : null}
 
         <FileText
           className="h-3.5 w-3.5 shrink-0 text-primary/70"
@@ -579,18 +633,37 @@ export function DocumentVaultExplorerFileRow({
                 variant="ghost"
                 size="sm"
                 className="h-7 w-7 p-0"
-                aria-label={`Download ${row.title}`}
-                title="Download"
+                aria-label={`${downloadLabel} ${row.title}`}
+                title={downloadLabel}
                 data-testid={`document-vault-download-${row._id}`}
-                disabled={downloading}
+                disabled={downloadBusy}
                 onClick={onDownload}
               >
-                {downloading ? (
+                {downloadBusy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : (
                   <Download className="h-3.5 w-3.5" aria-hidden />
                 )}
               </Button>
+              {isVaultImage ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  aria-label={`Download PDF ${row.title}`}
+                  title="Download PDF"
+                  data-testid={`document-vault-download-pdf-${row._id}`}
+                  disabled={exportingPdf}
+                  onClick={onDownloadAsPdf}
+                >
+                  {exportingPdf ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <FileDown className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                </Button>
+              ) : null}
             </>
           ) : null}
           <Button
@@ -654,27 +727,45 @@ export function DocumentVaultExplorerFileRow({
               align="end"
             >
               <DropdownMenuItem
-                disabled={downloading || !row.latestVersionId}
+                disabled={downloadBusy || !row.latestVersionId}
                 onClick={onDownload}
               >
-                {downloading ? (
+                {downloadBusy ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : isCreatedHtml ? (
+                  <FileDown className="h-4 w-4" aria-hidden />
                 ) : (
                   <Download className="h-4 w-4" aria-hidden />
                 )}
-                Download
+                {downloadLabel}
               </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={exportingPdf || !row.latestVersionId}
-                onClick={onDownloadAsPdf}
-              >
-                {exportingPdf ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                ) : (
-                  <FileDown className="h-4 w-4" aria-hidden />
-                )}
-                Download as PDF
-              </DropdownMenuItem>
+              {isCreatedHtml && onDownloadOriginal ? (
+                <DropdownMenuItem
+                  disabled={downloading || !row.latestVersionId}
+                  onClick={onDownloadOriginal}
+                  data-testid={`document-vault-download-original-${row._id}`}
+                >
+                  {downloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Download className="h-4 w-4" aria-hidden />
+                  )}
+                  Download original (HTML)
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  disabled={exportingPdf || !row.latestVersionId}
+                  onClick={onDownloadAsPdf}
+                  data-testid={`document-vault-download-pdf-menu-${row._id}`}
+                >
+                  {exportingPdf ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <FileDown className="h-4 w-4" aria-hidden />
+                  )}
+                  {isVaultImage ? "Download PDF" : "Download as PDF"}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={onMoveDoc}>
                 <FolderInput className="h-4 w-4" aria-hidden />
                 Move to folder

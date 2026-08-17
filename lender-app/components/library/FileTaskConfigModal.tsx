@@ -139,6 +139,8 @@ export function FileTaskConfigModal({
     setIsPortalVisible(initial.isPortalVisible);
     setDueDateInput(initial.dueDateInput);
     setPriority(initial.priority ?? "");
+    // reactivity-allow: hydrate form when the modal opens or the task id changes; do not clobber in-progress edits
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialTask fields copied above
   }, [open, initialTask?._id]);
 
   const handleTaskTypeChange = (next: FileTaskType) => {

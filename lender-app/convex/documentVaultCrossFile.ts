@@ -6,7 +6,12 @@
  * Reuses link-based document identity (no blob duplication) and
  * recreates / re-homes folder + file-task rows that are pipeline-scoped.
  */
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -16,6 +21,10 @@ import {
 import { filterPipelineRowsForMember } from "./resourceAccess";
 import { loadPipelineFilesForProject } from "./pipelineHierarchyCompat";
 import { requireLinkForProof } from "./libraryDocuments";
+import {
+  isPrimaryBorrowerFileLink,
+  personNameFromBorrowerRow,
+} from "../lib/contacts/borrowerIdentityFromDeal";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -43,7 +52,93 @@ const siblingFileV = v.object({
   updatedAt: v.number(),
   /** Same project as the source file when both have a projectId. */
   sameProject: v.boolean(),
+  /**
+   * Display names for primary borrower(s) — contactFileLinks first,
+   * then dealData.borrowers, then hierarchy client display name.
+   */
+  primaryBorrowerLabel: v.string(),
 });
+
+/**
+ * Resolve a short primary-borrower label so destination rows are
+ * distinguishable when file titles are similar.
+ */
+async function primaryBorrowerLabelForFile(
+  ctx: QueryCtx,
+  file: Doc<"pipeline">,
+): Promise<string> {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw: string) => {
+    const name = raw.trim().replace(/\s+/g, " ");
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    names.push(name);
+  };
+
+  const links = await ctx.db
+    .query("contactFileLinks")
+    .withIndex("by_file", (q) => q.eq("fileId", file._id))
+    .collect();
+  const primaryLinks = links
+    .filter(isPrimaryBorrowerFileLink)
+    .sort((a, b) => a.createdAt - b.createdAt);
+
+  for (const link of primaryLinks) {
+    const contact = await ctx.db.get(link.contactId);
+    if (contact?.name) push(contact.name);
+  }
+
+  if (names.length === 0) {
+    const deal =
+      file.dealData && typeof file.dealData === "object"
+        ? (file.dealData as {
+            borrowers?: unknown[];
+            cover?: { borrowers?: unknown };
+            clientName?: unknown;
+            business?: { legalName?: unknown; dba?: unknown };
+          })
+        : null;
+    const borrowers = Array.isArray(deal?.borrowers) ? deal.borrowers : [];
+    for (const row of borrowers) {
+      const fromRow = personNameFromBorrowerRow(row);
+      if (fromRow) {
+        push(fromRow);
+        break;
+      }
+    }
+    if (names.length === 0) {
+      const business = deal?.business;
+      if (business && typeof business === "object") {
+        const legal =
+          typeof business.legalName === "string" ? business.legalName : "";
+        const dba = typeof business.dba === "string" ? business.dba : "";
+        push(legal || dba);
+      }
+    }
+    if (names.length === 0 && typeof deal?.clientName === "string") {
+      push(deal.clientName);
+    }
+    if (names.length === 0) {
+      const cover =
+        deal?.cover && typeof deal.cover === "object"
+          ? deal.cover.borrowers
+          : null;
+      if (typeof cover === "string") {
+        push(cover.split(/[,;]/)[0] ?? "");
+      }
+    }
+  }
+
+  if (names.length === 0 && file.clientId) {
+    const client = await ctx.db.get(file.clientId);
+    if (client?.displayName) push(client.displayName);
+  }
+
+  return names.join(", ");
+}
 
 const ORG_TRANSFER_TARGET_LIMIT = 80;
 
@@ -645,11 +740,8 @@ export const listSiblingFiles = query({
 
     const projectId = pipeline.projectId ?? null;
     const seen = new Set<string>([String(pipelineFileId)]);
-    const targets: Array<{
-      _id: Id<"pipeline">;
-      fileName: string;
-      status: string;
-      updatedAt: number;
+    const candidateRows: Array<{
+      row: Doc<"pipeline">;
       sameProject: boolean;
     }> = [];
 
@@ -665,13 +757,7 @@ export const listSiblingFiles = query({
         if (f._id === pipelineFileId) continue;
         if (f.archivedAt != null) continue;
         seen.add(String(f._id));
-        targets.push({
-          _id: f._id,
-          fileName: f.fileName?.trim() || "Untitled file",
-          status: f.status,
-          updatedAt: f.updatedAt,
-          sameProject: true,
-        });
+        candidateRows.push({ row: f, sameProject: true });
       }
     }
 
@@ -691,30 +777,41 @@ export const listSiblingFiles = query({
     );
 
     for (const f of visibleOrg) {
-      if (targets.length >= ORG_TRANSFER_TARGET_LIMIT) break;
+      if (candidateRows.length >= ORG_TRANSFER_TARGET_LIMIT) break;
       if (f._id === pipelineFileId) continue;
       seen.add(String(f._id));
-      targets.push({
-        _id: f._id,
-        fileName: f.fileName?.trim() || "Untitled file",
-        status: f.status,
-        updatedAt: f.updatedAt,
+      candidateRows.push({
+        row: f,
         sameProject: Boolean(
           projectId && f.projectId && f.projectId === projectId,
         ),
       });
     }
 
-    targets.sort((a, b) => {
+    candidateRows.sort((a, b) => {
       if (a.sameProject !== b.sameProject) {
         return a.sameProject ? -1 : 1;
       }
-      return a.fileName.localeCompare(b.fileName);
+      const aName = a.row.fileName?.trim() || "Untitled file";
+      const bName = b.row.fileName?.trim() || "Untitled file";
+      return aName.localeCompare(bName);
     });
+
+    const limited = candidateRows.slice(0, ORG_TRANSFER_TARGET_LIMIT);
+    const siblings = await Promise.all(
+      limited.map(async ({ row, sameProject }) => ({
+        _id: row._id,
+        fileName: row.fileName?.trim() || "Untitled file",
+        status: row.status,
+        updatedAt: row.updatedAt,
+        sameProject,
+        primaryBorrowerLabel: await primaryBorrowerLabelForFile(ctx, row),
+      })),
+    );
 
     return {
       projectId,
-      siblings: targets.slice(0, ORG_TRANSFER_TARGET_LIMIT),
+      siblings,
     };
   },
 });

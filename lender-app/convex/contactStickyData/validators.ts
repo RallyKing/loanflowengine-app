@@ -29,6 +29,8 @@ export const contactDataEntityTypeV = v.union(
   v.literal("business"),
   v.literal("business_debt"),
   v.literal("business_ownership"),
+  v.literal("track_record"),
+  v.literal("simple_pl"),
   v.literal("document"),
 );
 
@@ -49,6 +51,8 @@ export const contactReoPropertyFieldsV = {
   state: v.optional(v.string()),
   purchasedDate: v.optional(v.string()),
   marketValue: v.optional(v.string()),
+  /** Zillow / listing URL (additive; dual-write with deal REO). */
+  zillowUrl: v.optional(v.string()),
   mortgageBalance: v.optional(v.string()),
   monthlyPayment: v.optional(v.string()),
   rate: v.optional(v.string()),
@@ -62,6 +66,9 @@ export const contactReoPropertyFieldsV = {
   apn: v.optional(v.string()),
   invested: v.optional(v.string()),
   latLong: v.optional(v.string()),
+  lotSf: v.optional(v.string()),
+  propSf: v.optional(v.string()),
+  mostRecent: v.optional(v.string()),
 };
 
 export const contactBusinessEntityFieldsV = {
@@ -78,4 +85,10 @@ export const contactBusinessDebtFieldsV = {
   balance: v.optional(v.string()),
   monthlyPayment: v.optional(v.string()),
   position: v.optional(v.string()),
+  debtType: v.optional(v.string()),
+  debtTypeOther: v.optional(v.string()),
+  originalAmount: v.optional(v.string()),
+  originationDate: v.optional(v.string()),
+  ratePct: v.optional(v.string()),
+  maturityDate: v.optional(v.string()),
 };

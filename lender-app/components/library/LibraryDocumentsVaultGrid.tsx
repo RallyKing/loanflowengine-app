@@ -20,6 +20,11 @@ import {
   type LibraryDocumentCategory,
 } from "@/lib/library/documentVaultTaxonomy";
 import { vaultDocumentDragId } from "@/lib/library/documentVaultDnD";
+import {
+  isCreatedVaultHtmlDocument,
+  isVaultImageDocument,
+  vaultDocumentOutboundFileName,
+} from "@/lib/library/vaultOutboundFileName";
 import type { LibraryDocumentListRow } from "@/components/library/LibraryDocumentsList";
 import {
   AlertTriangle,
@@ -43,6 +48,7 @@ import {
   User,
   UserPlus,
   FileDown,
+  Download,
 } from "lucide-react";
 
 export type VaultGridSortColumn =
@@ -68,6 +74,9 @@ function formatDate(ts: number | undefined) {
 function categorySortKey(row: LibraryDocumentListRow): string {
   if (row.documentCategory) {
     return LIBRARY_DOCUMENT_CATEGORY_LABELS[row.documentCategory];
+  }
+  if (row.customDocumentCategoryName) {
+    return row.customDocumentCategoryName;
   }
   if (row.aiSuggestedCategory) {
     return `~${LIBRARY_DOCUMENT_CATEGORY_LABELS[row.aiSuggestedCategory]}`;
@@ -160,11 +169,13 @@ function SortHeader({
 }
 
 function CategoryCell({ row }: { row: LibraryDocumentListRow }) {
-  if (row.documentCategory) {
+  if (row.documentCategory || row.customDocumentCategoryName) {
     return (
       <span className="inline-flex max-w-full items-center rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] font-medium text-foreground">
         <span className="truncate">
-          {LIBRARY_DOCUMENT_CATEGORY_LABELS[row.documentCategory]}
+          {row.documentCategory
+            ? LIBRARY_DOCUMENT_CATEGORY_LABELS[row.documentCategory]
+            : row.customDocumentCategoryName}
           {row.documentCategory === "tax_return" && row.taxYear
             ? ` · ${row.taxYear}`
             : ""}
@@ -368,6 +379,7 @@ export type LibraryDocumentsVaultGridProps = {
   onSaveToContact: (row: LibraryDocumentListRow) => void;
   onAssignToRegistry: (row: LibraryDocumentListRow) => void;
   onDownloadAsPdf: (row: LibraryDocumentListRow) => void;
+  onDownloadOriginal?: (row: LibraryDocumentListRow) => void;
   exportingPdfDocId: Id<"libraryDocuments"> | null;
   onToggleExpanded: (id: Id<"libraryDocuments">) => void;
   onRemoveLink: (
@@ -407,6 +419,7 @@ export function LibraryDocumentsVaultGrid({
   onSaveToContact,
   onAssignToRegistry,
   onDownloadAsPdf,
+  onDownloadOriginal,
   exportingPdfDocId,
   onToggleExpanded,
   onRemoveLink,
@@ -568,11 +581,14 @@ export function LibraryDocumentsVaultGrid({
                       <div className="truncate text-xs font-medium leading-tight">
                         {d.title}
                       </div>
-                      {d.latestFileName && d.latestFileName !== d.title ? (
-                        <div className="truncate text-[10px] text-muted-foreground">
-                          {d.latestFileName}
-                        </div>
-                      ) : null}
+                      {(() => {
+                        const outbound = vaultDocumentOutboundFileName(d);
+                        return outbound && outbound !== d.title ? (
+                          <div className="truncate text-[10px] text-muted-foreground">
+                            {outbound}
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                   </div>
                 </td>
@@ -701,8 +717,29 @@ export function LibraryDocumentsVaultGrid({
                           ) : (
                             <FileDown className="h-4 w-4" aria-hidden />
                           )}
-                          Download as PDF
+                          {isCreatedVaultHtmlDocument(d) ||
+                          isVaultImageDocument(d)
+                            ? "Download PDF"
+                            : "Download as PDF"}
                         </DropdownMenuItem>
+                        {isCreatedVaultHtmlDocument(d) && onDownloadOriginal ? (
+                          <DropdownMenuItem
+                            disabled={!d.latestVersionId}
+                            onClick={() => onDownloadOriginal(d)}
+                          >
+                            <Download className="h-4 w-4" aria-hidden />
+                            Download original (HTML)
+                          </DropdownMenuItem>
+                        ) : null}
+                        {isVaultImageDocument(d) && onDownloadOriginal ? (
+                          <DropdownMenuItem
+                            disabled={!d.latestVersionId}
+                            onClick={() => onDownloadOriginal(d)}
+                          >
+                            <Download className="h-4 w-4" aria-hidden />
+                            Download original
+                          </DropdownMenuItem>
+                        ) : null}
                         <DropdownMenuItem onClick={() => onMoveDoc(d)}>
                           <FolderInput className="h-4 w-4" aria-hidden />
                           Move to folder

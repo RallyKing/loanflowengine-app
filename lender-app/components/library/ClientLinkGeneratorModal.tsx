@@ -9,7 +9,10 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { OverlayShell } from "@/components/ui/OverlayShell";
 import { cn } from "@/lib/cn";
-import { buildClientLinkEmailCopy } from "@/lib/clientLinkEmailCopy";
+import {
+  buildClientLinkEmailCopy,
+  clientLinkEmailItemFromFileTask,
+} from "@/lib/clientLinkEmailCopy";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 
 export type ClientLinkGeneratorModalProps = {
@@ -109,15 +112,17 @@ export function ClientLinkGeneratorModal({
             : undefined,
         memberUserKey,
       });
-      const titles =
-        result.taskTitles?.length > 0
-          ? result.taskTitles
-          : mode === "selective"
-            ? activeTasks
-                .filter((t) => selected.has(String(t._id)))
-                .map((t) => t.title)
-            : activeTasks.map((t) => t.title);
-      const copyText = buildClientLinkEmailCopy(titles, result.portalUrl);
+      const selectedTasks =
+        mode === "selective"
+          ? activeTasks.filter((t) => selected.has(String(t._id)))
+          : activeTasks;
+      const items = selectedTasks.map((task) =>
+        clientLinkEmailItemFromFileTask(task),
+      );
+      const titles = items
+        .map((item) => item.title.trim())
+        .filter((title) => title.length > 0);
+      const copyText = buildClientLinkEmailCopy(items, result.portalUrl);
       setPortalUrl(result.portalUrl);
       setIncludedTitles(titles);
       setEmailCopy(copyText);

@@ -90,8 +90,10 @@ export default function PortalFileDetailPage() {
     });
   }, [token, bundle, fileId, logFileView]);
 
-  const portalRequests =
-    bundle?.status === "ok" ? bundle.requests : [];
+  const portalRequests = useMemo(
+    () => (bundle?.status === "ok" ? bundle.requests : []),
+    [bundle],
+  );
 
   const openRequests = useMemo(
     () => portalRequests.filter((r) => r.status === "open"),

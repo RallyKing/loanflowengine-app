@@ -132,9 +132,19 @@ import { SettingsLink } from "@/components/SettingsLink";
 import {
   operationalOverlayDropdownClass,
   operationalZIndexClass,
-  OP_BORDER_SOFT,
   OP_DISCLOSURE_TRANSITION,
 } from "@/lib/ui/operationalTokens";
+import {
+  hubFilterChromeClass,
+  hubFilterToolbarClass,
+  hubFiltersPanelInnerClass,
+  hubHeaderGhostBtnClass,
+  hubHeaderMoreBtnClass,
+  hubHeaderNewBtnClass,
+  hubPageSubtitleClass,
+  hubPageTitleClass,
+  hubQuietPillClass,
+} from "@/lib/ui/pipelineHubSurfaces";
 import { useUserSettings } from "@/lib/userSettingsContext";
 import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { parseUiDisplayColors } from "@/lib/uiDisplaySettings";
@@ -173,7 +183,8 @@ import {
   fmtPipelineBoardLoanCompact,
   fmtPipelineRelativeUpdated,
 } from "@/lib/pipeline/pipelineTableFormatting";
-import { snoozedUntilToMs } from "@/lib/pipelineSnooze";
+import { isCurrentlySnoozed, snoozedUntilToMs } from "@/lib/pipelineSnooze";
+import { useTriageClockTime } from "@/components/providers/TriageClockProvider";
 import { useNarrowViewport } from "@/lib/useNarrowViewport";
 import { useLiveConnection } from "@/lib/useLiveConnection";
 import {
@@ -457,21 +468,20 @@ export function PipelinePageClient() {
       ),
     [settings.pipelineStageStyles, globalUiIndicator],
   );
+  /**
+   * `includeSnoozed` is intentionally absent: `listTablePreview` no longer evaluates
+   * snooze server-side (that clock read made the hub's heaviest subscription
+   * uncacheable), so toggling "Show snoozed" is now a local filter instead of a new
+   * subscription. See the `data` memo below.
+   */
   const listPreviewArgs = useMemo(() => {
     if (!orgQueryReady || !activeOrganizationId || !memberUserKey) return "skip" as const;
     return {
       includeArchived: showArchived,
-      includeSnoozed: showSnoozed,
       organizationId: activeOrganizationId,
       memberUserKey,
     };
-  }, [
-    orgQueryReady,
-    showArchived,
-    showSnoozed,
-    activeOrganizationId,
-    memberUserKey,
-  ]);
+  }, [orgQueryReady, showArchived, activeOrganizationId, memberUserKey]);
   const rows = useQuery(api.pipeline.listTablePreview, listPreviewArgs);
   const referralPartnerListArgs = useMemo(() => {
     if (!orgQueryReady || !activeOrganizationId || !memberUserKey) return "skip" as const;
@@ -492,10 +502,9 @@ export function PipelinePageClient() {
     () =>
       pipelineListSnapshotKey({
         includeArchived: showArchived,
-        includeSnoozed: showSnoozed,
         organizationId: activeOrganizationId ?? undefined,
       }),
-    [showArchived, showSnoozed, activeOrganizationId],
+    [showArchived, activeOrganizationId],
   );
   const [cachedRows, setCachedRows] = useState<
     PipelineTablePreviewRow[] | undefined
@@ -549,8 +558,25 @@ export function PipelinePageClient() {
   }, [canUseHub, rows]);
 
   const baseRows = rows ?? cachedRows;
-  const data: PipelineTablePreviewRow[] =
+  const resolvedRows: PipelineTablePreviewRow[] =
     optimisticRows ?? baseRows ?? EMPTY_PIPELINE;
+
+  /**
+   * Snooze is evaluated here rather than in `listTablePreview`. `triageClock` is the
+   * canonical minute bucket, so a file that un-snoozes while the hub is open appears
+   * on the next tick without any extra backend call.
+   */
+  const triageClock = useTriageClockTime();
+  const data: PipelineTablePreviewRow[] = useMemo(() => {
+    if (!resolvedRows.length) return EMPTY_PIPELINE;
+    const withSnoozeState = resolvedRows.map((r) => {
+      const snoozed = isCurrentlySnoozed(r.snoozedUntil, triageClock);
+      return r.isSnoozed === snoozed ? r : { ...r, isSnoozed: snoozed };
+    });
+    return showSnoozed
+      ? withSnoozeState
+      : withSnoozeState.filter((r) => !r.isSnoozed);
+  }, [resolvedRows, showSnoozed, triageClock]);
   dataRef.current = data;
 
   const runPatchPipeline = useCallback(
@@ -635,6 +661,10 @@ export function PipelinePageClient() {
   );
   const archivePipeline = useMutation(api.pipeline.archive);
   const unarchivePipeline = useMutation(api.pipeline.unarchive);
+  const runDueAutoArchives = useMutation(
+    api.pipelineAutoArchiveSweep.runDueAutoArchives,
+  );
+  const [autoArchiveSweepBusy, setAutoArchiveSweepBusy] = useState(false);
   const removePipeline = useMutation(api.pipeline.remove);
   const leaveShare = useMutation(api.pipelineFileShares.leaveShare);
 
@@ -1251,6 +1281,44 @@ export function PipelinePageClient() {
     };
   }, [bulkIds, rowById]);
 
+  const runAutoArchiveSweep = useCallback(async () => {
+    if (!activeOrganizationId || !memberUserKey || autoArchiveSweepBusy) return;
+    setAutoArchiveSweepBusy(true);
+    try {
+      const result = await runDueAutoArchives({
+        organizationId: activeOrganizationId,
+        memberUserKey,
+        now: Date.now(),
+      });
+      const archived = result.archived;
+      showOperationalToast({
+        title:
+          archived > 0
+            ? `Auto-archived ${archived} file${archived === 1 ? "" : "s"}`
+            : "No files were due to auto-archive",
+        description: result.hasMore
+          ? "More due files remain — click Run auto-archive again."
+          : archived > 0
+            ? "Inactive files with a due timer were archived."
+            : "Due files wait until you run this. Per-file archive still works anytime.",
+        variant: archived > 0 ? "success" : "default",
+      });
+    } catch (err) {
+      showOperationalToast({
+        title: "Auto-archive did not run",
+        description: convexClientErrorMessage(err),
+        variant: "destructive",
+      });
+    } finally {
+      setAutoArchiveSweepBusy(false);
+    }
+  }, [
+    activeOrganizationId,
+    memberUserKey,
+    autoArchiveSweepBusy,
+    runDueAutoArchives,
+  ]);
+
   const runBulkArchive = useCallback(async () => {
     if (bulkIds.size === 0) return;
     setBulkBusy(true);
@@ -1636,10 +1704,10 @@ export function PipelinePageClient() {
     >
       <div className="flex min-h-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold md:text-2xl">
+          <h1 className={hubPageTitleClass}>
             Pipeline
           </h1>
-          <p className="hidden text-sm text-muted-foreground md:block">
+          <p className={hubPageSubtitleClass}>
             Clients, projects, and loan files — expand a client or project to
             open loans. One subscription keeps the hub in sync with your file
             workspace.
@@ -1648,21 +1716,14 @@ export function PipelinePageClient() {
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <Link
             href={pipelineLicensesHref()}
-            className={cn(
-              "hidden h-9 items-center justify-center gap-2 rounded-md border border-border bg-background px-4 text-sm font-medium transition-colors md:inline-flex",
-              "hover:border-brand-accent/60 hover:bg-muted",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-            )}
+            className={hubHeaderGhostBtnClass}
           >
             <Gavel className="h-4 w-4" />
             Licenses
           </Link>
           <details className="relative md:hidden">
             <summary
-              className={cn(
-                "flex h-9 cursor-pointer list-none items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium shadow-sm",
-                "marker:content-none [&::-webkit-details-marker]:hidden"
-              )}
+              className={hubHeaderMoreBtnClass}
             >
               <MoreHorizontal className="h-4 w-4" aria-hidden />
               More
@@ -1687,10 +1748,7 @@ export function PipelinePageClient() {
           </details>
           <details className="relative max-md:flex-1">
             <summary
-              className={cn(
-                "flex h-9 cursor-pointer list-none items-center justify-center gap-1.5 rounded-md border border-primary bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm",
-                "marker:content-none [&::-webkit-details-marker]:hidden",
-              )}
+              className={hubHeaderNewBtnClass}
             >
               <Plus className="h-4 w-4" aria-hidden />
               New…
@@ -1737,10 +1795,10 @@ export function PipelinePageClient() {
       ) : null}
 
       <div className="flex min-w-0 max-w-full flex-col gap-3">
-        <div className="relative z-20 isolate min-w-0 max-w-full rounded-xl border border-border/80 bg-background shadow-sm">
+        <div className={hubFilterChromeClass}>
         <div
           data-pipeline-hub-filter-toolbar
-          className="relative shrink-0 border-b border-border/80 bg-background"
+          className={hubFilterToolbarClass}
         >
           <div className="flex min-h-0 flex-col gap-3 p-3">
             <div
@@ -1798,12 +1856,24 @@ export function PipelinePageClient() {
                   aria-hidden
                 />
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 min-h-10 gap-1.5 px-2.5 text-xs font-medium"
+                disabled={!activeOrganizationId || !memberUserKey || autoArchiveSweepBusy}
+                onClick={() => void runAutoArchiveSweep()}
+                title="Archive files whose inactivity timer is due. This does not run on a schedule."
+              >
+                <Archive className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                {autoArchiveSweepBusy ? "Running auto-archive…" : "Run auto-archive"}
+              </Button>
               {!hubViewsFiltersOpen && hubOrientationPills.length > 0 ? (
                 <div className="hidden min-w-0 flex-1 flex-wrap items-center gap-1 md:flex">
                   {hubOrientationPills.slice(0, 4).map((p) => (
                     <span
                       key={p.id}
-                      className="inline-flex max-w-[10rem] items-center gap-1 truncate rounded-full border border-border/40 bg-muted/20 px-2 py-0.5 text-[11px] text-muted-foreground"
+                      className={hubQuietPillClass}
                     >
                       {p.label}
                     </span>
@@ -1841,8 +1911,8 @@ export function PipelinePageClient() {
             >
               <div
                 className={cn(
-                  "max-h-[min(75vh,44rem)] space-y-4 overflow-y-auto overscroll-contain rounded-lg border bg-dlc-surface-low/40 p-3 shadow-sm touch-scroll-y",
-                  OP_BORDER_SOFT,
+                  "max-h-[min(75vh,44rem)] space-y-4 overflow-y-auto overscroll-contain p-3 touch-scroll-y",
+                  hubFiltersPanelInnerClass,
                 )}
               >
                 {effectiveView === "table" ? (
@@ -1856,7 +1926,7 @@ export function PipelinePageClient() {
                     </h3>
                     <div className="flex min-w-0 flex-wrap items-center gap-2 gap-y-3">
                       <select
-                        className="h-8 min-w-0 max-w-full flex-1 basis-[8rem] rounded-md border border-border bg-background px-2 text-base md:text-xs sm:min-w-[8rem] sm:flex-none"
+                        className="h-8 min-w-0 max-w-full flex-1 basis-[8rem] rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs sm:min-w-[8rem] sm:flex-none"
                         value={filterClientKey ?? ""}
                         onChange={(e) => {
                           const key = e.target.value || null;
@@ -1880,7 +1950,7 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                       <select
-                        className="h-8 min-w-0 max-w-full flex-1 basis-[8rem] rounded-md border border-border bg-background px-2 text-base md:text-xs sm:min-w-[8rem] sm:flex-none"
+                        className="h-8 min-w-0 max-w-full flex-1 basis-[8rem] rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs sm:min-w-[8rem] sm:flex-none"
                         value={filterProjectKey ?? ""}
                         onChange={(e) =>
                           setFilterProjectKey(e.target.value || null)
@@ -1895,7 +1965,7 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                       <select
-                        className="h-8 min-w-[9rem] max-w-full rounded-md border border-border bg-background px-2 text-base md:text-xs"
+                        className="h-8 min-w-[9rem] max-w-full rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs"
                         value={clientInvolvementFilters.clientId ?? ""}
                         onChange={(e) =>
                           setClientInvolvementFilters((prev) => ({
@@ -1913,7 +1983,7 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                       <select
-                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-base md:text-xs"
+                        className="h-8 min-w-[7rem] rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs"
                         value={clientInvolvementFilters.relationshipType}
                         onChange={(e) =>
                           setClientInvolvementFilters((prev) => ({
@@ -1949,7 +2019,7 @@ export function PipelinePageClient() {
                         Primary only
                       </label>
                       <select
-                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-base md:text-xs"
+                        className="h-8 min-w-[7rem] rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs"
                         value={capitalStackFilters.sourceType}
                         onChange={(e) =>
                           setCapitalStackFilters((prev) => ({
@@ -1967,7 +2037,7 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                       <select
-                        className="h-8 min-w-[8rem] rounded-md border border-border bg-background px-2 text-base md:text-xs"
+                        className="h-8 min-w-[8rem] rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs"
                         value={capitalStackFilters.fundingHealth}
                         onChange={(e) =>
                           setCapitalStackFilters((prev) => ({
@@ -1982,7 +2052,7 @@ export function PipelinePageClient() {
                         <option value="fully_funded">Fully funded</option>
                       </select>
                       <select
-                        className="h-8 min-w-[7rem] rounded-md border border-border bg-background px-2 text-base md:text-xs"
+                        className="h-8 min-w-[7rem] rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs"
                         value={capitalStackFilters.gapThreshold}
                         onChange={(e) =>
                           setCapitalStackFilters((prev) => ({
@@ -1999,7 +2069,7 @@ export function PipelinePageClient() {
                       </select>
                       {projectionMode === "referral" ? (
                         <select
-                          className="h-8 min-w-[10rem] max-w-full flex-1 basis-[10rem] rounded-md border border-border bg-background px-2 text-base md:text-xs sm:flex-none"
+                          className="h-8 min-w-[10rem] max-w-full flex-1 basis-[10rem] rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs sm:flex-none"
                           value={filterEntityKey ?? ""}
                           onChange={(e) =>
                             setFilterEntityKey(e.target.value || null)
@@ -2043,7 +2113,7 @@ export function PipelinePageClient() {
                       <select
                         value={sort}
                         onChange={(e) => setSort(e.target.value as SortKey)}
-                        className="h-9 min-w-0 max-w-full flex-1 rounded-md border border-border/50 bg-background px-2 text-base shadow-sm sm:max-w-[11rem] sm:flex-none sm:text-sm"
+                        className="h-9 min-w-0 max-w-full flex-1 rounded-dlc-md border border-border/50 bg-dlc-surface-high px-2 text-base shadow-dlc-1 sm:max-w-[11rem] sm:flex-none sm:text-sm"
                         aria-label="Sort pipeline"
                       >
                         {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
@@ -2055,7 +2125,7 @@ export function PipelinePageClient() {
                     </label>
                     <div
                       className={cn(
-                        "inline-flex h-9 items-center rounded-md border border-border/50 bg-background text-xs shadow-sm",
+                        "inline-flex h-9 items-center rounded-dlc-md border border-border/50 bg-dlc-surface-high text-xs shadow-dlc-1",
                         narrow && "hidden",
                       )}
                       role="tablist"
@@ -2110,7 +2180,7 @@ export function PipelinePageClient() {
                       Density
                     </span>
                     <div
-                      className="inline-flex h-8 overflow-hidden rounded-md border border-border bg-background text-[11px] font-medium shadow-sm"
+                      className="inline-flex h-8 overflow-hidden rounded-dlc-md border border-border/55 bg-dlc-surface-high text-[11px] font-medium shadow-dlc-1"
                       role="group"
                       aria-label="Table row density"
                     >
@@ -2183,7 +2253,7 @@ export function PipelinePageClient() {
                     <details className="relative min-w-0 shrink">
                       <summary
                         className={cn(
-                          "flex h-8 cursor-pointer list-none items-center gap-1 rounded-md border border-border bg-background px-2 text-base md:text-xs font-medium shadow-sm",
+                          "flex h-8 cursor-pointer list-none items-center gap-1 rounded-dlc-md border border-border/55 bg-dlc-surface-high px-2 text-base md:text-xs font-medium shadow-dlc-1",
                           "marker:content-none [&::-webkit-details-marker]:hidden",
                         )}
                       >
@@ -2244,7 +2314,7 @@ export function PipelinePageClient() {
                     </details>
                     {narrow ? (
                       <div
-                        className="inline-flex h-8 overflow-hidden rounded-md border border-border bg-background text-[11px] font-medium shadow-sm"
+                        className="inline-flex h-8 overflow-hidden rounded-dlc-md border border-border/55 bg-dlc-surface-high text-[11px] font-medium shadow-dlc-1"
                         role="tablist"
                         aria-label="Mobile row layout"
                       >
@@ -2516,7 +2586,7 @@ export function PipelinePageClient() {
             </div>
 
             <div
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/60 pt-2 text-xs text-muted-foreground"
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/45 pt-2 text-xs text-muted-foreground"
               data-testid="pipeline-hub-result-summary"
             >
               <span>

@@ -34,3 +34,5 @@
 
 - `temporary-code-policy.md`
 - `component-architecture-policy.md`
+- `convex-reactivity-policy.md` — no second clock, presence heartbeat, or client store of Convex documents
+- `duplicate-system-watchlist.md`

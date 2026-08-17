@@ -6,7 +6,7 @@
 - **Table:** `productReleasePosts` (platform-global changelog)
 - **Queries:** `productKnowledge.listPublishedReleasePostsForViewer`, `unreadReleaseCountForUser`
 - **Admin UI:** Settings → Product knowledge (`ProductKnowledgeAdminPanel`)
-- **Timestamps:** stored as UTC epoch ms; UI formats with the **viewer’s local timezone** via `lib/product-knowledge/formatPublishedAt.ts` (never force `timeZone: "UTC"`).
+- **Timestamps:** stored as UTC epoch ms; UI formats with the account timezone via `lib/dateTimeZone.ts` (default `America/Chicago`, preference in `displaySettings.timezone`) — never force `timeZone: "UTC"` for display.
 
 ### Agent / operator ship rule
 

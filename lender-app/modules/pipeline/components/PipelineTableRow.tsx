@@ -46,6 +46,7 @@ import {
 } from "@/lib/pipeline/pipelineTableFormatting";
 import { PipelineFileRowHierarchyStack } from "@/components/pipeline/PipelineFileRowHierarchyStack";
 import { PipelineFileArchivedIndicator } from "@/components/pipeline/PipelineFileArchivedIndicator";
+import { PipelineFileAutoArchiveMarker } from "@/components/pipeline/PipelineFileAutoArchiveMarker";
 
 type PatchPipelineFn = (args: {
   id: Id<"pipeline">;
@@ -191,6 +192,12 @@ export function PipelineTableRow({
                   archivedAt={r.archivedAt}
                   compact
                   withLabel
+                />
+                <PipelineFileAutoArchiveMarker
+                  autoArchiveInactivityDays={r.autoArchiveInactivityDays}
+                  autoArchiveAfterAt={r.autoArchiveAfterAt}
+                  lastActivityAt={r.updatedAt}
+                  compact
                 />
               </div>
               {r.isSnoozed && snoozedUntilToMs(r.snoozedUntil) != null ? (

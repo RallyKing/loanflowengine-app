@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { readPortalAccessProof } from "@/lib/portalAccessProof";
+import { readPortalTaskAccessProof } from "@/lib/portalTaskAccessProof";
 
 export type ClientPortalBlockPanelProps = {
   bundleToken: string;
@@ -188,6 +189,10 @@ function ClientPortalBlockPanelInner({
                     blockId,
                   },
                   accessProof: readPortalAccessProof(bundleToken),
+                  taskAccessProof: readPortalTaskAccessProof(
+                    bundleToken,
+                    String(fileTaskId),
+                  ),
                 })
                   .then(() => {
                     setRevising(false);

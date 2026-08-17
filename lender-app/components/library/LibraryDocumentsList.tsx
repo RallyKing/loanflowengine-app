@@ -20,6 +20,11 @@ import type {
 } from "@/components/LibraryDocumentsPanel";
 import type { LibraryDocumentLinkScope } from "@/lib/library/documentVaultHydration";
 import type { LibraryDocumentCategory } from "@/lib/library/documentVaultTaxonomy";
+import {
+  isCreatedVaultHtmlDocument,
+  isVaultImageDocument,
+  vaultDocumentOutboundFileName,
+} from "@/lib/library/vaultOutboundFileName";
 import { premiumCardClassName } from "@/lib/pipeline/premiumWorkspaceUi";
 import {
   LibraryDocumentsVaultGrid,
@@ -43,6 +48,7 @@ import {
   User,
   UserPlus,
   FileDown,
+  Download,
 } from "lucide-react";
 
 export type LibraryDocumentListRow = {
@@ -56,6 +62,8 @@ export type LibraryDocumentListRow = {
   latestUploadedAt: number | undefined;
   updatedAt: number;
   documentCategory?: LibraryDocumentCategory;
+  customDocumentCategoryId?: Id<"organizationDocumentCategories">;
+  customDocumentCategoryName?: string;
   taxYear?: string;
   folderId?: Id<"documentFolders">;
   fileTaskId?: Id<"documentVaultFileTasks">;
@@ -95,6 +103,7 @@ export type LibraryDocumentsListProps = {
   rows: LibraryDocumentListRow[];
   layout: "vault" | "embedded";
   context: LibraryDocumentsContext;
+  organizationId?: Id<"organizations">;
   memberUserKey?: string;
   canMutate: boolean;
   canUseHub: boolean;
@@ -133,6 +142,7 @@ export type LibraryDocumentsListProps = {
   onSaveToContact: (row: LibraryDocumentListRow) => void;
   onAssignToRegistry: (row: LibraryDocumentListRow) => void;
   onDownloadAsPdf: (row: LibraryDocumentListRow) => void;
+  onDownloadOriginal?: (row: LibraryDocumentListRow) => void;
   exportingPdfDocId: Id<"libraryDocuments"> | null;
   onNewVersion: (
     documentId: Id<"libraryDocuments">,
@@ -154,6 +164,8 @@ export type LibraryDocumentsListProps = {
     documentId: Id<"libraryDocuments">,
     patch: {
       documentCategory?: LibraryDocumentCategory | null;
+      customDocumentCategoryId?: Id<"organizationDocumentCategories"> | null;
+      customDocumentCategoryName?: string | null;
       taxYear?: string | null;
     },
   ) => void;
@@ -177,6 +189,7 @@ export type LibraryDocumentsListProps = {
 export function LibraryDocumentsList({
   rows,
   layout,
+  organizationId,
   memberUserKey,
   canMutate,
   canUseHub,
@@ -203,6 +216,7 @@ export function LibraryDocumentsList({
   onSaveToContact,
   onAssignToRegistry,
   onDownloadAsPdf,
+  onDownloadOriginal,
   exportingPdfDocId,
   onNewVersion,
   onRemoveLink,
@@ -264,6 +278,7 @@ export function LibraryDocumentsList({
           onSaveToContact={onSaveToContact}
           onAssignToRegistry={onAssignToRegistry}
           onDownloadAsPdf={onDownloadAsPdf}
+          onDownloadOriginal={onDownloadOriginal}
           exportingPdfDocId={exportingPdfDocId}
           onToggleExpanded={onToggleExpanded}
           onRemoveLink={onRemoveLink}
@@ -376,10 +391,10 @@ export function LibraryDocumentsList({
                   onClick={() =>
                     useVaultNav
                       ? onSelectDocument(d._id)
-                      : onPreview(
+                          : onPreview(
                           d._id,
                           d.latestVersionId!,
-                          d.latestFileName ?? d.title,
+                          vaultDocumentOutboundFileName(d),
                           d.latestContentType,
                         )
                   }
@@ -436,8 +451,28 @@ export function LibraryDocumentsList({
                     ) : (
                       <FileDown className="h-4 w-4 shrink-0" aria-hidden />
                     )}
-                    Download as PDF
+                    {isCreatedVaultHtmlDocument(d) || isVaultImageDocument(d)
+                      ? "Download PDF"
+                      : "Download as PDF"}
                   </DropdownMenuItem>
+                  {isCreatedVaultHtmlDocument(d) && onDownloadOriginal ? (
+                    <DropdownMenuItem
+                      disabled={!d.latestVersionId}
+                      onClick={() => onDownloadOriginal(d)}
+                    >
+                      <Download className="h-4 w-4 shrink-0" aria-hidden />
+                      Download original (HTML)
+                    </DropdownMenuItem>
+                  ) : null}
+                  {isVaultImageDocument(d) && onDownloadOriginal ? (
+                    <DropdownMenuItem
+                      disabled={!d.latestVersionId}
+                      onClick={() => onDownloadOriginal(d)}
+                    >
+                      <Download className="h-4 w-4 shrink-0" aria-hidden />
+                      Download original
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem onClick={() => onMoveDoc(d)}>
                     <FolderInput className="h-4 w-4 shrink-0" aria-hidden />
                     Move to folder
@@ -662,9 +697,12 @@ export function LibraryDocumentsList({
                     <DocumentVaultLinkMetadataEditor
                       documentId={d._id}
                       proof={rowProof}
+                      organizationId={organizationId}
                       memberUserKey={memberUserKey}
                       canMutate={canMutate}
                       documentCategory={d.documentCategory}
+                      customDocumentCategoryId={d.customDocumentCategoryId}
+                      customDocumentCategoryName={d.customDocumentCategoryName}
                       taxYear={d.taxYear}
                       onOptimisticChange={(patch) =>
                         onOptimisticMetaChange(d._id, patch)
@@ -746,8 +784,28 @@ export function LibraryDocumentsList({
                         ) : (
                           <FileDown className="h-4 w-4 shrink-0" aria-hidden />
                         )}
-                        Download as PDF
+                        {isCreatedVaultHtmlDocument(d) || isVaultImageDocument(d)
+                          ? "Download PDF"
+                          : "Download as PDF"}
                       </DropdownMenuItem>
+                      {isCreatedVaultHtmlDocument(d) && onDownloadOriginal ? (
+                        <DropdownMenuItem
+                          disabled={!d.latestVersionId}
+                          onClick={() => onDownloadOriginal(d)}
+                        >
+                          <Download className="h-4 w-4 shrink-0" aria-hidden />
+                          Download original (HTML)
+                        </DropdownMenuItem>
+                      ) : null}
+                      {isVaultImageDocument(d) && onDownloadOriginal ? (
+                        <DropdownMenuItem
+                          disabled={!d.latestVersionId}
+                          onClick={() => onDownloadOriginal(d)}
+                        >
+                          <Download className="h-4 w-4 shrink-0" aria-hidden />
+                          Download original
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuItem onClick={() => onMoveDoc(d)}>
                         <FolderInput className="h-4 w-4 shrink-0" aria-hidden />
                         Move to folder
@@ -780,7 +838,7 @@ export function LibraryDocumentsList({
                           : onPreview(
                               d._id,
                               d.latestVersionId!,
-                              d.latestFileName ?? d.title,
+                              vaultDocumentOutboundFileName(d),
                               d.latestContentType,
                             )
                       }

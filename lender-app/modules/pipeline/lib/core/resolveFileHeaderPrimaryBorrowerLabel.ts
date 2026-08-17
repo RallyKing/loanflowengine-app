@@ -83,9 +83,65 @@ export function resolvePrimaryBorrowerIndividualNames(args: {
   return names;
 }
 
+export type LinkedClientTitleHint = {
+  displayName?: string | null;
+  relationshipType?: string | null;
+};
+
 /**
- * File workspace header subtitle: live primary borrower entity + individual(s)
- * from Borrowers & Guarantors — not the create-time client display name.
+ * Live entity side of the pipeline Client title.
+ * Prefers an explicit entity link, then a hierarchy client with entityType,
+ * then deal `business.legalName` / DBA. Does not treat an individual-as-client
+ * snapshot as the entity (avoids "John · John").
+ */
+export function resolveEntityDisplayNameForClientTitle(args: {
+  linkedClients?: readonly LinkedClientTitleHint[] | null;
+  clientRecordLabel?: string | null;
+  clientRecordEntityType?: string | null;
+  dealBusiness?: unknown;
+}): string {
+  const entityLink = (args.linkedClients ?? []).find(
+    (c) => c.relationshipType === "entity",
+  );
+  const fromLink = trimLabel(entityLink?.displayName);
+  if (fromLink) return fromLink;
+
+  if (trimLabel(args.clientRecordEntityType)) {
+    const fromRecord = trimLabel(args.clientRecordLabel);
+    if (fromRecord) return fromRecord;
+  }
+
+  return entityBorrowerLabelFromDealBusiness(args.dealBusiness);
+}
+
+export function dealBusinessFromPreviewPayload(
+  intake: { business?: unknown } | null | undefined,
+  pipeline: { dealData?: unknown } | null | undefined,
+): unknown {
+  if (intake?.business != null) return intake.business;
+  const deal = pipeline?.dealData;
+  if (deal && typeof deal === "object" && !Array.isArray(deal)) {
+    return (deal as { business?: unknown }).business;
+  }
+  return undefined;
+}
+
+export function dealBorrowersFromPreviewPayload(
+  intake: { borrowers?: unknown } | null | undefined,
+  pipeline: { dealData?: unknown } | null | undefined,
+): unknown[] {
+  if (intake && Array.isArray(intake.borrowers)) return intake.borrowers;
+  const deal = pipeline?.dealData;
+  if (deal && typeof deal === "object" && !Array.isArray(deal)) {
+    const borrowers = (deal as { borrowers?: unknown }).borrowers;
+    if (Array.isArray(borrowers)) return borrowers;
+  }
+  return [];
+}
+
+/**
+ * File workspace header subtitle + pipeline hub Client column:
+ * live primary borrower entity + individual(s) — not the create-time client name.
  */
 export function resolveFileHeaderPrimaryBorrowerLabel(args: {
   links?: Doc<"contactFileLinks">[] | null;

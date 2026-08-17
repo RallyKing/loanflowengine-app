@@ -208,13 +208,17 @@ export function DocumentVaultPreviewModal({
       return;
     }
     try {
-      await patchDocumentTitle({
+      const result = await patchDocumentTitle({
         documentId,
         title: trimmed,
         proof,
         memberUserKey,
       });
-      setDisplayFileName(trimmed);
+      setDisplayFileName(
+        "fileName" in result && typeof result.fileName === "string"
+          ? result.fileName
+          : trimmed,
+      );
       setIsEditingPreviewTitle(false);
     } catch (e) {
       onError?.(e instanceof Error ? e.message : String(e));
@@ -287,7 +291,7 @@ export function DocumentVaultPreviewModal({
   const panelClassName = cn(
     "flex w-full min-h-0 flex-col overflow-hidden bg-background",
     embedded
-      ? "h-full min-h-[min(55dvh,420px)] rounded-none border-0 shadow-none"
+      ? "h-full min-h-0 rounded-none border-0 shadow-none"
       : "h-[min(100dvh,960px)] max-h-[100dvh]",
     !embedded &&
       (isFullscreen

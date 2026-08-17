@@ -29,7 +29,7 @@ All files in **`docs/governance/MANIFEST.json`** are **required** repository art
 
 **Entry points:** `docs/governance/canonical-source-rules.md` (five canonical owners), `docs/governance/platform-philosophy.md`, `docs/governance/ai-development-lifecycle.md` (AI session workflow).
 
-Policy topics include: **no shadow systems**, **temporary code**, **migration safety**, **webhook/automation safety**, **UI/design system**, **component architecture**, **observability**, **feature completion**, **route ownership**, **AI governance**, **performance budgets**, **accessibility**, **production deployment**, **documentation sync**, **tenant isolation**, **integrations**, **state management**.
+Policy topics include: **no shadow systems**, **temporary code**, **migration safety**, **webhook/automation safety**, **UI/design system**, **component architecture**, **observability**, **feature completion**, **route ownership**, **AI governance**, **performance budgets**, **Convex resource & cost safety**, **Convex reactivity & React correctness**, **accessibility**, **production deployment**, **documentation sync**, **tenant isolation**, **integrations**, **state management**.
 
 **Cursor enforcement:** `.cursor/rules/governance-hub.mdc` (**alwaysApply**), `.cursor/rules/project-rules.mdc` (**alwaysApply**), repo root `.cursorrules`, `lender-app`-scoped `.cursor/rules/mobile-qa.mdc` for UI globs.
 

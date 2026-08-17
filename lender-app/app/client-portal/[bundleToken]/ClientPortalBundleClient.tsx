@@ -11,12 +11,14 @@ import { ClientPortalBlockPanel } from "@/components/library/ClientPortalBlockPa
 import { ClientPortalRevisionBanner } from "@/components/library/FileTaskReviewActions";
 import { ClientPortalFolderUploadTree } from "@/components/library/ClientPortalFolderUploadTree";
 import { FileTaskClientTemplateDownloads } from "@/components/library/FileTaskClientTemplateAttach";
+import { PortalFileTaskPasswordGate } from "@/components/library/PortalFileTaskPasswordGate";
 import { cn } from "@/lib/cn";
 import { normalizePortalToken } from "@/lib/portalToken";
 import {
   buildVerifyAccessPath,
   readPortalAccessProof,
 } from "@/lib/portalAccessProof";
+import { readPortalTaskAccessProof } from "@/lib/portalTaskAccessProof";
 import { postFileToConvexUploadUrl } from "@/lib/uploadToConvexStorage";
 import { resolveTaskType } from "@/lib/documentVaultTaskTypes";
 import { usePortalSession } from "@/lib/usePortalCollaborationSession";
@@ -121,6 +123,10 @@ export function ClientPortalBundleClient({
             bundleToken: normalizedToken,
             fileTaskId,
             accessProof,
+            taskAccessProof: readPortalTaskAccessProof(
+              normalizedToken,
+              String(fileTaskId),
+            ),
           });
           const { storageId } = await postFileToConvexUploadUrl(postUrl, file, {
             validateFile: validateClientUploadFile,
@@ -134,6 +140,10 @@ export function ClientPortalBundleClient({
             contentType: file.type || undefined,
             size: file.size,
             accessProof,
+            taskAccessProof: readPortalTaskAccessProof(
+              normalizedToken,
+              String(fileTaskId),
+            ),
           });
         }
         setTaskOverrides((prev) => ({
@@ -556,6 +566,7 @@ type PortalTask = {
   isRequired: boolean;
   status: "incomplete" | "pending_review" | "complete";
   taskType: string;
+  passwordProtected?: boolean;
   clientInstructionText?: string;
   instructionUrl?: string;
   clientTemplates?: Array<{
@@ -595,15 +606,21 @@ function ClientPortalTaskCard({
   onInstructionComplete: () => Promise<void>;
   onBlockSubmitted: () => void;
 }) {
+  const [unlocked, setUnlocked] = useState(() =>
+    Boolean(readPortalTaskAccessProof(bundleToken, String(task.fileTaskId))),
+  );
   const taskType = resolveTaskType(task.taskType);
   const isComplete = task.status === "complete";
   const isPendingReview = task.status === "pending_review";
+  const needsPassword = Boolean(task.passwordProtected) && !unlocked;
   const canUpload =
-    taskType === "document_upload" && !readOnly && !isComplete;
+    taskType === "document_upload" && !readOnly && !isComplete && !needsPassword;
   const canCompleteInstruction =
-    taskType === "client_instruction" && !readOnly && !isComplete;
+    taskType === "client_instruction" && !readOnly && !isComplete && !needsPassword;
   const showBlocks =
-    taskType === "block_assignment" && task.assignedBlocks.length > 0;
+    taskType === "block_assignment" &&
+    task.assignedBlocks.length > 0 &&
+    !needsPassword;
 
   return (
     <li
@@ -648,7 +665,16 @@ function ClientPortalTaskCard({
         )}
       </div>
 
-      {task.rejectionNote && !isPendingReview && !isComplete ? (
+      {needsPassword ? (
+        <PortalFileTaskPasswordGate
+          bundleToken={bundleToken}
+          fileTaskId={task.fileTaskId}
+          title={task.title}
+          onUnlocked={() => setUnlocked(true)}
+        />
+      ) : null}
+
+      {task.rejectionNote && !isPendingReview && !isComplete && !needsPassword ? (
         <ClientPortalRevisionBanner
           note={task.rejectionNote}
           className="mt-3"

@@ -8,8 +8,11 @@ import type { Doc, Id } from "../convex/_generated/dataModel";
 import {
   FILE_HEADER_NO_PRIMARY_BORROWER,
   entityBorrowerLabelFromDealBusiness,
+  resolveEntityDisplayNameForClientTitle,
   resolveFileHeaderPrimaryBorrowerLabel,
 } from "../modules/pipeline/lib/core/resolveFileHeaderPrimaryBorrowerLabel";
+import { resolveTableRowClientDisplayName } from "../modules/pipeline/lib/core/resolveTableRowHierarchyDisplay";
+import type { ResolvedFileHierarchy } from "../lib/pipelineHierarchy";
 
 function link(
   partial: Partial<Doc<"contactFileLinks">> & {
@@ -114,6 +117,125 @@ function main() {
 
   const empty = resolveFileHeaderPrimaryBorrowerLabel({});
   assert.equal(empty.label, FILE_HEADER_NO_PRIMARY_BORROWER);
+
+  assert.equal(
+    resolveEntityDisplayNameForClientTitle({
+      linkedClients: [
+        { displayName: "Acme Holdings LLC", relationshipType: "entity" },
+      ],
+      clientRecordLabel: "Frozen Individual Client",
+      dealBusiness: { legalName: "Stale Legal" },
+    }),
+    "Acme Holdings LLC",
+  );
+  assert.equal(
+    resolveEntityDisplayNameForClientTitle({
+      clientRecordLabel: "Riverline Retail LLC",
+      clientRecordEntityType: "llc",
+      dealBusiness: { legalName: "Stale Legal" },
+    }),
+    "Riverline Retail LLC",
+  );
+  assert.equal(
+    resolveEntityDisplayNameForClientTitle({
+      clientRecordLabel: "Jordan Lee",
+      dealBusiness: { legalName: "  Acme Holdings LLC " },
+    }),
+    "Acme Holdings LLC",
+  );
+  assert.equal(
+    resolveEntityDisplayNameForClientTitle({
+      clientRecordLabel: "Jordan Lee",
+    }),
+    "",
+    "individual-as-client is not the entity side",
+  );
+
+  const hierarchy: ResolvedFileHierarchy = {
+    client: {
+      kind: "legacy",
+      clientId: null,
+      displayName: "Frozen Create Name",
+      normalizedName: "frozen create name",
+    },
+    project: {
+      kind: "legacy",
+      projectId: null,
+      clientId: null,
+      title: "Project",
+      normalizedTitle: "project",
+    },
+    resolution: "legacy_deal_data",
+    linkedClients: [
+      {
+        clientId: "ent1",
+        displayName: "AZ Portfolio Investor",
+        normalizedName: "az portfolio investor",
+        relationshipType: "entity",
+        sortOrder: 1,
+        isAuthoritativePrimary: false,
+      },
+    ],
+  };
+
+  const tableLive = resolveTableRowClientDisplayName({
+    hierarchy,
+    intake: null,
+    pipeline: {
+      dealData: { clientName: "Frozen Create Name", borrowers: [] },
+      fileName: "Frozen Create Name – Project",
+    },
+    clientRecordLabel: "Frozen Create Name",
+    primaryBorrowerLinks: [
+      link({
+        contactId,
+        role: "client",
+        registryRoleId: "primary_borrower",
+      }),
+    ],
+    contactsById,
+  });
+  assert.equal(tableLive, "AZ Portfolio Investor · Jordan Lee");
+
+  const tableRename = resolveTableRowClientDisplayName({
+    hierarchy: {
+      ...hierarchy,
+      linkedClients: [],
+    },
+    intake: null,
+    pipeline: {
+      dealData: {
+        clientName: "Old Name",
+        business: { legalName: "Nguyen Holdings" },
+        borrowers: [{ firstName: "Pat", lastName: "Nguyen" }],
+      },
+      fileName: "Old Name – Project",
+    },
+    clientRecordLabel: "Old Name",
+  });
+  assert.equal(tableRename, "Nguyen Holdings · Pat Nguyen");
+
+  const tableIndividualOnly = resolveTableRowClientDisplayName({
+    hierarchy: {
+      ...hierarchy,
+      linkedClients: [],
+    },
+    intake: null,
+    pipeline: {
+      dealData: { clientName: "Frozen Create Name" },
+      fileName: "Frozen Create Name – Project",
+    },
+    clientRecordLabel: "Frozen Create Name",
+    primaryBorrowerLinks: [
+      link({
+        contactId,
+        role: "client",
+        registryRoleId: "primary_borrower",
+      }),
+    ],
+    contactsById,
+  });
+  assert.equal(tableIndividualOnly, "Jordan Lee");
 
   console.log("file-header-primary-borrower-label-tests: ok");
 }

@@ -24,6 +24,7 @@ import {
   type AtomicPortalBlockId,
 } from "@/lib/atomicPortalBlockRegistry";
 import { readPortalAccessProof } from "@/lib/portalAccessProof";
+import { readPortalTaskAccessProof } from "@/lib/portalTaskAccessProof";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
 const REMOTE_SYNC_PAUSE_MS = 1500;
@@ -36,6 +37,10 @@ export type PortalConstructionBudgetLine = {
   budgetAmount?: string;
   spentAmount?: string;
   drawNumber?: string;
+  templateKey?: string;
+  repairReplace?: string;
+  quantity?: string;
+  unitOfMeasure?: string;
   status: "planned" | "in_progress" | "complete" | "on_hold";
 };
 
@@ -85,9 +90,13 @@ export function ClientPortalBlockSessionProvider({
   children,
 }: ClientPortalBlockSessionProviderProps) {
   const accessProof = readPortalAccessProof(bundleToken);
+  const taskAccessProof = readPortalTaskAccessProof(
+    bundleToken,
+    String(fileTaskId),
+  );
   const portalSheet = useQuery(
     api.documentVaultClientBundlePortal.getPortalDealSheet,
-    { bundleToken, fileTaskId, accessProof },
+    { bundleToken, fileTaskId, accessProof, taskAccessProof },
   );
   const autosaveDraft = useMutation(
     api.documentVaultClientBundlePortal.autosaveClientBlockDraftFromBundle,
@@ -166,6 +175,10 @@ export function ClientPortalBlockSessionProvider({
           blockId,
           formData,
           accessProof: readPortalAccessProof(bundleToken),
+          taskAccessProof: readPortalTaskAccessProof(
+            bundleToken,
+            String(fileTaskId),
+          ),
         });
         setLocalDirty(false);
         if (result.pipelineUpdatedAt != null) {
@@ -258,7 +271,9 @@ export function ClientPortalBlockSessionProvider({
             ? "This portal link has expired."
             : portalSheet.status === "unauthorized"
               ? "This task is not included in your portal link."
-              : "Unable to load form data.",
+              : portalSheet.status === "password_required"
+                ? "This personal financial statement is password protected."
+                : "Unable to load form data.",
         draft: null,
         updateSheet,
         constructionBudgetLines: [],

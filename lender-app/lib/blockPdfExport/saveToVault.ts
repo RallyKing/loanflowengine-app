@@ -19,6 +19,12 @@ export const BLOCK_PDF_VAULT_FOLDER_CANDIDATES = [
   "PFS",
   "Forms",
   "Personal Financial Statements",
+  "REO",
+  "Schedule of REO",
+  "Track Record",
+  "Construction Budget",
+  "Simple P&L",
+  "Profit and Loss",
 ] as const;
 
 export const BLOCK_PDF_VAULT_DEFAULT_FOLDER = "Forms";

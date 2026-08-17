@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type MouseEvent } from "react";
+import { useEffect, useId, useState, type HTMLAttributes, type MouseEvent } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
@@ -85,15 +85,24 @@ export function CollapsibleSection({
     const initialOpen = controlled ? Boolean(controlledOpen) : defaultOpen;
     return initialOpen;
   });
+  const uid = useId();
+  const panelId = `${uid}-panel`;
+
   useEffect(() => {
     if (!lazyMount) return;
     if (open) setLazyBodyMounted(true);
   }, [lazyMount, open]);
 
-  const resolvedChildren = !lazyMount || lazyBodyMounted ? children : null;
+  /** Avoid focused editors inside aria-hidden / grid-rows-[0fr] collapsed panels. */
+  useEffect(() => {
+    if (open || typeof document === "undefined") return;
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) return;
+    const panel = document.getElementById(panelId);
+    if (panel?.contains(active)) active.blur();
+  }, [open, panelId]);
 
-  const uid = useId();
-  const panelId = `${uid}-panel`;
+  const resolvedChildren = !lazyMount || lazyBodyMounted ? children : null;
 
   const animatedShell = (inner: React.ReactNode) => {
     if (!animated) {
@@ -110,6 +119,8 @@ export function CollapsibleSection({
           open ? pipelineWorkspaceCollapseOpen : pipelineWorkspaceCollapseClosed,
         )}
         aria-hidden={!open}
+        // inert keeps focus out of collapsed height-0 panels (aria-hidden alone does not).
+        {...(!open ? ({ inert: true } as HTMLAttributes<HTMLDivElement>) : {})}
       >
         <div
           className={cn(

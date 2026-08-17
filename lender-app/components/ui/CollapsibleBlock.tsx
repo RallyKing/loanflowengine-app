@@ -5,6 +5,7 @@ import {
   useId,
   useLayoutEffect,
   useState,
+  type HTMLAttributes,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -197,6 +198,15 @@ export function CollapsibleBlock({
     if (open || detached || pendingHostDetach) setLazyBodyMounted(true);
   }, [lazyMount, open, detached, pendingHostDetach]);
 
+  /** Blur focused controls before the panel is aria-hidden / height-collapsed. */
+  useEffect(() => {
+    if (open || detached || typeof document === "undefined") return;
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) return;
+    const panel = document.getElementById(panelId);
+    if (panel?.contains(active)) active.blur();
+  }, [open, detached, panelId]);
+
   const resolvedChildren =
     !lazyMount || lazyBodyMounted || detached || pendingHostDetach
       ? children
@@ -313,6 +323,7 @@ export function CollapsibleBlock({
           open ? pipelineWorkspaceCollapseOpen : pipelineWorkspaceCollapseClosed,
         )}
         aria-hidden={!open}
+        {...(!open ? ({ inert: true } as HTMLAttributes<HTMLDivElement>) : {})}
       >
         <div
           className={cn(
@@ -435,11 +446,16 @@ export function CollapsibleBlock({
           }
         >
           {description ? (
-            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+            <p className="mb-3 shrink-0 px-3 pt-3 text-xs leading-relaxed text-muted-foreground sm:px-3.5 sm:pt-3.5">
               {description}
             </p>
           ) : null}
-          <div className={cn("min-w-0", contentClassName)}>
+          <div
+            className={cn(
+              "flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain touch-scroll-y p-3 sm:p-3.5",
+              contentClassName,
+            )}
+          >
             {resolvedChildren}
           </div>
         </FloatingWindow>

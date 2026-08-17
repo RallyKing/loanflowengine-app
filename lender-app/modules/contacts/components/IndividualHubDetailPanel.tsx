@@ -26,6 +26,7 @@ import { ContactRelationshipsTab } from "@/components/contacts/ContactRelationsh
 import { ContactFinancialsTab } from "@/components/contacts/ContactFinancialsTab";
 import { ContactDealsTab } from "@/components/contacts/ContactDealsTab";
 import { ContactDocumentsNotesTab } from "@/components/contacts/ContactDocumentsNotesTab";
+import { UnifiedCommunicationPanel } from "@/components/communications/UnifiedCommunicationPanel";
 import { MergeRecordModal } from "@/components/contacts/MergeRecordModal";
 import { ConvertToEntityModal } from "@/components/contacts/ConvertToEntityModal";
 import {
@@ -462,6 +463,33 @@ export function IndividualHubDetailPanel({
       />
     );
 
+  const messagesTab =
+    isNew || !contactId ? (
+      <p className={hubDetailStyles.sectionHint}>
+        Save this contact to send email or text templates.
+      </p>
+    ) : (
+      <div className="space-y-3" data-testid="contact-hub-messages">
+        <p className="text-sm text-muted-foreground">
+          Apply org email or SMS templates with merge variables for this contact.
+          Manage the library in{" "}
+          <Link
+            href="/automations"
+            className="font-medium text-primary underline-offset-2 hover:underline"
+          >
+            Automations
+          </Link>
+          .
+        </p>
+        <UnifiedCommunicationPanel
+          organizationId={organizationId}
+          memberUserKey={memberUserKey}
+          relatedContactId={contactId}
+          defaultChannel={displayEmail ? "email" : displayPhone ? "sms" : "email"}
+        />
+      </div>
+    );
+
   const footer = (
     <div className="flex flex-wrap items-center gap-2">
       <Button
@@ -547,6 +575,7 @@ export function IndividualHubDetailPanel({
           label: "Documents & Notes",
           content: documentsNotesTab,
         },
+        { id: "messages", label: "Messages", content: messagesTab },
       ]}
     />
   );

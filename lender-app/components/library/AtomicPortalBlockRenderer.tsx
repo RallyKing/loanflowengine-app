@@ -34,6 +34,12 @@ import { CollapsibleBlock } from "@/components/ui/CollapsibleBlock";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
 import {
+  CONSTRUCTION_BUDGET_PROJECT_TYPES,
+  CONSTRUCTION_BUDGET_REPAIR_REPLACE,
+  CONSTRUCTION_BUDGET_SECTIONS,
+  CONSTRUCTION_BUDGET_UNITS,
+} from "@/lib/constructionBudget/constructionBudgetModel";
+import {
   AtomicPipelineModuleBrokerEmbed,
   AtomicPipelineModulePortalEmbed,
 } from "@/components/library/AtomicPipelineModuleEmbeds";
@@ -65,6 +71,22 @@ const PfsBlockLazy = dynamic(
   () =>
     import("@/components/pipeline/blocks/PfsBlock").then((m) => ({
       default: m.PfsBlock,
+    })),
+  { loading: () => <BlockLoading /> },
+);
+
+const TrackRecordBlockLazy = dynamic(
+  () =>
+    import("@/components/pipeline/blocks/TrackRecordBlock").then((m) => ({
+      default: m.TrackRecordBlock,
+    })),
+  { loading: () => <BlockLoading /> },
+);
+
+const SimplePlBlockLazy = dynamic(
+  () =>
+    import("@/components/pipeline/blocks/SimplePlBlock").then((m) => ({
+      default: m.SimplePlBlock,
     })),
   { loading: () => <BlockLoading /> },
 );
@@ -191,8 +213,10 @@ function PortalConstructionBudgetEditor({
 }) {
   const clientSession = useClientPortalBlockSessionOptional();
   const lenderSession = useLenderDeliveryBlockSessionOptional();
-  const [category, setCategory] = useState("");
-  const [description, setDescription] = useState("");
+  const [templateKey, setTemplateKey] = useState("");
+  const [repairReplace, setRepairReplace] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [unitOfMeasure, setUnitOfMeasure] = useState("");
   const [budgetAmount, setBudgetAmount] = useState("");
 
   if (
@@ -206,26 +230,51 @@ function PortalConstructionBudgetEditor({
     clientSession?.status === "ready"
       ? clientSession.constructionBudgetLines
       : lenderSession?.constructionBudgetLines ?? [];
+  const draft = clientSession?.moduleDrafts[blockId] ?? {};
+  const draftHeader = (draft.header as Record<string, string> | undefined) ?? {};
   const draftLines =
-    (clientSession?.moduleDrafts[blockId]?.lines as
-      | Array<Record<string, string>>
-      | undefined) ?? [];
+    (draft.lines as Array<Record<string, string>> | undefined) ?? [];
+  const catalogLines = CONSTRUCTION_BUDGET_SECTIONS.flatMap((s) =>
+    s.lines.map((line) => ({
+      ...line,
+      sectionTitle: s.title,
+      qty: s.kind === "qty_measure",
+    })),
+  );
+  const selected = catalogLines.find((l) => l.key === templateKey);
+
+  const patchHeader = (patch: Record<string, string>) => {
+    if (!clientSession || clientSession.status !== "ready") return;
+    clientSession.setModuleDraft(blockId, {
+      header: { ...draftHeader, ...patch },
+      lines: draftLines,
+    });
+    clientSession.scheduleAutosave(blockId);
+  };
 
   const addLine = () => {
-    if (!category.trim() || !clientSession || clientSession.status !== "ready") return;
+    if (!clientSession || clientSession.status !== "ready") return;
+    if (!selected || !budgetAmount.trim()) return;
     const next = [
       ...draftLines,
       {
-        category: category.trim(),
-        description: description.trim(),
+        templateKey: selected.key,
+        category: selected.label,
+        repairReplace: selected.qty ? repairReplace : "",
+        quantity: selected.qty ? quantity : "",
+        unitOfMeasure: selected.qty ? unitOfMeasure : "",
         budgetAmount: budgetAmount.trim(),
       },
     ];
-    clientSession.setModuleDraft(blockId, { lines: next });
+    clientSession.setModuleDraft(blockId, {
+      header: draftHeader,
+      lines: next,
+    });
     clientSession.scheduleAutosave(blockId);
-    setCategory("");
-    setDescription("");
     setBudgetAmount("");
+    setQuantity("");
+    setRepairReplace("");
+    setUnitOfMeasure("");
   };
 
   return (
@@ -238,6 +287,42 @@ function PortalConstructionBudgetEditor({
             </p>
           ))
         : null}
+      {!readOnly && clientSession?.status === "ready" ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Input
+            placeholder="Applicant Name"
+            value={draftHeader.applicantName ?? ""}
+            onChange={(e) => patchHeader({ applicantName: e.target.value })}
+            onBlur={() => clientSession.flushAutosave(blockId)}
+          />
+          <Input
+            placeholder="Property Address"
+            value={draftHeader.propertyAddress ?? ""}
+            onChange={(e) => patchHeader({ propertyAddress: e.target.value })}
+            onBlur={() => clientSession.flushAutosave(blockId)}
+          />
+          <Input
+            placeholder="Contractor"
+            value={draftHeader.contractor ?? ""}
+            onChange={(e) => patchHeader({ contractor: e.target.value })}
+            onBlur={() => clientSession.flushAutosave(blockId)}
+          />
+          <select
+            className="h-10 min-h-[40px] rounded-dlc-sm border border-border bg-background px-2 text-sm"
+            value={draftHeader.projectType ?? ""}
+            aria-label="Project Type"
+            onChange={(e) => patchHeader({ projectType: e.target.value })}
+            onBlur={() => clientSession.flushAutosave(blockId)}
+          >
+            <option value="">Project Type</option>
+            {CONSTRUCTION_BUDGET_PROJECT_TYPES.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
       {draftLines.map((line, index) => (
         <p key={index} className="text-xs text-foreground">
           {line.category}
@@ -245,20 +330,56 @@ function PortalConstructionBudgetEditor({
         </p>
       ))}
       {!readOnly && clientSession?.status === "ready" ? (
-        <div className="grid gap-2 sm:grid-cols-3">
-          <Input
-            placeholder="Category"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            onBlur={() => clientSession.flushAutosave(blockId)}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <select
+            className="h-10 min-h-[40px] rounded-dlc-sm border border-border bg-background px-2 text-sm sm:col-span-2"
+            value={templateKey}
+            aria-label="Budget line item"
             data-testid="client-portal-construction-category"
-          />
-          <Input
-            placeholder="Description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onBlur={() => clientSession.flushAutosave(blockId)}
-          />
+            onChange={(e) => setTemplateKey(e.target.value)}
+          >
+            <option value="">Select template item</option>
+            {catalogLines.map((line) => (
+              <option key={line.key} value={line.key}>
+                {line.sectionTitle} — {line.label}
+              </option>
+            ))}
+          </select>
+          {selected?.qty ? (
+            <>
+              <select
+                className="h-10 min-h-[40px] rounded-dlc-sm border border-border bg-background px-2 text-sm"
+                value={repairReplace}
+                aria-label="Repair/Replace"
+                onChange={(e) => setRepairReplace(e.target.value)}
+              >
+                <option value="">Repair/Replace</option>
+                {CONSTRUCTION_BUDGET_REPAIR_REPLACE.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+              <Input
+                placeholder="Quantity"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+              />
+              <select
+                className="h-10 min-h-[40px] rounded-dlc-sm border border-border bg-background px-2 text-sm"
+                value={unitOfMeasure}
+                aria-label="Unit of Measure"
+                onChange={(e) => setUnitOfMeasure(e.target.value)}
+              >
+                <option value="">Unit of Measure</option>
+                {CONSTRUCTION_BUDGET_UNITS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : null}
           <Input
             placeholder="Budget amount"
             value={budgetAmount}
@@ -267,7 +388,7 @@ function PortalConstructionBudgetEditor({
           />
           <button
             type="button"
-            className="rounded-dlc-sm border border-border px-2 py-1 text-xs font-medium sm:col-span-3"
+            className="h-10 min-h-[40px] rounded-dlc-sm border border-border px-2 text-xs font-medium sm:col-span-2"
             onClick={addLine}
           >
             Add line to submission
@@ -363,6 +484,36 @@ function PortalAtomicBlockInner({
             update={readOnly ? () => {} : update}
           >
             <PfsBlockLazy contactId={null} readOnly={readOnly} />
+          </DealWorkspaceEditorStaticProvider>
+        </div>
+      );
+    case "track_record":
+      return (
+        <div
+          data-testid={`client-portal-block-${atomicId}`}
+          onBlur={flushOnBlur}
+        >
+          <DealWorkspaceEditorStaticProvider
+            fileId={pipelineFileId}
+            draft={draft}
+            update={readOnly ? () => {} : update}
+          >
+            <TrackRecordBlockLazy contactId={null} readOnly={readOnly} />
+          </DealWorkspaceEditorStaticProvider>
+        </div>
+      );
+    case "simple_pl":
+      return (
+        <div
+          data-testid={`client-portal-block-${atomicId}`}
+          onBlur={flushOnBlur}
+        >
+          <DealWorkspaceEditorStaticProvider
+            fileId={pipelineFileId}
+            draft={draft}
+            update={readOnly ? () => {} : update}
+          >
+            <SimplePlBlockLazy contactId={null} readOnly={readOnly} />
           </DealWorkspaceEditorStaticProvider>
         </div>
       );
@@ -491,6 +642,38 @@ function BrokerAtomicBlockInner({
       ) : (
         <DealWorkspaceEditorProvider fileId={pipelineFileId}>
           <PfsBlockLazy
+            contactId={primaryBorrowerContactId ?? null}
+            memberUserKey={memberUserKey}
+            readOnly={readOnly}
+          />
+        </DealWorkspaceEditorProvider>
+      );
+    case "track_record":
+      return existingEditor ? (
+        <TrackRecordBlockLazy
+          contactId={primaryBorrowerContactId ?? null}
+          memberUserKey={memberUserKey}
+          readOnly={readOnly}
+        />
+      ) : (
+        <DealWorkspaceEditorProvider fileId={pipelineFileId}>
+          <TrackRecordBlockLazy
+            contactId={primaryBorrowerContactId ?? null}
+            memberUserKey={memberUserKey}
+            readOnly={readOnly}
+          />
+        </DealWorkspaceEditorProvider>
+      );
+    case "simple_pl":
+      return existingEditor ? (
+        <SimplePlBlockLazy
+          contactId={primaryBorrowerContactId ?? null}
+          memberUserKey={memberUserKey}
+          readOnly={readOnly}
+        />
+      ) : (
+        <DealWorkspaceEditorProvider fileId={pipelineFileId}>
+          <SimplePlBlockLazy
             contactId={primaryBorrowerContactId ?? null}
             memberUserKey={memberUserKey}
             readOnly={readOnly}

@@ -20,6 +20,7 @@ import {
 } from "../lib/notificationPreferences";
 import { resolveDisplayUsernameForUserKey } from "./auth/displayIdentity";
 import { requireAuthenticatedCaller } from "./callerAuth";
+import { resolveNotificationContext } from "./notificationContext";
 
 async function assertCallerOwnsUserKey(
   ctx: QueryCtx | MutationCtx,
@@ -60,8 +61,13 @@ export async function dispatchUserNotification(
     fileId?: Id<"pipeline"> | undefined;
     lenderId?: Id<"lenders"> | undefined;
     libraryDocumentId?: Id<"libraryDocuments"> | undefined;
+    documentVaultFileTaskId?: Id<"documentVaultFileTasks"> | undefined;
     collaborationThreadId?: Id<"collaborationThreads"> | undefined;
     collaborationEventId?: Id<"collaborationActivityEvents"> | undefined;
+    /** Denormalized labels; resolved from file/task when omitted. */
+    contextFileName?: string | undefined;
+    contextContactName?: string | undefined;
+    contextStageLabel?: string | undefined;
     dedupeKey?: string | undefined;
     snoozedUntil?: number | undefined;
   },
@@ -111,6 +117,27 @@ export async function dispatchUserNotification(
     if (dupe) return null;
   }
 
+  const needsContextResolve =
+    Boolean(args.fileId || args.taskId) &&
+    (!args.contextFileName?.trim() ||
+      !args.contextContactName?.trim() ||
+      !args.contextStageLabel?.trim());
+  const resolved = needsContextResolve
+    ? await resolveNotificationContext(ctx, {
+        fileId: args.fileId,
+        taskId: args.taskId,
+        contactNameOverride: args.contextContactName,
+      })
+    : {};
+
+  const contextFileName =
+    args.contextFileName?.trim().slice(0, 160) || resolved.contextFileName;
+  const contextContactName =
+    args.contextContactName?.trim().slice(0, 120) ||
+    resolved.contextContactName;
+  const contextStageLabel =
+    args.contextStageLabel?.trim().slice(0, 80) || resolved.contextStageLabel;
+
   const id = await ctx.db.insert("userNotifications", {
     userKey: recipient,
     category: args.category,
@@ -123,8 +150,12 @@ export async function dispatchUserNotification(
     fileId: args.fileId,
     lenderId: args.lenderId,
     libraryDocumentId: args.libraryDocumentId,
+    documentVaultFileTaskId: args.documentVaultFileTaskId,
     collaborationThreadId: args.collaborationThreadId,
     collaborationEventId: args.collaborationEventId,
+    contextFileName,
+    contextContactName,
+    contextStageLabel,
     dedupeKey: args.dedupeKey?.trim() || undefined,
     snoozedUntil: args.snoozedUntil,
   });
@@ -137,6 +168,14 @@ export async function dispatchUserNotification(
   return id;
 }
 
+/**
+ * Unread notifications for the bell.
+ *
+ * `snoozedUntil` is returned on each row but **not** compared to the clock here —
+ * a wall-clock read makes the query uncacheable and forces every subscriber to
+ * re-execute it. `UserNotificationsBell` drops still-snoozed rows on render, which
+ * also means the row reappears the moment its snooze lapses without a server tick.
+ */
 export const listUnreadForUser = query({
   args: {
     userKey: v.string(),
@@ -153,18 +192,28 @@ export const listUnreadForUser = query({
       .withIndex("by_user_created", (q) => q.eq("userKey", k))
       .order("desc")
       .take(cap * 3);
-    const t = Date.now();
-    const page = rows
-      .filter(
-        (r) =>
-          r.readAt == null &&
-          (r.snoozedUntil == null || r.snoozedUntil <= t),
-      )
-      .slice(0, cap);
+    const page = rows.filter((r) => r.readAt == null).slice(0, cap);
     const enriched = [];
     for (const r of page) {
+      const needsBackfill =
+        Boolean(r.fileId || r.taskId) &&
+        (!r.contextFileName?.trim() ||
+          !r.contextContactName?.trim() ||
+          !r.contextStageLabel?.trim());
+      const backfill = needsBackfill
+        ? await resolveNotificationContext(ctx, {
+            fileId: r.fileId,
+            taskId: r.taskId,
+            contactNameOverride: r.contextContactName,
+          })
+        : {};
       enriched.push({
         ...r,
+        contextFileName: r.contextFileName?.trim() || backfill.contextFileName,
+        contextContactName:
+          r.contextContactName?.trim() || backfill.contextContactName,
+        contextStageLabel:
+          r.contextStageLabel?.trim() || backfill.contextStageLabel,
         actorDisplayUsername: r.actorUserKey
           ? await resolveDisplayUsernameForUserKey(ctx, r.actorUserKey)
           : undefined,
@@ -174,6 +223,13 @@ export const listUnreadForUser = query({
   },
 });
 
+/**
+ * Unread badge count. Clock-free for cacheability (see `listUnreadForUser`), so
+ * snoozed-but-unread rows are included here; `UserNotificationsBell` subtracts the
+ * ones it can see as still snoozed from `listUnreadForUser`. Nothing in the product
+ * snoozes a notification today (`notifications.snooze` has no UI entry point), so
+ * in practice this equals the previously-filtered count.
+ */
 export const unreadCountForUser = query({
   args: {
     userKey: v.string(),
@@ -183,17 +239,12 @@ export const unreadCountForUser = query({
     const k = userKey.trim();
     if (!k) return 0;
     await assertCallerOwnsUserKey(ctx, k, memberUserKey);
-    const t = Date.now();
     const rows = await ctx.db
       .query("userNotifications")
       .withIndex("by_user_created", (q) => q.eq("userKey", k))
       .order("desc")
       .take(200);
-    return rows.filter(
-      (r) =>
-        r.readAt == null &&
-        (r.snoozedUntil == null || r.snoozedUntil <= t),
-    ).length;
+    return rows.filter((r) => r.readAt == null).length;
   },
 });
 

@@ -38,6 +38,7 @@ import {
   type DealBibleCompileProgress,
 } from "@/lib/library/pdfCompiler";
 import { uploadFileToVault, type VaultUploadMutations } from "@/lib/library/uploadFileToVault";
+import { vaultDocumentOutboundFileName } from "@/lib/library/vaultOutboundFileName";
 import { pdfBytesToFile } from "@/lib/library/pdfManipulation";
 import { compileVaultPackageZip } from "@/lib/library/compileVaultPackageZip";
 import { buildVaultDocumentZipPath } from "@/lib/library/vaultZipPaths";
@@ -387,7 +388,7 @@ export function DealBibleCompilerModal({
           versionId: doc.latestVersionId!,
           title: doc.title,
           folderId: doc.folderId,
-          fileName: doc.latestFileName ?? doc.title,
+          fileName: vaultDocumentOutboundFileName(doc),
         },
       ];
     });
@@ -426,7 +427,7 @@ export function DealBibleCompilerModal({
               versionId: doc.latestVersionId,
               title: doc.title,
               folderId: doc.folderId,
-              fileName: doc.latestFileName ?? doc.title,
+              fileName: vaultDocumentOutboundFileName(doc),
             });
           }
           return next;

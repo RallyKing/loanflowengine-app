@@ -44,7 +44,7 @@ function textField(
  */
 export function buildPfsBlockPdfSpec(
   pfs: PersonalFinancialStatement,
-  opts?: { fileName?: string },
+  opts?: { fileName?: string; title?: string },
 ): BlockPdfExportSpec {
   const computed = computePersonalFinancialStatement(pfs);
   const a = pfs.assets;
@@ -55,7 +55,7 @@ export function buildPfsBlockPdfSpec(
 
   return {
     blockId: "pfs",
-    title: "Personal Financial Statement",
+    title: opts?.title?.trim() || "Personal Financial Statement",
     subtitle:
       "SBA-style PFS — complete applicable fields. Round dollar amounts up to whole dollars.",
     fileName: opts?.fileName ?? "Personal_Financial_Statement.pdf",

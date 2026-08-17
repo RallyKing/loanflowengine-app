@@ -44,6 +44,8 @@ import {
   snoozedUntilToMs,
   startOfLocalDayOffsetMs,
 } from "@/lib/pipelineSnooze";
+import { lastPipelineActivityAt } from "@/lib/pipelineAutoArchive";
+import { PipelineFileAutoArchiveControl } from "@/components/pipeline/PipelineFileAutoArchiveControl";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
@@ -125,6 +127,7 @@ import {
   pipelineHubProjectionHref,
   PIPELINE_FILE_BLOCK_QUERY,
   PIPELINE_FILE_TAB_QUERY,
+  PIPELINE_FILE_DOCUMENT_QUERY,
   PIPELINE_HUB_PROJECTION_QUERY,
   PIPELINE_HUB_ENTITY_QUERY,
   PIPELINE_HUB_CLIENT_QUERY,
@@ -272,7 +275,7 @@ import {
 import type { FileTaskCreatePayload } from "@/lib/inFileTaskTriageUi";
 import { resolvePrimaryBorrowerContactId } from "@/lib/library/documentVaultHydration";
 import {
-  entityBorrowerLabelFromDealBusiness,
+  resolveEntityDisplayNameForClientTitle,
   resolveFileHeaderPrimaryBorrowerLabel,
 } from "@/lib/pipeline/resolveFileHeaderPrimaryBorrowerLabel";
 import { DealWorkspaceEditorProvider } from "@/lib/file/useDealWorkspaceEditor";
@@ -455,6 +458,22 @@ const PfsBlockLazy = nextDynamic(
   { ssr: false },
 );
 
+const TrackRecordBlockLazy = nextDynamic(
+  () =>
+    import("@/components/pipeline/blocks/TrackRecordBlock").then((m) => ({
+      default: m.TrackRecordBlock,
+    })),
+  { ssr: false },
+);
+
+const SimplePlBlockLazy = nextDynamic(
+  () =>
+    import("@/components/pipeline/blocks/SimplePlBlock").then((m) => ({
+      default: m.SimplePlBlock,
+    })),
+  { ssr: false },
+);
+
 /**
  * Favorites bar — open pinned blocks in window-in-window (FloatingBlockWindow
  * host, same as CollapsibleBlock “Open in window”). Seed-capable blocks use a
@@ -469,6 +488,8 @@ const FAVORITE_FLOATING_CAPABLE_BLOCKS = new Set<PipelineBlockId>([
   "constructionBudget",
   "investorExperience",
   "pfs",
+  "trackRecord",
+  "simplePl",
 ]);
 
 /** Blocks offered in the favorites manage popover (destructive admin excluded). */
@@ -964,6 +985,7 @@ function PipelineFileWorkspaceLoaded({
 
   const deepLinkBlock = searchParams.get(PIPELINE_FILE_BLOCK_QUERY);
   const deepLinkTab = searchParams.get(PIPELINE_FILE_TAB_QUERY);
+  const deepLinkDocument = searchParams.get(PIPELINE_FILE_DOCUMENT_QUERY);
   const pipelineReadyId = detail?.pipeline?._id;
 
   useEffect(() => {
@@ -972,6 +994,20 @@ function PipelineFileWorkspaceLoaded({
     if (!normalized) return;
     setWorkspaceActiveTab(normalized);
   }, [pipelineReadyId, deepLinkTab]);
+
+  useEffect(() => {
+    if (!deepLinkDocument?.trim() || pipelineReadyId == null) return;
+    const docId = deepLinkDocument.trim() as Id<"libraryDocuments">;
+    setDocumentsVaultFocus(
+      createDocumentVaultNavigationFocus({ highlightDocumentId: docId }),
+    );
+    setWorkspaceActiveTab("documents");
+    const anchorId = DOCUMENTS_TAB_SECTION_IDS.vault;
+    const t = window.requestAnimationFrame(() => {
+      scrollToPipelineWorkspaceAnchor(anchorId, "auto");
+    });
+    return () => window.cancelAnimationFrame(t);
+  }, [pipelineReadyId, deepLinkDocument]);
 
   useEffect(() => {
     if (!deepLinkBlock || pipelineReadyId == null) return;
@@ -1078,14 +1114,19 @@ function PipelineFileWorkspaceLoaded({
     async (args: Parameters<typeof patchPipeline>[0]) => {
       if (accessReadOnly) return;
       const pipe = detail?.pipeline;
-      // Background term-options sync must not take the concurrency token —
-      // it races File Details edits and was the source of CONFLICT_DATA_CHANGED
-      // on TERM / scenario / commission saves (request 7bfb56523352ca45).
+      // Online File Details edits (TERM, scenario, commission, …) must not send
+      // expectedUpdatedAt: background writers (Generate Terms, patchDeal, layout)
+      // bump updatedAt constantly, and production redacts CONFLICT_DATA_CHANGED
+      // to a bare "Server Error" (requests 7bfb56523352ca45 / 0e56365204c62ef1).
+      // Offline queue still carries the guard; patchWithConflictRetry remains a
+      // safety net when a guard is present.
       const termOptionsOnly = isTermOptionsOnlyPipelinePatch(
         args as Record<string, unknown>,
       );
       const expectedUpdatedAt =
-        !termOptionsOnly && pipe?._id === args.id
+        !canUseHub &&
+        !termOptionsOnly &&
+        pipe?._id === args.id
           ? pipe.updatedAt
           : undefined;
       const payload = {
@@ -1426,10 +1467,17 @@ function PipelineFileWorkspaceLoaded({
   const unarchivePipeline = useMutation(api.pipeline.unarchive);
   const snoozePipeline = useMutation(api.pipeline.snooze);
   const unsnoozePipeline = useMutation(api.pipeline.unsnooze);
+  const setAutoArchiveOnInactivity = useMutation(
+    api.pipeline.setAutoArchiveOnInactivity,
+  );
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [snoozing, setSnoozing] = useState(false);
   const [snoozeError, setSnoozeError] = useState<string | null>(null);
+  const [autoArchiving, setAutoArchiving] = useState(false);
+  const [autoArchiveError, setAutoArchiveError] = useState<string | null>(
+    null,
+  );
 
   const intakeSheetIdForLicense = detail?.pipeline?.intakeSheetId;
   const licenseDisplay = useMemo(
@@ -2152,9 +2200,12 @@ function PipelineFileWorkspaceLoaded({
       detail.viewerAccess?.canMutate ?? detail.canMutateFile === true;
     const fallbackClientDisplayName =
       globalBannerSwitchRow?.clientDisplayName?.trim() || "";
-    const entityDisplayName = entityBorrowerLabelFromDealBusiness(
-      dealSheetForMetrics?.business,
-    );
+    const entityDisplayName = resolveEntityDisplayNameForClientTitle({
+      linkedClients: globalBannerSwitchRow?.linkedClients,
+      clientRecordLabel: fallbackClientDisplayName,
+      clientRecordEntityType: null,
+      dealBusiness: dealSheetForMetrics?.business,
+    });
     const { label: clientDisplayName } = resolveFileHeaderPrimaryBorrowerLabel({
       links: associatedContactLinks,
       contactsById: workspaceContactById,
@@ -2716,6 +2767,40 @@ function PipelineFileWorkspaceLoaded({
     }
   }
 
+  async function commitAutoArchiveDays(days: number) {
+    if (readOnly) return;
+    setAutoArchiveError(null);
+    setAutoArchiving(true);
+    try {
+      await setAutoArchiveOnInactivity({
+        id: p._id,
+        inactivityDays: days,
+        ...(preferencesAccountId ? { preferencesAccountId } : {}),
+      });
+    } catch (e) {
+      setAutoArchiveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAutoArchiving(false);
+    }
+  }
+
+  async function clearAutoArchive() {
+    if (readOnly) return;
+    setAutoArchiveError(null);
+    setAutoArchiving(true);
+    try {
+      await setAutoArchiveOnInactivity({
+        id: p._id,
+        inactivityDays: null,
+        ...(preferencesAccountId ? { preferencesAccountId } : {}),
+      });
+    } catch (e) {
+      setAutoArchiveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAutoArchiving(false);
+    }
+  }
+
   const legacyContactCount = p.contacts?.length ?? 0;
   const splits: SplitRow[] = p.splits ?? [];
 
@@ -3067,12 +3152,14 @@ function PipelineFileWorkspaceLoaded({
           layout={drawerLayout}
           onLayoutChange={(next) => setDrawerLayout(next)}
           parentTab="financials"
-          blockIds={["pfs", "constructionBudget"]}
+          blockIds={["pfs", "constructionBudget", "trackRecord", "simplePl"]}
         />
       }
       modularBlocks={
         activeDrawerBlockIds.has("constructionBudget") ||
-        activeDrawerBlockIds.has("pfs") ? (
+        activeDrawerBlockIds.has("pfs") ||
+        activeDrawerBlockIds.has("trackRecord") ||
+        activeDrawerBlockIds.has("simplePl") ? (
           <>
             {activeDrawerBlockIds.has("constructionBudget") ? (
               <ConstructionBudgetBlockLazy
@@ -3083,6 +3170,20 @@ function PipelineFileWorkspaceLoaded({
             ) : null}
             {activeDrawerBlockIds.has("pfs") ? (
               <PfsBlockLazy
+                contactId={primaryBorrowerContactId ?? null}
+                memberUserKey={preferencesAccountId || undefined}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {activeDrawerBlockIds.has("trackRecord") ? (
+              <TrackRecordBlockLazy
+                contactId={primaryBorrowerContactId ?? null}
+                memberUserKey={preferencesAccountId || undefined}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {activeDrawerBlockIds.has("simplePl") ? (
+              <SimplePlBlockLazy
                 contactId={primaryBorrowerContactId ?? null}
                 memberUserKey={preferencesAccountId || undefined}
                 readOnly={readOnly}
@@ -3232,6 +3333,22 @@ function PipelineFileWorkspaceLoaded({
       case "pfs":
         return (
           <PfsBlockLazy
+            contactId={primaryBorrowerContactId ?? null}
+            memberUserKey={preferencesAccountId || undefined}
+            readOnly={readOnly}
+          />
+        );
+      case "trackRecord":
+        return (
+          <TrackRecordBlockLazy
+            contactId={primaryBorrowerContactId ?? null}
+            memberUserKey={preferencesAccountId || undefined}
+            readOnly={readOnly}
+          />
+        );
+      case "simplePl":
+        return (
+          <SimplePlBlockLazy
             contactId={primaryBorrowerContactId ?? null}
             memberUserKey={preferencesAccountId || undefined}
             readOnly={readOnly}
@@ -3589,6 +3706,19 @@ function PipelineFileWorkspaceLoaded({
                         </Button>
                       </div>
                     </div>
+                    <PipelineFileAutoArchiveControl
+                      inactivityDays={p.autoArchiveInactivityDays}
+                      autoArchiveAfterAt={p.autoArchiveAfterAt}
+                      lastActivityAt={lastPipelineActivityAt(p)}
+                      archived={p.archivedAt != null}
+                      disabled={
+                        p.archivedAt != null || !canMutateWorkspaceFile
+                      }
+                      busy={autoArchiving}
+                      error={autoArchiveError}
+                      onEnable={(days) => void commitAutoArchiveDays(days)}
+                      onDisable={() => void clearAutoArchive()}
+                    />
                   </div>
                   {snoozeError ? (
                     <p className="text-xs text-destructive" role="alert">

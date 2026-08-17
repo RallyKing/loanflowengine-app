@@ -20,9 +20,25 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { OverlayShell } from "@/components/ui/OverlayShell";
+import {
+  TriageClockProvider,
+  useTriageClockTime,
+} from "@/components/providers/TriageClockProvider";
 import { cn } from "@/lib/cn";
 import { clientPortalPublicOrigin } from "@/lib/clientPortalUrl";
+import {
+  formatDateTimeInTimeZone,
+  formatRemainingUntil,
+  formatTimeZoneShortName,
+  fromDatetimeLocalValueInTimeZone,
+  mergeDisplaySettingsTimezone,
+  resolveViewerTimeZone,
+  toDatetimeLocalValueInTimeZone,
+  VIEWER_TIMEZONE_OPTIONS,
+  viewerTimeZoneOptionLabel,
+} from "@/lib/dateTimeZone";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
+import { useUserPreferences } from "@/lib/userPreferencesContext";
 
 export type ClientPortalLinkRepositoryProps = {
   open: boolean;
@@ -57,27 +73,7 @@ function statusTone(status: string): string {
   return "text-amber-800 bg-amber-50";
 }
 
-function formatExpiry(ms: number): string {
-  const delta = ms - Date.now();
-  if (delta <= 0) return "Expired";
-  const hours = Math.floor(delta / (60 * 60 * 1000));
-  if (hours < 48) return `${hours}h remaining`;
-  const days = Math.floor(hours / 24);
-  return `${days}d remaining`;
-}
-
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-function toDatetimeLocalValue(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fromDatetimeLocalValue(value: string): number | null {
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
 
 function computeAdjustedExpiry(currentExpiresAt: number, adjustDays: AdjustDays): number {
   const now = Date.now();
@@ -132,13 +128,22 @@ function displayUrl(link: PortalLinkRow): {
   return { url: null, hint: `${origin}/client-portal/…` };
 }
 
-export function ClientPortalLinkRepository({
+export function ClientPortalLinkRepository(props: ClientPortalLinkRepositoryProps) {
+  return (
+    <TriageClockProvider>
+      <ClientPortalLinkRepositoryInner {...props} />
+    </TriageClockProvider>
+  );
+}
+
+function ClientPortalLinkRepositoryInner({
   open,
   onClose,
   pipelineFileId,
   memberUserKey,
   onError,
 }: ClientPortalLinkRepositoryProps) {
+  const nowBucket = useTriageClockTime();
   const [tab, setTab] = useState<TabId>("client");
   const [busyLinkId, setBusyLinkId] = useState<Id<"clientPortalLinks"> | null>(
     null,
@@ -153,6 +158,9 @@ export function ClientPortalLinkRepository({
     null,
   );
   const [expiryEditValue, setExpiryEditValue] = useState("");
+  const { preferences, updatePreferences, ready: prefsReady } = useUserPreferences();
+  const timeZone = resolveViewerTimeZone(preferences.displaySettings);
+  const timeZoneShort = formatTimeZoneShortName(Date.now(), timeZone);
 
   // One-time URL banner + expiry editor are session-scoped to the open modal.
   useEffect(() => {
@@ -163,23 +171,44 @@ export function ClientPortalLinkRepository({
     }
   }, [open]);
 
+  const clientLinkArgs = useMemo(() => {
+    if (!open || !memberUserKey) return "skip" as const;
+    return {
+      pipelineFileId,
+      memberUserKey,
+      nowBucket,
+      linkType: "client" as const,
+    };
+  }, [open, memberUserKey, pipelineFileId, nowBucket]);
+  const lenderLinkArgs = useMemo(() => {
+    if (!open || !memberUserKey) return "skip" as const;
+    return {
+      pipelineFileId,
+      memberUserKey,
+      nowBucket,
+      linkType: "lender" as const,
+    };
+  }, [open, memberUserKey, pipelineFileId, nowBucket]);
+  const accessLinkArgs = useMemo(() => {
+    if (!open || !memberUserKey) return "skip" as const;
+    return {
+      pipelineFileId,
+      memberUserKey,
+      nowBucket,
+      linkType: "access" as const,
+    };
+  }, [open, memberUserKey, pipelineFileId, nowBucket]);
   const clientLinks = useQuery(
     api.clientPortalLinks.listLinksForPipeline,
-    open && memberUserKey
-      ? { pipelineFileId, memberUserKey, linkType: "client" }
-      : "skip",
+    clientLinkArgs,
   );
   const lenderLinks = useQuery(
     api.clientPortalLinks.listLinksForPipeline,
-    open && memberUserKey
-      ? { pipelineFileId, memberUserKey, linkType: "lender" }
-      : "skip",
+    lenderLinkArgs,
   );
   const accessLinks = useQuery(
     api.clientPortalLinks.listLinksForPipeline,
-    open && memberUserKey
-      ? { pipelineFileId, memberUserKey, linkType: "access" }
-      : "skip",
+    accessLinkArgs,
   );
   const revokeLink = useMutation(api.clientPortalLinks.revokeLink);
   const setLinkExpiry = useMutation(api.clientPortalLinks.setLinkExpiry);
@@ -234,6 +263,41 @@ export function ClientPortalLinkRepository({
           Central control for client, lender, task-upload, and portal-grant access.
           Extend, reactivate, regenerate, revoke, or configure security gates.
         </p>
+        <div
+          className="mt-2 flex shrink-0 flex-wrap items-center gap-2"
+          data-testid="portal-link-timezone-row"
+        >
+          <label className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <Clock className="h-3 w-3 shrink-0" aria-hidden />
+            <span>Times in</span>
+            <select
+              className="h-7 max-w-[min(100%,14rem)] rounded-dlc-sm border border-border/70 bg-background px-1.5 text-[10px] text-foreground"
+              value={timeZone}
+              disabled={!prefsReady}
+              aria-label="Preferred timezone for link expiry"
+              data-testid="portal-link-timezone-select"
+              onChange={(e) => {
+                const next = mergeDisplaySettingsTimezone(
+                  preferences.displaySettings,
+                  e.target.value,
+                );
+                void updatePreferences({ displaySettings: next });
+              }}
+            >
+              {VIEWER_TIMEZONE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label} ({opt.value})
+                </option>
+              ))}
+              {!VIEWER_TIMEZONE_OPTIONS.some((o) => o.value === timeZone) ? (
+                <option value={timeZone}>{timeZone}</option>
+              ) : null}
+            </select>
+          </label>
+          <span className="text-[10px] text-muted-foreground">
+            {viewerTimeZoneOptionLabel(timeZone)} · {timeZoneShort}
+          </span>
+        </div>
 
         <div
           className="mt-4 flex shrink-0 gap-1 rounded-dlc-md border border-border/70 p-0.5"
@@ -350,8 +414,10 @@ export function ClientPortalLinkRepository({
                         ) : null}
                         <p className="mt-1 text-[10px] text-muted-foreground">
                           {(link.linkKind ?? link.linkType).replace(/_/g, " ")} ·{" "}
-                          {formatExpiry(link.expiresAt)} · expires{" "}
-                          {new Date(link.expiresAt).toLocaleString()}
+                          {formatRemainingUntil(link.expiresAt)} · expires{" "}
+                          {formatDateTimeInTimeZone(link.expiresAt, timeZone, {
+                            includeSeconds: true,
+                          })}
                         </p>
                       </div>
                       <span
@@ -443,7 +509,7 @@ export function ClientPortalLinkRepository({
                                     });
                                     showOperationalToast({
                                       title: "Expiry updated",
-                                      description: `New expiry: ${new Date(result.expiresAt).toLocaleString()}`,
+                                      description: `New expiry: ${formatDateTimeInTimeZone(result.expiresAt, timeZone)}`,
                                       variant: "success",
                                     });
                                   });
@@ -468,8 +534,9 @@ export function ClientPortalLinkRepository({
                               onClick={() => {
                                 setExpiryEditLinkId(link._id);
                                 setExpiryEditValue(
-                                  toDatetimeLocalValue(
+                                  toDatetimeLocalValueInTimeZone(
                                     Math.max(link.expiresAt, Date.now() + 60_000),
+                                    timeZone,
                                   ),
                                 );
                               }}
@@ -497,7 +564,7 @@ export function ClientPortalLinkRepository({
                                 });
                                 showOperationalToast({
                                   title: "Link reactivated",
-                                  description: `Access restored until ${new Date(result.expiresAt).toLocaleString()}`,
+                                  description: `Access restored until ${formatDateTimeInTimeZone(result.expiresAt, timeZone)}`,
                                   variant: "success",
                                 });
                               })
@@ -572,7 +639,8 @@ export function ClientPortalLinkRepository({
                         data-testid={`portal-link-expiry-editor-${link._id}`}
                       >
                         <label className="block text-[10px] font-medium text-foreground">
-                          Link expires
+                          Link expires ({formatTimeZoneShortName(Date.now(), timeZone)} ·{" "}
+                          {viewerTimeZoneOptionLabel(timeZone)})
                           <Input
                             className="mt-1 h-8"
                             type="datetime-local"
@@ -603,7 +671,10 @@ export function ClientPortalLinkRepository({
                             disabled={busy || !expiryEditValue}
                             data-testid={`portal-link-expiry-save-${link._id}`}
                             onClick={() => {
-                              const next = fromDatetimeLocalValue(expiryEditValue);
+                              const next = fromDatetimeLocalValueInTimeZone(
+                                expiryEditValue,
+                                timeZone,
+                              );
                               if (next == null) {
                                 onError("Enter a valid expiry date and time.");
                                 return;
@@ -622,7 +693,7 @@ export function ClientPortalLinkRepository({
                                 setExpiryEditValue("");
                                 showOperationalToast({
                                   title: "Expiry updated",
-                                  description: `New expiry: ${new Date(result.expiresAt).toLocaleString()}`,
+                                  description: `New expiry: ${formatDateTimeInTimeZone(result.expiresAt, timeZone)}`,
                                   variant: "success",
                                 });
                               });

@@ -8,6 +8,8 @@ export type RemoteZipFile = {
   url: string;
   /** Nested path inside the ZIP (e.g. `Tax Returns/2024/doc.pdf`). */
   zipPath?: string;
+  /** When set, skip fetch and use these bytes (e.g. HTML → PDF conversion). */
+  bytes?: Uint8Array;
 };
 
 export type VaultDownloadItem = RemoteZipFile & {
@@ -83,11 +85,16 @@ export async function downloadRemoteFilesZip(
       total,
       currentFileName: item.fileName,
     });
-    const res = await fetch(item.url, { cache: "no-store" });
-    if (!res.ok) {
-      throw new Error(`Failed to fetch ${item.fileName} (${res.status})`);
+    let buf: ArrayBuffer | Uint8Array;
+    if (item.bytes) {
+      buf = item.bytes;
+    } else {
+      const res = await fetch(item.url, { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch ${item.fileName} (${res.status})`);
+      }
+      buf = await res.arrayBuffer();
     }
-    const buf = await res.arrayBuffer();
     const rawPath =
       item.zipPath?.trim() ||
       item.fileName.trim() ||

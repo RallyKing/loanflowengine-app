@@ -1,0 +1,20 @@
+{
+  "description": "Ratchet baselines for docs/governance/convex-reactivity-policy.md. `undocumentedExhaustiveDepsDisablesByFile` = eslint-disable of react-hooks/exhaustive-deps without `// reactivity-allow: <reason>` on that line or the line above. New disables must carry the tag; this list may shrink, never grow.",
+  "regenerate": "node scripts/verify-convex-reactivity.mjs --update-baseline",
+  "policy": "docs/governance/convex-reactivity-policy.md",
+  "undocumentedExhaustiveDepsDisablesByFile": {
+    "app/tasks/page.tsx": 1,
+    "components/library/preview/RichFilePreview.tsx": 2,
+    "components/ScenarioSearch.tsx": 1,
+    "components/ui/CollapsibleBlock.tsx": 1,
+    "lib/contacts/borrowerTabWriteAdapter.ts": 1,
+    "lib/file/useDealWorkspaceEditor.tsx": 1,
+    "lib/orgPermissionsContext.tsx": 1,
+    "lib/sessionUiClient.tsx": 1,
+    "modules/pipeline/components/tabs/ClientPortalTab.tsx": 1,
+    "modules/pipeline/components/tabs/UnderwritingLedgerTab.tsx": 1,
+    "modules/pipeline/workspace/PipelineFileWorkspace.tsx": 2,
+    "modules/pipeline/workspace/PipelineScenarioMatch.tsx": 1,
+    "modules/settings/components/PortalDefaultsPageBuilder.tsx": 1
+  }
+}

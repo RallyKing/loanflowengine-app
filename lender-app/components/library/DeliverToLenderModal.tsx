@@ -10,6 +10,11 @@ import { Input } from "@/components/ui/Input";
 import { OverlayShell } from "@/components/ui/OverlayShell";
 import { cn } from "@/lib/cn";
 import { buildClientPortalUrl } from "@/lib/clientPortalUrl";
+import {
+  buildLenderDeliveryEmailCopy,
+  buildLenderDeliveryEmailItemsFromSelection,
+  type LenderDeliveryEmailItem,
+} from "@/lib/lenderDeliveryEmailCopy";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 
 export type DeliverToLenderModalProps = {
@@ -70,6 +75,10 @@ export function DeliverToLenderModal({
   const [selectedFolders, setSelectedFolders] = useState<Set<string>>(new Set());
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set());
   const [deliveryUrl, setDeliveryUrl] = useState("");
+  const [packageItems, setPackageItems] = useState<LenderDeliveryEmailItem[]>(
+    [],
+  );
+  const [emailCopy, setEmailCopy] = useState("");
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const [addMode, setAddMode] = useState<AddMode>(null);
@@ -108,6 +117,8 @@ export function DeliverToLenderModal({
       setSearch("");
       setLenderId("");
       setDeliveryUrl("");
+      setPackageItems([]);
+      setEmailCopy("");
       setAddMode(null);
       setNewCompany("");
       setNewContact("");
@@ -243,11 +254,30 @@ export function DeliverToLenderModal({
         ),
         memberUserKey,
       });
-      const url = buildClientPortalUrl(
-        result.companySlug ?? "portal",
-        result.token,
-      );
+      const url =
+        result.deliveryUrl?.trim() ||
+        buildClientPortalUrl(result.companySlug ?? "portal", result.token);
+      const itemsFromServer =
+        result.packageItems?.length > 0
+          ? result.packageItems.map((item) => ({
+              title: item.title,
+              description: item.description,
+            }))
+          : null;
+      const items =
+        itemsFromServer ??
+        buildLenderDeliveryEmailItemsFromSelection({
+          selectedTaskIds: selectedTasks,
+          selectedFolderIds: selectedFolders,
+          selectedDocumentIds: selectedDocs,
+          fileTasks: activeTasks,
+          folders: activeFolders,
+          documents,
+        });
+      const copyText = buildLenderDeliveryEmailCopy(items, url);
       setDeliveryUrl(url);
+      setPackageItems(items);
+      setEmailCopy(copyText);
       showOperationalToast({
         title: "Lender delivery link created",
         description: `${result.documentCount} document(s) packaged.`,
@@ -288,13 +318,27 @@ export function DeliverToLenderModal({
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopyUrl = async () => {
     if (!deliveryUrl) return;
     try {
       await navigator.clipboard.writeText(deliveryUrl);
-      showOperationalToast({ title: "Link copied" });
+      showOperationalToast({ title: "Link copied", variant: "success" });
     } catch {
       onError("Could not copy link.");
+    }
+  };
+
+  const handleCopyEmailBlock = async () => {
+    if (!emailCopy) return;
+    try {
+      await navigator.clipboard.writeText(emailCopy);
+      showOperationalToast({
+        title: "Email text copied",
+        description: "Paste into your email to the lender.",
+        variant: "success",
+      });
+    } catch {
+      onError("Could not copy email text.");
     }
   };
 
@@ -550,13 +594,23 @@ export function DeliverToLenderModal({
             <p className="text-xs text-muted-foreground">No file tasks.</p>
           ) : (
             activeTasks.map((t) => (
-              <label key={t._id} className="flex min-h-9 items-center gap-2 text-xs">
+              <label key={t._id} className="flex min-h-9 items-start gap-2 text-xs">
                 <input
                   type="checkbox"
+                  className="mt-1"
                   checked={selectedTasks.has(String(t._id))}
                   onChange={() => toggle(setSelectedTasks, String(t._id))}
                 />
-                {t.title}
+                <span className="min-w-0">
+                  <span className="block font-medium text-foreground">
+                    {t.title}
+                  </span>
+                  {t.description?.trim() ? (
+                    <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
+                      {t.description.trim()}
+                    </span>
+                  ) : null}
+                </span>
               </label>
             ))
           )}
@@ -601,25 +655,56 @@ export function DeliverToLenderModal({
           </p>
         ) : null}
 
-        {deliveryUrl ? (
-          <div className="space-y-2">
-            <Input value={deliveryUrl} readOnly className="text-xs" />
+        {deliveryUrl && emailCopy ? (
+          <div
+            className="space-y-3 rounded-dlc-md border border-border/70 bg-dlc-surface px-3 py-3"
+            data-testid="deliver-lender-email-copy"
+          >
+            <div>
+              <p className="text-[11px] font-semibold text-foreground">
+                Email-ready copy
+              </p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                {packageItems.length} package item
+                {packageItems.length === 1 ? "" : "s"} · paste into your email
+              </p>
+            </div>
+            <textarea
+              readOnly
+              value={emailCopy}
+              rows={Math.min(14, emailCopy.split("\n").length + 1)}
+              className="w-full resize-y rounded-dlc-md border border-border/70 bg-background px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground"
+              data-testid="deliver-lender-email-copy-text"
+              onFocus={(e) => e.currentTarget.select()}
+            />
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
-                onClick={() => void handleCopy()}
+                variant="primary"
+                onClick={() => void handleCopyEmailBlock()}
+                data-testid="deliver-lender-copy-email"
               >
                 <Copy className="h-3.5 w-3.5" aria-hidden />
-                Copy link
+                Copy email text
               </Button>
               <Button
                 type="button"
                 size="sm"
-                variant="primary"
+                variant="outline"
+                onClick={() => void handleCopyUrl()}
+                data-testid="deliver-lender-copy-url"
+              >
+                <Copy className="h-3.5 w-3.5" aria-hidden />
+                Copy URL only
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
                 disabled={sending || !selectedLender?.email?.trim()}
                 onClick={() => void handleSend()}
+                data-testid="deliver-lender-send"
               >
                 {sending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -631,10 +716,17 @@ export function DeliverToLenderModal({
                 )}
               </Button>
             </div>
+            <Input
+              value={deliveryUrl}
+              readOnly
+              className="text-[10px]"
+              data-testid="deliver-lender-portal-url"
+              aria-label="Generated lender portal URL"
+            />
             {!selectedLender?.email?.trim() ? (
               <p className="text-xs text-amber-700 dark:text-amber-400">
-                No email on this lender — copy the link, or add an email via Add
-                lender / One-time recipient.
+                No email on this lender — copy the email text or URL, or add an
+                email via Add lender / One-time recipient.
               </p>
             ) : null}
           </div>

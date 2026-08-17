@@ -2,12 +2,15 @@ import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
-import { borrower, guarantor, incomeRow, assetRow, liabilityRow, reoRow, weightedInterestRow } from "./intakeSchemaPart";
+import { borrower, guarantor, incomeRow, assetRow, liabilityRow, reoBlockMeta, reoRow, businessDebtBlockMeta, weightedInterestRow, trackRecordBlockMeta, trackRecordRow } from "./intakeSchemaPart";
+import { pfsInstanceV } from "./pfsStatementValidators";
+import { simplePlInstanceV } from "./simplePlValidators";
 import {
   mergePatchIntoDeal,
   resolveDealBaseForPipelinePatch,
 } from "./dealDataMerge";
 import { refreshPipelineGlobalSearchText } from "./globalSearchSync";
+import { syncFileClientTitleFromPrimaryParties } from "./pipelineClientTitleSync";
 import { appendPipelineFileActivity } from "./pipelineFileActivity";
 import { clampActivitySummary } from "../lib/pipelineFileActivityModel";
 import { sanitizeDbPatch } from "./sanitizeConvexPatch";
@@ -16,6 +19,7 @@ import {
   assertCanMutateContactFileLink,
   assertCanMutatePipelineRow,
   assertCanReadContactRow,
+  assertCanAccessFile,
   assertOrgPermission,
 } from "./organizationAccess";
 import { refreshContactGlobalSearchText } from "./globalSearchSync";
@@ -26,7 +30,10 @@ import {
   primaryContactPhone,
 } from "../lib/contact/contactMethods";
 import { normalizeEmailKey } from "../lib/crmRelationship";
-import { DEFAULT_CONTACT_ROLE_IDS } from "../lib/contact/contactRoles";
+import {
+  DEFAULT_CONTACT_ROLE_IDS,
+  effectiveContactRoleIdFromDoc,
+} from "../lib/contact/contactRoles";
 import {
   borrowerFileLinkRole,
   borrowerRowHasIdentity,
@@ -63,10 +70,71 @@ import {
   type ContactReoPropertyShape,
 } from "../lib/contacts/reoFromDeal";
 import {
+  applyReoCopyPlan,
+  collectReoCopyAssigneeIds,
+  planReoCopy,
+  type ReoCopyMode,
+} from "../lib/reo/reoCopy";
+import type { DealReoRow, ReoBlockMeta } from "../lib/reo/scheduleOfReoModel";
+import {
+  ensureDealReoRowId,
+  normalizeContactIdList,
+  sanitizeDealReoRows,
+  withComputedReoFields,
+} from "../lib/reo/scheduleOfReoModel";
+import { insertPipelineFileWithDeal } from "./pipeline";
+import {
+  REGISTRY_ROLE_IDS,
+  type RegistryRoleId,
+} from "../lib/registry/universalRoles";
+import {
   businessDebtFingerprintFromLegacyRow,
   businessDebtFingerprintFromStored,
   businessDebtRowToScheduleShape,
+  contactBusinessDebtShapeKeys,
 } from "../lib/contacts/businessDebtFromDeal";
+import {
+  applyBusinessDebtCopyPlan,
+  planBusinessDebtCopy,
+  type BusinessDebtCopyMode,
+} from "../lib/businessDebt/businessDebtCopy";
+import type { DealBusinessDebtRow } from "../lib/businessDebt/scheduleOfBusinessDebtModel";
+import {
+  ensureDealBusinessDebtRowId,
+  sanitizeDealBusinessDebtRows,
+} from "../lib/businessDebt/scheduleOfBusinessDebtModel";
+import { normalizeScheduleBlockMeta } from "../lib/schedule/contactIds";
+import {
+  applyPfsCopyPlan,
+  normalizePfsInstances,
+  pfsDealPatchFromInstances,
+  planPfsCopy,
+  type PfsCopyMode,
+  type PfsInstance,
+} from "../lib/pfs/pfsInstances";
+import { pfsToLegacyAssetLiabilityRows } from "../lib/pfs/personalFinancialStatementModel";
+import {
+  syncPfsInstanceToAssignedContacts,
+  syncPfsInstancesToAssignedContacts,
+  upsertContactFinancialProfilePfs,
+} from "./pfsContactSync";
+import {
+  applySimplePlCopyPlan,
+  normalizeSimplePlInstances,
+  simplePlDealPatchFromInstances,
+  planSimplePlCopy,
+  simplePlInstanceHasIdentity,
+  type SimplePlCopyMode,
+  type SimplePlInstance,
+} from "../lib/simplePl/simplePlInstances";
+import {
+  simplePlFingerprintFromInstance,
+  simplePlProfileShapeToInstance,
+} from "../lib/contacts/simplePlFromDeal";
+import {
+  syncSimplePlInstanceToAssignedContacts,
+  syncSimplePlInstancesToAssignedContacts,
+} from "./simplePlContactSync";
 import {
   businessDebtScheduleToDealRow,
   contactPiiToDealStringFields,
@@ -74,9 +142,27 @@ import {
   reoProfileShapeToDealRow,
 } from "../lib/contacts/contactProfileToDeal";
 import { reoRowToProfileShape } from "../lib/contacts/reoFromDeal";
+import {
+  trackRecordFingerprintFromLegacyRow,
+  trackRecordFingerprintFromStoredProperty,
+  trackRecordProfileShapeToDealRow,
+  trackRecordRowToProfileShape,
+} from "../lib/contacts/trackRecordFromDeal";
+import {
+  applyTrackRecordCopyPlan,
+  planTrackRecordCopy,
+  type TrackRecordCopyMode,
+} from "../lib/trackRecord/trackRecordCopy";
+import {
+  allTrackRecordAssociatedContactIds,
+  contactIdsAssociatedWithTrackRecordRow,
+  normalizeTrackRecordMeta,
+  trackRecordRowHasIdentity,
+  type DealTrackRecordRow,
+  type TrackRecordBlockMeta,
+} from "../lib/trackRecord/trackRecordModel";
 import { ensureClientBackrefForBusinessEntity } from "./entityCanonicalization";
 import { upsertEntityContactLink } from "./entityContactLinkHelpers";
-import type { RegistryRoleId } from "../lib/registry/universalRoles";
 
 const preferencesAccountIdArg = {
   preferencesAccountId: v.optional(v.string()),
@@ -125,13 +211,25 @@ async function assertNoDuplicateEmailsInOrg(
   }
 }
 
+function jsonStableEqual(a: unknown, b: unknown): boolean {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 async function applyBorrowersDealPatch(
   ctx: MutationCtx,
   file: Doc<"pipeline">,
   borrowers: unknown[],
 ): Promise<{ ok: true }> {
-  const cleaned = { borrowers, updatedAt: Date.now() };
   const deal = await resolveDealBaseForPipelinePatch(ctx, file);
+  const existingBorrowers = Array.isArray(deal.borrowers) ? deal.borrowers : [];
+  if (jsonStableEqual(existingBorrowers, borrowers)) {
+    return { ok: true as const };
+  }
+  const cleaned = { borrowers, updatedAt: Date.now() };
   const mergedDeal = mergePatchIntoDeal(deal, cleaned) as Record<string, unknown>;
   const now = Date.now();
   await ctx.db.patch(
@@ -571,6 +669,7 @@ export async function propagateContactIdentityToLinkedFiles(
       await writeBorrowersQuietly(ctx, file._id, next);
       filesTouched += 1;
     }
+    await syncFileClientTitleFromPrimaryParties(ctx, file._id);
   }
   return { filesTouched };
 }
@@ -613,6 +712,7 @@ export const saveBorrowerIdentityDualWrite = mutation({
       args.borrowers as unknown[],
       memberUserKey,
     );
+    await syncFileClientTitleFromPrimaryParties(ctx, args.fileId);
 
     return { ok: true as const };
   },
@@ -698,6 +798,7 @@ export const assignContactToBorrowerSlot = mutation({
       borrowerIndex: targetIndex,
       memberUserKey,
     });
+    await syncFileClientTitleFromPrimaryParties(ctx, args.fileId);
 
     return { ok: true as const, borrowerIndex: targetIndex };
   },
@@ -848,6 +949,12 @@ export const pullContactFinancialProfileToDeal = mutation({
             balance: row.balance,
             monthlyPayment: row.monthlyPayment,
             position: row.position,
+            debtType: row.debtType,
+            debtTypeOther: row.debtTypeOther,
+            originalAmount: row.originalAmount,
+            originationDate: row.originationDate,
+            ratePct: row.ratePct,
+            maturityDate: row.maturityDate,
           }),
         );
       }
@@ -1929,50 +2036,6 @@ async function applyAssetsLiabilitiesDealPatch(
   return { ok: true as const };
 }
 
-async function upsertContactFinancialProfilePfs(
-  ctx: MutationCtx,
-  args: {
-    contact: Doc<"contacts">;
-    file: Doc<"pipeline">;
-    assets?: ReturnType<typeof assetsToProfileArray>;
-    liabilities?: ReturnType<typeof liabilitiesToProfileArray>;
-    memberUserKey?: string;
-  },
-): Promise<void> {
-  const { contact, file, assets, liabilities, memberUserKey } = args;
-  if (assets === undefined && liabilities === undefined) return;
-
-  await assertCanMutateContactRow(ctx, contact, memberUserKey);
-
-  const existing = await ctx.db
-    .query("contactFinancialProfiles")
-    .withIndex("by_contact", (q) => q.eq("contactId", contact._id))
-    .first();
-
-  const now = Date.now();
-  const financialPatch = {
-    ...(assets !== undefined ? { assets } : {}),
-    ...(liabilities !== undefined ? { liabilities } : {}),
-  };
-
-  if (existing) {
-    await ctx.db.patch(existing._id, {
-      ...financialPatch,
-      updatedAt: now,
-    });
-    return;
-  }
-
-  await ctx.db.insert("contactFinancialProfiles", {
-    organizationId: contact.organizationId ?? file.organizationId,
-    contactId: contact._id,
-    income: [],
-    assets: assets ?? [],
-    liabilities: liabilities ?? [],
-    createdAt: now,
-    updatedAt: now,
-  });
-}
 
 async function syncPfsArraysToPrimaryContactProfile(
   ctx: MutationCtx,
@@ -2078,12 +2141,36 @@ export const saveAssetsAndLiabilitiesDualWrite = mutation({
 
 
 
+function normalizeReoMeta(
+  raw: unknown,
+): ReoBlockMeta {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { assignedContactIds: [] };
+  }
+  const rec = raw as { assignedContactIds?: unknown };
+  return {
+    assignedContactIds: normalizeContactIdList(
+      Array.isArray(rec.assignedContactIds) ? rec.assignedContactIds : [],
+    ),
+  };
+}
+
 async function applyReoDealPatch(
   ctx: MutationCtx,
   file: Doc<"pipeline">,
   reo: unknown[],
+  reoMeta?: unknown,
 ): Promise<{ ok: true }> {
-  const cleaned = { reo, updatedAt: Date.now() };
+  const computedReo = sanitizeDealReoRows(reo).map((row) =>
+    withComputedReoFields(ensureDealReoRowId(row)),
+  );
+  const cleaned: Record<string, unknown> = {
+    reo: computedReo,
+    updatedAt: Date.now(),
+  };
+  if (reoMeta !== undefined) {
+    cleaned.reoMeta = normalizeReoMeta(reoMeta);
+  }
   const deal = await resolveDealBaseForPipelinePatch(ctx, file);
   const mergedDeal = mergePatchIntoDeal(deal, cleaned) as Record<string, unknown>;
   const now = Date.now();
@@ -2109,7 +2196,10 @@ async function applyReoDealPatch(
       await ctx.db.patch(
         file.intakeSheetId,
         sanitizeDbPatch({
-          reo,
+          reo: computedReo,
+          ...(reoMeta !== undefined
+            ? { reoMeta: normalizeReoMeta(reoMeta) }
+            : {}),
           updatedAt: Date.now(),
         }) as Partial<Doc<"intakeSheets">>,
       );
@@ -2193,6 +2283,7 @@ async function syncReoToPrimaryContactProfile(
       "state",
       "purchasedDate",
       "marketValue",
+      "zillowUrl",
       "mortgageBalance",
       "monthlyPayment",
       "rate",
@@ -2206,11 +2297,15 @@ async function syncReoToPrimaryContactProfile(
       "apn",
       "invested",
       "latLong",
+      "lotSf",
+      "propSf",
+      "mostRecent",
     ] as const) {
       if (shape[key] !== undefined) {
         patchFields[key] = shape[key];
       }
     }
+    patchFields.zillowUrl = shape.zillowUrl ?? "";
 
     if (match) {
       matchedIds.add(match._id);
@@ -2218,32 +2313,39 @@ async function syncReoToPrimaryContactProfile(
       continue;
     }
 
-    await ctx.db.insert("contactReoProperties", {
-      organizationId: contact.organizationId ?? file.organizationId,
-      contactId: contact._id,
-      sortOrder: shape.sortOrder,
-      propertyAddress: shape.propertyAddress,
-      propertyType: shape.propertyType,
-      usage: shape.usage,
-      state: shape.state,
-      purchasedDate: shape.purchasedDate,
-      marketValue: shape.marketValue,
-      mortgageBalance: shape.mortgageBalance,
-      monthlyPayment: shape.monthlyPayment,
-      rate: shape.rate,
-      position: shape.position,
-      taxes: shape.taxes,
-      insurance: shape.insurance,
-      hoa: shape.hoa,
-      escrow: shape.escrow,
-      grossRent: shape.grossRent,
-      netRent: shape.netRent,
-      apn: shape.apn,
-      invested: shape.invested,
-      latLong: shape.latLong,
-      createdAt: now,
-      updatedAt: now,
-    });
+    await ctx.db.insert(
+      "contactReoProperties",
+      sanitizeDbPatch({
+        organizationId: contact.organizationId ?? file.organizationId,
+        contactId: contact._id,
+        sortOrder: shape.sortOrder,
+        propertyAddress: shape.propertyAddress,
+        propertyType: shape.propertyType,
+        usage: shape.usage,
+        state: shape.state,
+        purchasedDate: shape.purchasedDate,
+        marketValue: shape.marketValue,
+        zillowUrl: shape.zillowUrl,
+        mortgageBalance: shape.mortgageBalance,
+        monthlyPayment: shape.monthlyPayment,
+        rate: shape.rate,
+        position: shape.position,
+        taxes: shape.taxes,
+        insurance: shape.insurance,
+        hoa: shape.hoa,
+        escrow: shape.escrow,
+        grossRent: shape.grossRent,
+        netRent: shape.netRent,
+        apn: shape.apn,
+        invested: shape.invested,
+        latLong: shape.latLong,
+        lotSf: shape.lotSf,
+        propSf: shape.propSf,
+        mostRecent: shape.mostRecent,
+        createdAt: now,
+        updatedAt: now,
+      }) as never,
+    );
   }
 
   for (const row of activeExisting) {
@@ -2260,9 +2362,18 @@ export const saveReoDualWrite = mutation({
   args: {
     fileId: v.id("pipeline"),
     reo: v.array(reoRow),
+    reoMeta: v.optional(reoBlockMeta),
     expectedUpdatedAt: v.optional(v.number()),
     ...preferencesAccountIdArg,
   },
+  returns: v.union(
+    v.object({ ok: v.literal(true) }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
   handler: async (ctx, args) => {
     const p = await ctx.db.get(args.fileId);
     if (!p) throw new Error("Pipeline not found");
@@ -2280,30 +2391,318 @@ export const saveReoDualWrite = mutation({
     await assertCanMutatePipelineRow(ctx, p, args.preferencesAccountId);
     const memberUserKey = args.preferencesAccountId?.trim() || undefined;
 
-    await applyReoDealPatch(ctx, p, args.reo as unknown[]);
+    await applyReoDealPatch(
+      ctx,
+      p,
+      args.reo as unknown[],
+      args.reoMeta,
+    );
 
     const fileAfterDeal = await ctx.db.get(args.fileId);
     if (!fileAfterDeal) throw new Error("Pipeline not found");
 
-    await syncReoToPrimaryContactProfile(
-      ctx,
-      fileAfterDeal,
-      args.reo as unknown[],
-      memberUserKey,
-    );
+    try {
+      await syncReoToPrimaryContactProfile(
+        ctx,
+        fileAfterDeal,
+        sanitizeDealReoRows(args.reo),
+        memberUserKey,
+      );
+    } catch {
+      // Deal schedule already persisted — CRM dual-write must not roll it back.
+    }
 
     return { ok: true as const };
   },
 });
 
+function dealReoFromFile(file: Doc<"pipeline">): {
+  rows: DealReoRow[];
+  meta: ReoBlockMeta;
+} {
+  const deal =
+    file.dealData != null &&
+    typeof file.dealData === "object" &&
+    !Array.isArray(file.dealData)
+      ? (file.dealData as Record<string, unknown>)
+      : {};
+  const rows = Array.isArray(deal.reo) ? (deal.reo as DealReoRow[]) : [];
+  return { rows, meta: normalizeReoMeta(deal.reoMeta) };
+}
 
+/**
+ * Copy selected REO rows or the full block into another pipeline file
+ * the caller can edit (same org). Reuses dealData + intake dual-write.
+ */
+export const copyReoToFile = mutation({
+  args: {
+    sourceFileId: v.id("pipeline"),
+    targetFileId: v.id("pipeline"),
+    mode: v.union(v.literal("rows"), v.literal("block")),
+    rowIndexes: v.optional(v.array(v.number())),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      copiedRowCount: v.number(),
+      targetFileId: v.id("pipeline"),
+    }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    if (args.sourceFileId === args.targetFileId) {
+      throw new Error("Choose a different destination file.");
+    }
+    const source = await ctx.db.get(args.sourceFileId);
+    const target = await ctx.db.get(args.targetFileId);
+    if (!source || !target) throw new Error("Pipeline not found");
+    await assertCanAccessFile(ctx, args.sourceFileId, args.preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, target, args.preferencesAccountId);
+    if (
+      source.organizationId &&
+      target.organizationId &&
+      source.organizationId !== target.organizationId
+    ) {
+      throw new Error("Destination file is not in this organization.");
+    }
+
+    const sourceSchedule = dealReoFromFile(source);
+    const targetSchedule = dealReoFromFile(target);
+    const plan = planReoCopy({
+      mode: args.mode as ReoCopyMode,
+      sourceRows: sourceSchedule.rows,
+      sourceMeta: sourceSchedule.meta,
+      rowIndexes: args.rowIndexes,
+    });
+    if (plan.rows.length === 0) {
+      throw new Error(
+        args.mode === "block"
+          ? "This file has no REO rows to copy."
+          : "Select at least one property to copy.",
+      );
+    }
+    const merged = applyReoCopyPlan({
+      targetRows: targetSchedule.rows,
+      targetMeta: targetSchedule.meta,
+      plan,
+    });
+
+    await applyReoDealPatch(ctx, target, merged.rows, merged.meta);
+    const fileAfterDeal = await ctx.db.get(args.targetFileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    await syncReoToPrimaryContactProfile(
+      ctx,
+      fileAfterDeal,
+      merged.rows,
+      args.preferencesAccountId?.trim() || undefined,
+    );
+
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+    await linkReoAssigneeContactsToFile(
+      ctx,
+      fileAfterDeal,
+      collectReoCopyAssigneeIds(plan),
+      memberUserKey,
+    );
+
+    return {
+      ok: true as const,
+      copiedRowCount: plan.rows.length,
+      targetFileId: args.targetFileId,
+    };
+  },
+});
+
+async function linkReoAssigneeContactsToFile(
+  ctx: MutationCtx,
+  file: Doc<"pipeline">,
+  contactIds: readonly string[],
+  memberUserKey?: string,
+): Promise<number> {
+  const unique = normalizeContactIdList(contactIds);
+  let linked = 0;
+  for (const rawId of unique) {
+    const contactId = rawId as Id<"contacts">;
+    const contact = await ctx.db.get(contactId);
+    if (!contact) continue;
+    if (
+      file.organizationId &&
+      contact.organizationId &&
+      contact.organizationId !== file.organizationId
+    ) {
+      continue;
+    }
+    await assertCanMutateContactFileLink(ctx, contact, file, memberUserKey);
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("contactFileLinks")
+      .withIndex("by_contact_file", (q) =>
+        q.eq("contactId", contact._id).eq("fileId", file._id),
+      )
+      .first();
+    if (existing) {
+      linked += 1;
+      continue;
+    }
+    const contactRoleId = effectiveContactRoleIdFromDoc(contact);
+    await ctx.db.insert("contactFileLinks", {
+      contactId: contact._id,
+      fileId: file._id,
+      role: "Related",
+      contactRoleId,
+      registryRoleId: REGISTRY_ROLE_IDS.other,
+      notes: "Linked from Schedule of REO",
+      createdAt: now,
+      updatedAt: now,
+    });
+    linked += 1;
+  }
+  return linked;
+}
+
+/**
+ * Create a new pipeline file and seed it with selected REO rows or the full
+ * block. Reuses `insertPipelineFileWithDeal` + copy merge + contactFileLinks.
+ */
+export const createFileFromReo = mutation({
+  args: {
+    sourceFileId: v.id("pipeline"),
+    mode: v.union(v.literal("rows"), v.literal("block")),
+    rowIndexes: v.optional(v.array(v.number())),
+    fileName: v.optional(v.string()),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.object({
+    ok: v.literal(true),
+    copiedRowCount: v.number(),
+    linkedContactCount: v.number(),
+    targetFileId: v.id("pipeline"),
+    fileName: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const source = await ctx.db.get(args.sourceFileId);
+    if (!source) throw new Error("Pipeline not found");
+    await assertCanAccessFile(ctx, args.sourceFileId, args.preferencesAccountId);
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+    if (!memberUserKey) {
+      throw new Error("Sign in to create a file from REO.");
+    }
+
+    const sourceSchedule = dealReoFromFile(source);
+    const plan = planReoCopy({
+      mode: args.mode as ReoCopyMode,
+      sourceRows: sourceSchedule.rows,
+      sourceMeta: sourceSchedule.meta,
+      rowIndexes: args.rowIndexes,
+    });
+    if (plan.rows.length === 0) {
+      throw new Error(
+        args.mode === "block"
+          ? "This file has no REO rows to copy."
+          : "Select at least one property to copy.",
+      );
+    }
+
+    const deal =
+      source.dealData != null &&
+      typeof source.dealData === "object" &&
+      !Array.isArray(source.dealData)
+        ? (source.dealData as Record<string, unknown>)
+        : {};
+    const sourceLabel =
+      (typeof source.fileName === "string" && source.fileName.trim()) ||
+      "File";
+    const clientName =
+      (typeof deal.clientName === "string" && deal.clientName.trim()) ||
+      sourceLabel;
+    const projectName =
+      (typeof deal.projectName === "string" && deal.projectName.trim()) ||
+      "REO";
+    const firstAddress =
+      plan.rows
+        .map((row) => (row.address ?? "").trim())
+        .find((address) => address.length > 0) || undefined;
+    const defaultName =
+      args.mode === "rows" && plan.rows.length === 1 && firstAddress
+        ? `${sourceLabel} – ${firstAddress}`
+        : `${sourceLabel} – REO`;
+    const fileName = (args.fileName?.trim() || defaultName).slice(0, 180);
+
+    const created = await insertPipelineFileWithDeal(ctx, {
+      fileName,
+      status: source.status?.trim() || "confirm_interest",
+      fundingAmount: 0,
+      rate: 0,
+      term: "",
+      propertyAddress: firstAddress,
+      lenders: [],
+      contacts: [],
+      clientName,
+      projectName,
+      organizationId: source.organizationId,
+      clientId: source.clientId,
+      projectId: source.projectId,
+      allowLegacyHierarchyBypass: !(source.clientId && source.projectId),
+      preferencesAccountId: memberUserKey,
+    });
+
+    const target = await ctx.db.get(created.id);
+    if (!target) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, target, memberUserKey);
+
+    const targetSchedule = dealReoFromFile(target);
+    const merged = applyReoCopyPlan({
+      targetRows: targetSchedule.rows,
+      targetMeta: targetSchedule.meta,
+      plan,
+    });
+    await applyReoDealPatch(ctx, target, merged.rows, merged.meta);
+    const fileAfterDeal = await ctx.db.get(created.id);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    await syncReoToPrimaryContactProfile(
+      ctx,
+      fileAfterDeal,
+      merged.rows,
+      memberUserKey,
+    );
+    const linkedContactCount = await linkReoAssigneeContactsToFile(
+      ctx,
+      fileAfterDeal,
+      collectReoCopyAssigneeIds(plan),
+      memberUserKey,
+    );
+
+    return {
+      ok: true as const,
+      copiedRowCount: plan.rows.length,
+      linkedContactCount,
+      targetFileId: created.id,
+      fileName: fileAfterDeal.fileName?.trim() || fileName,
+    };
+  },
+});
 
 async function applyWeightedInterestDealPatch(
   ctx: MutationCtx,
   file: Doc<"pipeline">,
   weightedInterest: unknown[],
+  businessDebtMeta?: unknown,
 ): Promise<{ ok: true }> {
-  const cleaned = { weightedInterest, updatedAt: Date.now() };
+  const sanitizedRows = sanitizeDealBusinessDebtRows(weightedInterest).map(
+    (row) => ensureDealBusinessDebtRowId(row),
+  );
+  const cleaned: Record<string, unknown> = {
+    weightedInterest: sanitizedRows,
+    updatedAt: Date.now(),
+  };
+  if (businessDebtMeta !== undefined) {
+    cleaned.businessDebtMeta = normalizeScheduleBlockMeta(businessDebtMeta);
+  }
   const deal = await resolveDealBaseForPipelinePatch(ctx, file);
   const mergedDeal = mergePatchIntoDeal(deal, cleaned) as Record<string, unknown>;
   const now = Date.now();
@@ -2329,7 +2728,10 @@ async function applyWeightedInterestDealPatch(
       await ctx.db.patch(
         file.intakeSheetId,
         sanitizeDbPatch({
-          weightedInterest,
+          weightedInterest: sanitizedRows,
+          ...(businessDebtMeta !== undefined
+            ? { businessDebtMeta: normalizeScheduleBlockMeta(businessDebtMeta) }
+            : {}),
           updatedAt: Date.now(),
         }) as Partial<Doc<"intakeSheets">>,
       );
@@ -2404,12 +2806,7 @@ async function syncBusinessDebtToEntitySchedule(
       sortOrder: shape.sortOrder,
       updatedAt: now,
     };
-    for (const key of [
-      "creditor",
-      "balance",
-      "monthlyPayment",
-      "position",
-    ] as const) {
+    for (const key of contactBusinessDebtShapeKeys()) {
       if (shape[key] !== undefined) {
         patchFields[key] = shape[key];
       }
@@ -2421,17 +2818,26 @@ async function syncBusinessDebtToEntitySchedule(
       continue;
     }
 
-    await ctx.db.insert("contactBusinessDebtSchedules", {
-      organizationId: file.organizationId,
-      businessEntityId,
-      sortOrder: shape.sortOrder,
-      creditor: shape.creditor,
-      balance: shape.balance,
-      monthlyPayment: shape.monthlyPayment,
-      position: shape.position,
-      createdAt: now,
-      updatedAt: now,
-    });
+    await ctx.db.insert(
+      "contactBusinessDebtSchedules",
+      sanitizeDbPatch({
+        organizationId: file.organizationId,
+        businessEntityId,
+        sortOrder: shape.sortOrder,
+        creditor: shape.creditor,
+        balance: shape.balance,
+        monthlyPayment: shape.monthlyPayment,
+        position: shape.position,
+        debtType: shape.debtType,
+        debtTypeOther: shape.debtTypeOther,
+        originalAmount: shape.originalAmount,
+        originationDate: shape.originationDate,
+        ratePct: shape.ratePct,
+        maturityDate: shape.maturityDate,
+        createdAt: now,
+        updatedAt: now,
+      }) as never,
+    );
   }
 
   for (const row of activeExisting) {
@@ -2449,6 +2855,7 @@ export const saveBusinessDebtDualWrite = mutation({
   args: {
     fileId: v.id("pipeline"),
     weightedInterest: v.array(weightedInterestRow),
+    businessDebtMeta: v.optional(businessDebtBlockMeta),
     expectedUpdatedAt: v.optional(v.number()),
     ...preferencesAccountIdArg,
   },
@@ -2473,23 +2880,127 @@ export const saveBusinessDebtDualWrite = mutation({
       ctx,
       p,
       args.weightedInterest as unknown[],
+      args.businessDebtMeta,
     );
 
     const fileAfterDeal = await ctx.db.get(args.fileId);
     if (!fileAfterDeal) throw new Error("Pipeline not found");
 
-    await syncBusinessDebtToEntitySchedule(
-      ctx,
-      fileAfterDeal,
-      args.weightedInterest as unknown[],
-      memberUserKey,
-    );
+    try {
+      await syncBusinessDebtToEntitySchedule(
+        ctx,
+        fileAfterDeal,
+        sanitizeDealBusinessDebtRows(args.weightedInterest),
+        memberUserKey,
+      );
+    } catch {
+      // Deal schedule already persisted — CRM dual-write must not roll it back.
+    }
 
     return { ok: true as const };
   },
 });
 
+function dealBusinessDebtFromFile(file: Doc<"pipeline">): {
+  rows: DealBusinessDebtRow[];
+  meta: ReturnType<typeof normalizeScheduleBlockMeta>;
+} {
+  const deal =
+    file.dealData != null &&
+    typeof file.dealData === "object" &&
+    !Array.isArray(file.dealData)
+      ? (file.dealData as Record<string, unknown>)
+      : {};
+  const rows = Array.isArray(deal.weightedInterest)
+    ? (deal.weightedInterest as DealBusinessDebtRow[])
+    : [];
+  return { rows, meta: normalizeScheduleBlockMeta(deal.businessDebtMeta) };
+}
 
+/**
+ * Copy selected Business Debt rows or the full block into another pipeline
+ * file the caller can edit (same org). Reuses dealData + intake dual-write.
+ */
+export const copyBusinessDebtToFile = mutation({
+  args: {
+    sourceFileId: v.id("pipeline"),
+    targetFileId: v.id("pipeline"),
+    mode: v.union(v.literal("rows"), v.literal("block")),
+    rowIndexes: v.optional(v.array(v.number())),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      copiedRowCount: v.number(),
+      targetFileId: v.id("pipeline"),
+    }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    if (args.sourceFileId === args.targetFileId) {
+      throw new Error("Choose a different destination file.");
+    }
+    const source = await ctx.db.get(args.sourceFileId);
+    const target = await ctx.db.get(args.targetFileId);
+    if (!source || !target) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, source, args.preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, target, args.preferencesAccountId);
+    if (
+      source.organizationId &&
+      target.organizationId &&
+      source.organizationId !== target.organizationId
+    ) {
+      throw new Error("Destination file is not in this organization.");
+    }
+
+    const sourceSchedule = dealBusinessDebtFromFile(source);
+    const targetSchedule = dealBusinessDebtFromFile(target);
+    const plan = planBusinessDebtCopy({
+      mode: args.mode as BusinessDebtCopyMode,
+      sourceRows: sourceSchedule.rows,
+      sourceMeta: sourceSchedule.meta,
+      rowIndexes: args.rowIndexes,
+    });
+    if (plan.rows.length === 0) {
+      throw new Error(
+        args.mode === "block"
+          ? "This file has no business debt rows to copy."
+          : "Select at least one debt to copy.",
+      );
+    }
+    const merged = applyBusinessDebtCopyPlan({
+      targetRows: targetSchedule.rows,
+      targetMeta: targetSchedule.meta,
+      plan,
+    });
+
+    await applyWeightedInterestDealPatch(
+      ctx,
+      target,
+      merged.rows,
+      merged.meta,
+    );
+    const fileAfterDeal = await ctx.db.get(args.targetFileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    await syncBusinessDebtToEntitySchedule(
+      ctx,
+      fileAfterDeal,
+      merged.rows,
+      args.preferencesAccountId?.trim() || undefined,
+    );
+
+    return {
+      ok: true as const,
+      copiedRowCount: plan.rows.length,
+      targetFileId: args.targetFileId,
+    };
+  },
+});
 
 async function applyHouseholdDealPatch(
   ctx: MutationCtx,
@@ -2698,6 +3209,865 @@ export const saveHouseholdDualWrite = mutation({
     );
 
     return { ok: true as const };
+  },
+});
+
+function dealPfsInstancesFromFile(file: Doc<"pipeline">): PfsInstance[] {
+  const deal =
+    file.dealData != null &&
+    typeof file.dealData === "object" &&
+    !Array.isArray(file.dealData)
+      ? (file.dealData as Record<string, unknown>)
+      : {};
+  return normalizePfsInstances(deal);
+}
+
+async function applyPfsInstancesDealPatch(
+  ctx: MutationCtx,
+  file: Doc<"pipeline">,
+  instances: PfsInstance[],
+): Promise<{ ok: true }> {
+  const { pfsInstances, pfs } = pfsDealPatchFromInstances(instances);
+  const primary = instances[0];
+  const legacy = primary
+    ? pfsToLegacyAssetLiabilityRows(primary.data)
+    : { assets: [], liabilities: [] };
+  const cleaned: Record<string, unknown> = {
+    pfsInstances,
+    pfs,
+    assets: legacy.assets,
+    liabilities: legacy.liabilities,
+    updatedAt: Date.now(),
+  };
+  const deal = await resolveDealBaseForPipelinePatch(ctx, file);
+  const mergedDeal = mergePatchIntoDeal(deal, cleaned) as Record<
+    string,
+    unknown
+  >;
+  const now = Date.now();
+  await ctx.db.patch(
+    file._id,
+    sanitizeDbPatch({
+      dealData: mergedDeal as Doc<"pipeline">["dealData"],
+      updatedAt: now,
+    }) as Partial<Doc<"pipeline">>,
+  );
+
+  await appendPipelineFileActivity(ctx, {
+    fileId: file._id,
+    at: now,
+    kind: "deal_patch",
+    keys: ["pfs", "pfsInstances"],
+    summary: clampActivitySummary("Deal: personal financial statement"),
+  });
+
+  if (file.intakeSheetId) {
+    const intakeRow = await ctx.db.get(file.intakeSheetId);
+    if (intakeRow) {
+      await ctx.db.patch(
+        file.intakeSheetId,
+        sanitizeDbPatch({
+          pfsInstances,
+          pfs,
+          assets: legacy.assets,
+          liabilities: legacy.liabilities,
+          updatedAt: Date.now(),
+        }) as Partial<Doc<"intakeSheets">>,
+      );
+    }
+  }
+
+  await refreshPipelineGlobalSearchText(ctx, file._id);
+  return { ok: true as const };
+}
+
+
+/**
+ * Persist the full PFS instance list for a file (multi-borrower).
+ * Mirrors the first instance onto legacy `pfs` + assets/liabilities.
+ */
+export const savePfsInstances = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    pfsInstances: v.array(pfsInstanceV),
+    expectedUpdatedAt: v.optional(v.number()),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, args) => {
+    const p = await ctx.db.get(args.fileId);
+    if (!p) throw new Error("Pipeline not found");
+    if (
+      args.expectedUpdatedAt !== undefined &&
+      p.updatedAt !== args.expectedUpdatedAt
+    ) {
+      return {
+        ok: false as const,
+        code: "CONFLICT_DATA_CHANGED" as const,
+        serverUpdatedAt: p.updatedAt,
+      };
+    }
+    await assertCanMutatePipelineRow(ctx, p, args.preferencesAccountId);
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+    const instances = normalizePfsInstances({
+      pfsInstances: args.pfsInstances,
+    });
+    await applyPfsInstancesDealPatch(ctx, p, instances);
+    const fileAfterDeal = await ctx.db.get(args.fileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    await syncPfsInstancesToAssignedContacts(
+      ctx,
+      fileAfterDeal,
+      instances,
+      memberUserKey,
+    );
+    return { ok: true as const };
+  },
+});
+
+/**
+ * Copy selected PFS instances (or all) into another pipeline file.
+ */
+export const copyPfsToFile = mutation({
+  args: {
+    sourceFileId: v.id("pipeline"),
+    targetFileId: v.id("pipeline"),
+    mode: v.union(v.literal("rows"), v.literal("block")),
+    rowIndexes: v.optional(v.array(v.number())),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      copiedRowCount: v.number(),
+      targetFileId: v.id("pipeline"),
+    }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    if (args.sourceFileId === args.targetFileId) {
+      throw new Error("Choose a different destination file.");
+    }
+    const source = await ctx.db.get(args.sourceFileId);
+    const target = await ctx.db.get(args.targetFileId);
+    if (!source || !target) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, source, args.preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, target, args.preferencesAccountId);
+    if (
+      source.organizationId &&
+      target.organizationId &&
+      source.organizationId !== target.organizationId
+    ) {
+      throw new Error("Destination file is not in this organization.");
+    }
+
+    const sourceInstances = dealPfsInstancesFromFile(source);
+    const targetInstances = dealPfsInstancesFromFile(target);
+    const plan = planPfsCopy({
+      mode: args.mode as PfsCopyMode,
+      sourceInstances,
+      instanceIndexes: args.rowIndexes,
+    });
+    if (plan.rows.length === 0) {
+      throw new Error(
+        args.mode === "block"
+          ? "This file has no personal financial statements to copy."
+          : "Select at least one PFS to copy.",
+      );
+    }
+    const merged = applyPfsCopyPlan({
+      targetInstances,
+      plan,
+    });
+    await applyPfsInstancesDealPatch(ctx, target, merged);
+    const fileAfterDeal = await ctx.db.get(args.targetFileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+    for (const inst of plan.rows) {
+      await syncPfsInstanceToAssignedContacts(
+        ctx,
+        fileAfterDeal,
+        inst,
+        memberUserKey,
+      );
+    }
+    return {
+      ok: true as const,
+      copiedRowCount: plan.rows.length,
+      targetFileId: args.targetFileId,
+    };
+  },
+});
+
+function dealTrackRecordFromFile(file: Doc<"pipeline">): {
+  rows: DealTrackRecordRow[];
+  meta: TrackRecordBlockMeta;
+} {
+  const deal =
+    file.dealData != null &&
+    typeof file.dealData === "object" &&
+    !Array.isArray(file.dealData)
+      ? (file.dealData as Record<string, unknown>)
+      : {};
+  const rows = Array.isArray(deal.trackRecord)
+    ? (deal.trackRecord as DealTrackRecordRow[])
+    : [];
+  return { rows, meta: normalizeTrackRecordMeta(deal.trackRecordMeta) };
+}
+
+async function applyTrackRecordDealPatch(
+  ctx: MutationCtx,
+  file: Doc<"pipeline">,
+  trackRecord: unknown[],
+  trackRecordMeta?: unknown,
+): Promise<{ ok: true }> {
+  const cleaned: Record<string, unknown> = {
+    trackRecord,
+    updatedAt: Date.now(),
+  };
+  if (trackRecordMeta !== undefined) {
+    cleaned.trackRecordMeta = normalizeTrackRecordMeta(trackRecordMeta);
+  }
+  const deal = await resolveDealBaseForPipelinePatch(ctx, file);
+  const mergedDeal = mergePatchIntoDeal(deal, cleaned) as Record<string, unknown>;
+  const now = Date.now();
+  await ctx.db.patch(
+    file._id,
+    sanitizeDbPatch({
+      dealData: mergedDeal as Doc<"pipeline">["dealData"],
+      updatedAt: now,
+    }) as Partial<Doc<"pipeline">>,
+  );
+
+  await appendPipelineFileActivity(ctx, {
+    fileId: file._id,
+    at: now,
+    kind: "deal_patch",
+    keys: ["trackRecord"],
+    summary: clampActivitySummary("Deal: Track Record"),
+  });
+
+  if (file.intakeSheetId) {
+    const intakeRow = await ctx.db.get(file.intakeSheetId);
+    if (intakeRow) {
+      await ctx.db.patch(
+        file.intakeSheetId,
+        sanitizeDbPatch({
+          trackRecord,
+          ...(trackRecordMeta !== undefined
+            ? { trackRecordMeta: normalizeTrackRecordMeta(trackRecordMeta) }
+            : {}),
+          updatedAt: Date.now(),
+        }) as Partial<Doc<"intakeSheets">>,
+      );
+    }
+  }
+
+  await refreshPipelineGlobalSearchText(ctx, file._id);
+  return { ok: true as const };
+}
+
+function trackRecordShapeHasIdentity(shape: {
+  propertyAddress?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  acquisitionDate?: string;
+}): boolean {
+  return Boolean(
+    trackRecordFingerprintFromStoredProperty(shape).replace(/\|/g, "").trim(),
+  );
+}
+
+async function syncTrackRecordToAssignedContacts(
+  ctx: MutationCtx,
+  file: Doc<"pipeline">,
+  rows: unknown[],
+  meta: unknown,
+  memberUserKey?: string,
+): Promise<void> {
+  if (!file.organizationId) return;
+  const typedRows = (Array.isArray(rows) ? rows : []) as DealTrackRecordRow[];
+  const typedMeta = normalizeTrackRecordMeta(meta);
+  const contactIds = allTrackRecordAssociatedContactIds({
+    rows: typedRows,
+    meta: typedMeta,
+  });
+  if (contactIds.length === 0) return;
+
+  for (const contactIdStr of contactIds) {
+    const contactId = contactIdStr as Id<"contacts">;
+    const contact = await ctx.db.get(contactId);
+    if (!contact) continue;
+    if (
+      contact.organizationId &&
+      file.organizationId &&
+      contact.organizationId !== file.organizationId
+    ) {
+      continue;
+    }
+    try {
+      await assertCanMutateContactRow(ctx, contact, memberUserKey);
+    } catch {
+      continue;
+    }
+
+    const desired = typedRows
+      .filter((row) => trackRecordRowHasIdentity(row))
+      .filter((row) => {
+        const associated = contactIdsAssociatedWithTrackRecordRow(row, typedMeta);
+        const blockIds = typedMeta.assignedContactIds ?? [];
+        return associated.includes(contactIdStr) || blockIds.includes(contactIdStr);
+      })
+      .map((row, i) => trackRecordRowToProfileShape(row, i))
+      .filter(trackRecordShapeHasIdentity);
+
+    const existing = await ctx.db
+      .query("contactTrackRecordProperties")
+      .withIndex("by_contact", (q) => q.eq("contactId", contactId))
+      .collect();
+    const activeExisting = existing.filter((row) => row.archivedAt == null);
+    const matchedIds = new Set<Id<"contactTrackRecordProperties">>();
+    const now = Date.now();
+
+    for (let i = 0; i < desired.length; i += 1) {
+      const shape = desired[i]!;
+      const fp = trackRecordFingerprintFromStoredProperty(shape);
+      const match = activeExisting.find(
+        (row) =>
+          !matchedIds.has(row._id) &&
+          trackRecordFingerprintFromStoredProperty(row) === fp,
+      );
+      if (match) {
+        matchedIds.add(match._id);
+        await ctx.db.patch(match._id, {
+          ...shape,
+          sortOrder: i,
+          updatedAt: now,
+        });
+        continue;
+      }
+      await ctx.db.insert("contactTrackRecordProperties", {
+        organizationId: file.organizationId,
+        contactId,
+        sortOrder: i,
+        propertyAddress: shape.propertyAddress,
+        city: shape.city,
+        state: shape.state,
+        zip: shape.zip,
+        propertyType: shape.propertyType,
+        titleHeldInName: shape.titleHeldInName,
+        acquisitionDate: shape.acquisitionDate,
+        acquisitionPrice: shape.acquisitionPrice,
+        projectType: shape.projectType,
+        rehabOrConstructionAmount: shape.rehabOrConstructionAmount,
+        exitType: shape.exitType,
+        dateSoldOrLeased: shape.dateSoldOrLeased,
+        salePriceOrRentAmount: shape.salePriceOrRentAmount,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+}
+
+export const saveTrackRecordDualWrite = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    trackRecord: v.array(trackRecordRow),
+    trackRecordMeta: v.optional(trackRecordBlockMeta),
+    expectedUpdatedAt: v.optional(v.number()),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.union(
+    v.object({ ok: v.literal(true) }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const p = await ctx.db.get(args.fileId);
+    if (!p) throw new Error("Pipeline not found");
+    if (
+      args.expectedUpdatedAt !== undefined &&
+      p.updatedAt !== args.expectedUpdatedAt
+    ) {
+      return {
+        ok: false as const,
+        code: "CONFLICT_DATA_CHANGED" as const,
+        serverUpdatedAt: p.updatedAt,
+      };
+    }
+
+    await assertCanMutatePipelineRow(ctx, p, args.preferencesAccountId);
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+
+    await applyTrackRecordDealPatch(
+      ctx,
+      p,
+      args.trackRecord as unknown[],
+      args.trackRecordMeta,
+    );
+
+    const fileAfterDeal = await ctx.db.get(args.fileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+
+    await syncTrackRecordToAssignedContacts(
+      ctx,
+      fileAfterDeal,
+      args.trackRecord as unknown[],
+      args.trackRecordMeta,
+      memberUserKey,
+    );
+
+    return { ok: true as const };
+  },
+});
+
+export const copyTrackRecordToFile = mutation({
+  args: {
+    sourceFileId: v.id("pipeline"),
+    targetFileId: v.id("pipeline"),
+    mode: v.union(v.literal("rows"), v.literal("block")),
+    rowIndexes: v.optional(v.array(v.number())),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      copiedRowCount: v.number(),
+      targetFileId: v.id("pipeline"),
+    }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    if (args.sourceFileId === args.targetFileId) {
+      throw new Error("Choose a different destination file.");
+    }
+    const source = await ctx.db.get(args.sourceFileId);
+    const target = await ctx.db.get(args.targetFileId);
+    if (!source || !target) throw new Error("Pipeline not found");
+    await assertCanAccessFile(ctx, args.sourceFileId, args.preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, target, args.preferencesAccountId);
+    if (
+      source.organizationId &&
+      target.organizationId &&
+      source.organizationId !== target.organizationId
+    ) {
+      throw new Error("Destination file is not in this organization.");
+    }
+
+    const sourceSchedule = dealTrackRecordFromFile(source);
+    const targetSchedule = dealTrackRecordFromFile(target);
+    const plan = planTrackRecordCopy({
+      mode: args.mode as TrackRecordCopyMode,
+      sourceRows: sourceSchedule.rows,
+      sourceMeta: sourceSchedule.meta,
+      rowIndexes: args.rowIndexes,
+    });
+    if (plan.rows.length === 0) {
+      throw new Error(
+        args.mode === "block"
+          ? "This file has no Track Record rows to copy."
+          : "Select at least one property to copy.",
+      );
+    }
+    const merged = applyTrackRecordCopyPlan({
+      targetRows: targetSchedule.rows,
+      targetMeta: targetSchedule.meta,
+      plan,
+    });
+
+    await applyTrackRecordDealPatch(ctx, target, merged.rows, merged.meta);
+    const fileAfterDeal = await ctx.db.get(args.targetFileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    await syncTrackRecordToAssignedContacts(
+      ctx,
+      fileAfterDeal,
+      merged.rows,
+      merged.meta,
+      args.preferencesAccountId?.trim() || undefined,
+    );
+
+    return {
+      ok: true as const,
+      copiedRowCount: plan.rows.length,
+      targetFileId: args.targetFileId,
+    };
+  },
+});
+
+export const pullContactTrackRecordToDeal = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    contactId: v.id("contacts"),
+    expectedUpdatedAt: v.optional(v.number()),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      importedRowCount: v.number(),
+    }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const p = await ctx.db.get(args.fileId);
+    if (!p) throw new Error("Pipeline not found");
+    if (
+      args.expectedUpdatedAt !== undefined &&
+      p.updatedAt !== args.expectedUpdatedAt
+    ) {
+      return {
+        ok: false as const,
+        code: "CONFLICT_DATA_CHANGED" as const,
+        serverUpdatedAt: p.updatedAt,
+      };
+    }
+
+    await assertCanMutatePipelineRow(ctx, p, args.preferencesAccountId);
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact) throw new Error("Contact not found");
+    await assertCanReadContactRow(ctx, contact, memberUserKey);
+
+    const stored = await ctx.db
+      .query("contactTrackRecordProperties")
+      .withIndex("by_contact_sort", (q) => q.eq("contactId", args.contactId))
+      .collect();
+    const active = stored.filter((r) => r.archivedAt == null);
+    const incoming = active.map((row) =>
+      trackRecordProfileShapeToDealRow(
+        trackRecordRowToProfileShape(row, row.sortOrder),
+        [String(args.contactId)],
+      ),
+    );
+
+    const current = dealTrackRecordFromFile(p);
+    const existingFingerprints = new Set(
+      current.rows
+        .filter(trackRecordRowHasIdentity)
+        .map((row) => trackRecordFingerprintFromLegacyRow(row)),
+    );
+    const toAdd = incoming.filter((row) => {
+      const fp = trackRecordFingerprintFromLegacyRow(row);
+      return fp && !existingFingerprints.has(fp);
+    });
+    if (toAdd.length === 0) {
+      return { ok: true as const, importedRowCount: 0 };
+    }
+
+    const nextMeta = normalizeTrackRecordMeta({
+      ...current.meta,
+      assignedContactIds: [
+        ...(current.meta.assignedContactIds ?? []),
+        String(args.contactId),
+      ],
+    });
+    const nextRows = [...current.rows.filter(trackRecordRowHasIdentity), ...toAdd];
+    await applyTrackRecordDealPatch(ctx, p, nextRows, nextMeta);
+    const fileAfterDeal = await ctx.db.get(args.fileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    await syncTrackRecordToAssignedContacts(
+      ctx,
+      fileAfterDeal,
+      nextRows,
+      nextMeta,
+      memberUserKey,
+    );
+    return { ok: true as const, importedRowCount: toAdd.length };
+  },
+});
+
+function dealSimplePlInstancesFromFile(file: Doc<"pipeline">): SimplePlInstance[] {
+  const deal =
+    file.dealData != null &&
+    typeof file.dealData === "object" &&
+    !Array.isArray(file.dealData)
+      ? (file.dealData as Record<string, unknown>)
+      : {};
+  return normalizeSimplePlInstances(deal);
+}
+
+async function applySimplePlInstancesDealPatch(
+  ctx: MutationCtx,
+  file: Doc<"pipeline">,
+  instances: SimplePlInstance[],
+): Promise<{ ok: true }> {
+  const { simplePlInstances, simplePl } = simplePlDealPatchFromInstances(instances);
+  const cleaned: Record<string, unknown> = {
+    simplePlInstances,
+    simplePl,
+    updatedAt: Date.now(),
+  };
+  const deal = await resolveDealBaseForPipelinePatch(ctx, file);
+  const mergedDeal = mergePatchIntoDeal(deal, cleaned) as Record<string, unknown>;
+  const now = Date.now();
+  await ctx.db.patch(
+    file._id,
+    sanitizeDbPatch({
+      dealData: mergedDeal as Doc<"pipeline">["dealData"],
+      updatedAt: now,
+    }) as Partial<Doc<"pipeline">>,
+  );
+
+  await appendPipelineFileActivity(ctx, {
+    fileId: file._id,
+    at: now,
+    kind: "deal_patch",
+    keys: ["simplePl", "simplePlInstances"],
+    summary: clampActivitySummary("Deal: Simple P&L"),
+  });
+
+  if (file.intakeSheetId) {
+    const intakeRow = await ctx.db.get(file.intakeSheetId);
+    if (intakeRow) {
+      await ctx.db.patch(
+        file.intakeSheetId,
+        sanitizeDbPatch({
+          simplePlInstances,
+          simplePl,
+          updatedAt: Date.now(),
+        }) as Partial<Doc<"intakeSheets">>,
+      );
+    }
+  }
+
+  await refreshPipelineGlobalSearchText(ctx, file._id);
+  return { ok: true as const };
+}
+
+export const saveSimplePlInstances = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    simplePlInstances: v.array(simplePlInstanceV),
+    expectedUpdatedAt: v.optional(v.number()),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, args) => {
+    const p = await ctx.db.get(args.fileId);
+    if (!p) throw new Error("Pipeline not found");
+    if (
+      args.expectedUpdatedAt !== undefined &&
+      p.updatedAt !== args.expectedUpdatedAt
+    ) {
+      return {
+        ok: false as const,
+        code: "CONFLICT_DATA_CHANGED" as const,
+        serverUpdatedAt: p.updatedAt,
+      };
+    }
+    await assertCanMutatePipelineRow(ctx, p, args.preferencesAccountId);
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+    const instances = normalizeSimplePlInstances({
+      simplePlInstances: args.simplePlInstances,
+    });
+    await applySimplePlInstancesDealPatch(ctx, p, instances);
+    const fileAfterDeal = await ctx.db.get(args.fileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    await syncSimplePlInstancesToAssignedContacts(
+      ctx,
+      fileAfterDeal,
+      instances,
+      memberUserKey,
+    );
+    return { ok: true as const };
+  },
+});
+
+export const copySimplePlToFile = mutation({
+  args: {
+    sourceFileId: v.id("pipeline"),
+    targetFileId: v.id("pipeline"),
+    mode: v.union(v.literal("rows"), v.literal("block")),
+    rowIndexes: v.optional(v.array(v.number())),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      copiedRowCount: v.number(),
+      targetFileId: v.id("pipeline"),
+    }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    if (args.sourceFileId === args.targetFileId) {
+      throw new Error("Choose a different destination file.");
+    }
+    const source = await ctx.db.get(args.sourceFileId);
+    const target = await ctx.db.get(args.targetFileId);
+    if (!source || !target) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, source, args.preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, target, args.preferencesAccountId);
+    if (
+      source.organizationId &&
+      target.organizationId &&
+      source.organizationId !== target.organizationId
+    ) {
+      throw new Error("Destination file is not in this organization.");
+    }
+
+    const sourceInstances = dealSimplePlInstancesFromFile(source);
+    const targetInstances = dealSimplePlInstancesFromFile(target);
+    const plan = planSimplePlCopy({
+      mode: args.mode as SimplePlCopyMode,
+      sourceInstances,
+      instanceIndexes: args.rowIndexes,
+    });
+    if (plan.rows.length === 0) {
+      throw new Error(
+        args.mode === "block"
+          ? "This file has no Simple P&L statements to copy."
+          : "Select at least one P&L to copy.",
+      );
+    }
+    const merged = applySimplePlCopyPlan({
+      targetInstances,
+      plan,
+    });
+    await applySimplePlInstancesDealPatch(ctx, target, merged);
+    const fileAfterDeal = await ctx.db.get(args.targetFileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+    for (const inst of plan.rows) {
+      await syncSimplePlInstanceToAssignedContacts(
+        ctx,
+        fileAfterDeal,
+        inst,
+        memberUserKey,
+      );
+    }
+    return {
+      ok: true as const,
+      copiedRowCount: plan.rows.length,
+      targetFileId: args.targetFileId,
+    };
+  },
+});
+
+export const pullContactSimplePlToDeal = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    contactId: v.id("contacts"),
+    expectedUpdatedAt: v.optional(v.number()),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      importedRowCount: v.number(),
+    }),
+    v.object({
+      ok: v.literal(false),
+      code: v.literal("CONFLICT_DATA_CHANGED"),
+      serverUpdatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const p = await ctx.db.get(args.fileId);
+    if (!p) throw new Error("Pipeline not found");
+    if (
+      args.expectedUpdatedAt !== undefined &&
+      p.updatedAt !== args.expectedUpdatedAt
+    ) {
+      return {
+        ok: false as const,
+        code: "CONFLICT_DATA_CHANGED" as const,
+        serverUpdatedAt: p.updatedAt,
+      };
+    }
+
+    await assertCanMutatePipelineRow(ctx, p, args.preferencesAccountId);
+    const memberUserKey = args.preferencesAccountId?.trim() || undefined;
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact) throw new Error("Contact not found");
+    await assertCanReadContactRow(ctx, contact, memberUserKey);
+
+    const stored = await ctx.db
+      .query("contactSimplePlStatements")
+      .withIndex("by_contact_sort", (q) => q.eq("contactId", args.contactId))
+      .collect();
+    const active = stored.filter((r) => r.archivedAt == null);
+    const incoming = active.map((row) =>
+      simplePlProfileShapeToInstance(
+        {
+          sortOrder: row.sortOrder,
+          name: row.name,
+          periodKind: row.periodKind,
+          companyName: row.companyName,
+          periodEnded: row.periodEnded,
+          salesRevenue: row.salesRevenue,
+          otherRevenue: row.otherRevenue,
+          salesDiscounts: row.salesDiscounts,
+          salesReturnsAllowances: row.salesReturnsAllowances,
+          costOfRawMaterials: row.costOfRawMaterials,
+          costOfPartsUsed: row.costOfPartsUsed,
+          directLaborCosts: row.directLaborCosts,
+          overheadCosts: row.overheadCosts,
+          automobile: row.automobile,
+          rentedEquipment: row.rentedEquipment,
+          insurance: row.insurance,
+          jobExpenses: row.jobExpenses,
+          legalAndProfessionalFees: row.legalAndProfessionalFees,
+          maintenanceAndRepair: row.maintenanceAndRepair,
+          meals: row.meals,
+          officeExpenses: row.officeExpenses,
+          rentOrLease: row.rentOrLease,
+          utilities: row.utilities,
+          vehicleExpenses: row.vehicleExpenses,
+          miscellaneousExpenses: row.miscellaneousExpenses,
+          notes: row.notes,
+        },
+        [String(args.contactId)],
+      ),
+    );
+
+    const current = dealSimplePlInstancesFromFile(p);
+    const existingFingerprints = new Set(
+      current
+        .filter(simplePlInstanceHasIdentity)
+        .map((inst) => simplePlFingerprintFromInstance(inst)),
+    );
+    const toAdd = incoming.filter((inst) => {
+      const fp = simplePlFingerprintFromInstance(inst);
+      return fp && !existingFingerprints.has(fp);
+    });
+    if (toAdd.length === 0) {
+      return { ok: true as const, importedRowCount: 0 };
+    }
+
+    const next = [
+      ...current.filter(simplePlInstanceHasIdentity),
+      ...toAdd,
+    ];
+    await applySimplePlInstancesDealPatch(ctx, p, next);
+    const fileAfterDeal = await ctx.db.get(args.fileId);
+    if (!fileAfterDeal) throw new Error("Pipeline not found");
+    await syncSimplePlInstancesToAssignedContacts(
+      ctx,
+      fileAfterDeal,
+      next,
+      memberUserKey,
+    );
+    return { ok: true as const, importedRowCount: toAdd.length };
   },
 });
 

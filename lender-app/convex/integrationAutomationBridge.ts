@@ -7,6 +7,7 @@ import {
 } from "../lib/integrations/catalog";
 import { resolveOrganizationPlanForCtx } from "./organizationPlan";
 import { planHasFeature } from "../lib/orgPlanFeatures";
+import { upsertPipelineLeadFromInboundJob } from "./integrationInboundPipelineLead";
 
 const MAX_ORG_INBOUND_AUTOMATION_EFFECTS = 16;
 
@@ -103,6 +104,12 @@ export const processInboundIntegrationJob = internalMutation({
                 : undefined,
             },
           );
+          effects += 1;
+        } else if (act.type === "upsert_pipeline_lead") {
+          await upsertPipelineLeadFromInboundJob(ctx, {
+            jobId,
+            defaultStatus: act.defaultStatus,
+          });
           effects += 1;
         }
       }

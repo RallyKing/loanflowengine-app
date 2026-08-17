@@ -50,7 +50,13 @@ function extractServerDetail(raw: string): string | null {
 
 export function convexClientErrorMessage(error: unknown): string {
   const raw = rawConvexMessage(error);
-  if (raw.includes(OFFLINE_CONFLICT_ERROR)) {
+  if (
+    raw.includes(OFFLINE_CONFLICT_ERROR) ||
+    (error &&
+      typeof error === "object" &&
+      (error as { data?: { code?: unknown } }).data?.code ===
+        OFFLINE_CONFLICT_ERROR)
+  ) {
     return "This file was updated elsewhere. Refresh and try again.";
   }
   const detail = extractServerDetail(raw);

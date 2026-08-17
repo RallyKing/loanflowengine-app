@@ -48,6 +48,12 @@ if (
 ) {
   throw new Error("pfs WiW key should match modular PFS section id");
 }
+if (
+  floatingBlockKeyForPipelineBlock("simplePl") !==
+  MODULAR_BLOCK_SECTION_IDS.simplePl
+) {
+  throw new Error("simplePl WiW key should match modular Simple P&L section id");
+}
 
 if (DOCUMENTS_TAB_SECTION_IDS.vault !== "pipeline-documents-vault") {
   throw new Error(

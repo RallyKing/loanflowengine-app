@@ -30,6 +30,8 @@ e2e-snapshots/
 *.log
 .DS_Store
 Thumbs.db
+*.tsbuildinfo
+tsconfig.tsbuildinfo
 
 # IMPORTANT: do NOT exclude `convex/_generated/` here even though it's in
 # `.gitignore`. The Next.js build imports `@/convex/_generated/api` and there
@@ -48,3 +50,5 @@ dlc-next*/
 
 
 .next-iwf-solo/
+
+.next-edit-html-fix/

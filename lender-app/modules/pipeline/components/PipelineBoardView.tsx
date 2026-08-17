@@ -38,8 +38,16 @@ import { useHubTriageHighlightMap } from "@/hooks/useHubTriageHighlightMap";
 import { resolveTriageHighlight } from "@/lib/pipeline/hubTriageHighlight";
 import { ResourceOwnershipLine } from "@/components/ownership/ResourceOwnershipLine";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
+import {
+  hubBoardCardClass,
+  hubBoardColumnClass,
+  hubBoardColumnHeaderClass,
+  hubIconQuietClass,
+  hubLoanCardFocusedClass,
+} from "@/lib/ui/pipelineHubSurfaces";
 import { groupBoardRowsByHierarchy } from "@/lib/pipeline/boardHierarchyGroups";
 import { snoozedUntilToMs } from "@/lib/pipelineSnooze";
+import { PipelineFileAutoArchiveMarker } from "@/components/pipeline/PipelineFileAutoArchiveMarker";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useOrgMemberDisplayLabel } from "@/lib/useOrgMemberDisplayLabel";
@@ -81,21 +89,21 @@ function BoardColumn({
     <section
       ref={setNodeRef}
       className={cn(
-        "flex min-h-0 w-72 shrink-0 flex-col rounded-lg border-2 border-border/65 bg-muted/20 transition-colors",
-        isOver && "border-primary/50 bg-primary/5",
+        hubBoardColumnClass,
+        isOver && "border-primary/45 bg-primary/5 shadow-dlc-2",
       )}
       aria-label={`${label} column`}
     >
-      <header className="flex items-center gap-2 border-b-2 border-border/60 bg-background/95 px-3 py-2">
+      <header className={hubBoardColumnHeaderClass}>
         <span
-          className="h-2 w-2 rounded-full"
+          className="h-2 w-2 rounded-dlc-full shadow-dlc-1 ring-2 ring-background/80"
           style={{ backgroundColor: color }}
           aria-hidden
         />
-        <h3 className="text-sm font-semibold" style={{ color }}>
+        <h3 className="text-sm font-semibold tracking-tight" style={{ color }}>
           {label}
         </h3>
-        <span className="ml-auto text-xs font-medium text-muted-foreground">
+        <span className="ml-auto text-xs font-semibold tabular-nums text-muted-foreground">
           {count}
         </span>
       </header>
@@ -154,7 +162,7 @@ function BoardCardHeader({
         {!dragDisabled ? (
           <button
             type="button"
-            className="mt-0.5 shrink-0 cursor-grab touch-none rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing"
+            className="mt-0.5 shrink-0 cursor-grab touch-none rounded-dlc-sm p-1 text-muted-foreground hover:bg-dlc-surface-low/60 hover:text-foreground active:cursor-grabbing"
             aria-label={`Drag ${row.fileName}`}
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
@@ -165,7 +173,10 @@ function BoardCardHeader({
         ) : null}
         <Link
           href={pipelineDealEditorHref(row._id)}
-          className="mt-0.5 shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className={cn(
+            "mt-0.5 shrink-0 rounded-dlc-sm p-1 transition-colors duration-dlc-short1 ease-dlc-standard hover:bg-dlc-surface-low/60 hover:text-foreground",
+            hubIconQuietClass,
+          )}
           aria-label={`Open file ${row.fileName}`}
           title="Open file"
           onClick={(e) => e.stopPropagation()}
@@ -209,6 +220,13 @@ function BoardCardHeader({
           {new Date(snoozedUntilToMs(row.snoozedUntil)!).toLocaleDateString()}
         </span>
       ) : null}
+      <PipelineFileAutoArchiveMarker
+        autoArchiveInactivityDays={row.autoArchiveInactivityDays}
+        autoArchiveAfterAt={row.autoArchiveAfterAt}
+        lastActivityAt={row.updatedAt}
+        compact
+        className="mt-1"
+      />
     </div>
   );
 }
@@ -338,17 +356,16 @@ function BoardCard({
       ref={setNodeRef}
       data-pipeline-row={row._id}
       className={cn(
-        "cursor-pointer rounded-md border bg-background p-3 shadow-sm transition-colors hover:border-primary/40 hover:shadow",
+        hubBoardCardClass,
         row.archivedAt != null && "opacity-65",
-        hubFocusFileId === row._id &&
-          "ring-2 ring-brand-accent/45 ring-offset-2 ring-offset-background",
+        hubFocusFileId === row._id && hubLoanCardFocusedClass,
         isDragging && "opacity-40",
       )}
       onClick={onSelect}
     >
       <HubTriageHighlightFrame
         highlight={triageHighlight}
-        className="rounded-md"
+        className="rounded-dlc-md"
         badgeClassName="top-1.5 right-1.5"
       >
         <BoardCardContent
@@ -455,7 +472,7 @@ export function PipelineBoardView({
 
   if (stageTree.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+      <div className="rounded-dlc-lg border border-dashed border-border/60 bg-dlc-surface-low/30 p-6 text-center text-sm text-muted-foreground">
         No pipeline stages configured. Open Settings → Pipeline stages to add columns.
       </div>
     );
@@ -477,7 +494,7 @@ export function PipelineBoardView({
                 count={rowsForStage.length}
               >
                 {rowsForStage.length === 0 ? (
-                  <li className="rounded-md border border-dashed bg-background/50 p-3 text-center text-xs text-muted-foreground">
+                  <li className="rounded-dlc-md border border-dashed border-border/55 bg-dlc-surface-high/60 p-3 text-center text-xs text-muted-foreground">
                     Empty
                   </li>
                 ) : (
@@ -559,7 +576,7 @@ export function PipelineBoardView({
       </div>
       <DragOverlay>
         {activeRow ? (
-          <div className="rounded-md border bg-background p-3 shadow-lg">
+          <div className="rounded-dlc-md border border-border/55 bg-dlc-surface-high p-3 shadow-dlc-3">
             <BoardCardContent
               row={activeRow}
               dragDisabled

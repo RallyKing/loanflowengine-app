@@ -510,8 +510,8 @@ export function DocumentVaultPreviewCanvas({
             url={url}
             fileName={fileName}
             contentType={contentType}
-            className="h-full min-h-[calc(100dvh-12rem)]"
-            viewportClassName="min-h-[calc(100dvh-12rem)]"
+            className="h-full min-h-0 min-w-0"
+            viewportClassName="min-h-0"
             onError={onError}
           />
         </div>

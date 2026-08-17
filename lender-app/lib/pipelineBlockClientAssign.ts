@@ -35,6 +35,8 @@ export const PIPELINE_BLOCK_TO_ATOMIC_ASSIGN: Partial<
   constructionBudget: "construction_budget",
   investorExperience: "investor_experience",
   pfs: "pfs_statement",
+  trackRecord: "track_record",
+  simplePl: "simple_pl",
 };
 
 /** DOM section id → atomic portal id for CollapsibleBlock auto-wiring. */
@@ -74,6 +76,8 @@ export const COLLAPSIBLE_SECTION_TO_ATOMIC_ASSIGN: Record<
   [MODULAR_BLOCK_SECTION_IDS.constructionBudget]: "construction_budget",
   [MODULAR_BLOCK_SECTION_IDS.investorExperience]: "investor_experience",
   [MODULAR_BLOCK_SECTION_IDS.pfs]: "pfs_statement",
+  [MODULAR_BLOCK_SECTION_IDS.trackRecord]: "track_record",
+  [MODULAR_BLOCK_SECTION_IDS.simplePl]: "simple_pl",
 };
 
 /**
