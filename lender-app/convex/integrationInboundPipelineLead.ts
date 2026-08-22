@@ -25,6 +25,7 @@ import { clampActivitySummary } from "../lib/pipelineFileActivityModel";
 import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 import { buildInitialIntakeDocument } from "./intakeDocumentDefaults";
 import { assertCanAddOrgPipelineFile } from "./orgPlanLimits";
+import { ensureConfirmInterestNewLeadTask } from "./integrationFileTask";
 import {
   appendPipelineFileActivity,
 } from "./pipelineFileActivity";
@@ -755,6 +756,22 @@ export async function upsertPipelineLeadFromInboundJob(
   await refreshContactCrmListFields(ctx, contactId);
   await syncFileClientTitleFromPrimaryParties(ctx, file._id);
   await refreshPipelineGlobalSearchText(ctx, file._id);
+
+  if (created) {
+    try {
+      await ensureConfirmInterestNewLeadTask(ctx, {
+        organizationId: job.organizationId,
+        relatedFileId: file._id,
+        actorUserKey: ownerUserKey,
+        now,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(
+        `Confirm Interest NEW LEAD task skipped after file create: ${msg}`,
+      );
+    }
+  }
 
   return {
     created,

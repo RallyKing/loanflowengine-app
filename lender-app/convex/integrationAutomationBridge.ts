@@ -8,6 +8,8 @@ import {
 import { resolveOrganizationPlanForCtx } from "./organizationPlan";
 import { planHasFeature } from "../lib/orgPlanFeatures";
 import { upsertPipelineLeadFromInboundJob } from "./integrationInboundPipelineLead";
+import { applyCreateFileTaskFromInbound } from "./integrationFileTask";
+import { parseCreateFileTaskPayload } from "../lib/inboundFileTask";
 
 const MAX_ORG_INBOUND_AUTOMATION_EFFECTS = 16;
 
@@ -33,9 +35,11 @@ export const processInboundIntegrationJob = internalMutation({
     }
 
     let connectorPublicId: string | undefined;
+    let actorUserKey: string | undefined;
     if (job.connectorId) {
       const conn = await ctx.db.get(job.connectorId);
       connectorPublicId = conn?.publicId;
+      actorUserKey = conn?.createdByUserKey?.trim();
     }
 
     const settings = await ctx.db
@@ -46,6 +50,7 @@ export const processInboundIntegrationJob = internalMutation({
       .unique();
 
     let effects = 0;
+    let lastActionError: string | undefined;
 
     if (settings?.rules?.length) {
       for (const rule of settings.rules) {
@@ -79,6 +84,36 @@ export const processInboundIntegrationJob = internalMutation({
             updatedAt: now,
           });
           effects += 1;
+        } else if (act.type === "create_file_task") {
+          if (!actorUserKey) {
+            console.warn(
+              `create_file_task rule ${rule.id} skipped: connector owner missing`,
+            );
+            continue;
+          }
+          try {
+            await applyCreateFileTaskFromInbound(ctx, {
+              organizationId: job.organizationId,
+              actorUserKey,
+              now,
+              payload: {
+                action: "create_file_task",
+                relatedFileId: act.relatedFileId,
+                title: act.title,
+                description: act.body,
+                triageLabelId: act.triageLabelId,
+                triageLabelName: act.triageLabelName,
+                category: act.category ?? "call",
+                status: act.status ?? "todo",
+              },
+              requireAction: true,
+            });
+            effects += 1;
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            lastActionError = msg;
+            console.warn(`create_file_task rule ${rule.id} skipped: ${msg}`);
+          }
         } else if (act.type === "enqueue_integration_job") {
           const cat = act.category as IntegrationCategory;
           const pk = act.providerKey.trim();
@@ -115,9 +150,38 @@ export const processInboundIntegrationJob = internalMutation({
       }
     }
 
+    const payloadTask = parseCreateFileTaskPayload(job.payload, {
+      requireAction: true,
+    });
+    if (payloadTask && effects < MAX_ORG_INBOUND_AUTOMATION_EFFECTS) {
+      if (!actorUserKey) {
+        lastActionError = "connector owner missing; cannot create file task";
+        console.warn(`create_file_task webhook skipped: ${lastActionError}`);
+      } else {
+        try {
+          await applyCreateFileTaskFromInbound(ctx, {
+            organizationId: job.organizationId,
+            actorUserKey,
+            now,
+            parsed: payloadTask,
+            payload: job.payload,
+            requireAction: true,
+          });
+          effects += 1;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          lastActionError = msg;
+          console.warn(`create_file_task webhook rejected: ${msg}`);
+        }
+      }
+    }
+
     await ctx.db.patch(jobId, {
       inboundAutomationDispatched: true,
       updatedAt: now,
+      ...(lastActionError
+        ? { lastError: lastActionError.slice(0, 500) }
+        : {}),
     });
   },
 });

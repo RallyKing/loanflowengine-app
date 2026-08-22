@@ -16,6 +16,16 @@ const orgIntegrationRuleV = v.object({
       body: v.optional(v.string()),
     }),
     v.object({
+      type: v.literal("create_file_task"),
+      relatedFileId: v.string(),
+      title: v.string(),
+      body: v.optional(v.string()),
+      triageLabelId: v.optional(v.string()),
+      triageLabelName: v.optional(v.string()),
+      category: v.optional(v.literal("call")),
+      status: v.optional(v.literal("todo")),
+    }),
+    v.object({
       type: v.literal("enqueue_integration_job"),
       category: v.union(
         v.literal("crm"),

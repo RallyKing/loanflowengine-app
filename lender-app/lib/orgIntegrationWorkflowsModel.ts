@@ -10,6 +10,16 @@ export const MAX_ORG_INTEGRATION_AUTOMATION_RULES = 12;
 export type OrgInboundAutomationAction =
   | { type: "create_org_task"; title: string; body?: string }
   | {
+      type: "create_file_task";
+      relatedFileId: string;
+      title: string;
+      body?: string;
+      triageLabelId?: string;
+      triageLabelName?: string;
+      category?: "call";
+      status?: "todo";
+    }
+  | {
       type: "enqueue_integration_job";
       category: "crm" | "email" | "messaging";
       providerKey: string;
@@ -44,6 +54,47 @@ function parseAction(
         ? o.body.trim().slice(0, 2000)
         : undefined;
     return { type: "create_org_task", title, body };
+  }
+  if (type === "create_file_task") {
+    const relatedFileId =
+      typeof o.relatedFileId === "string"
+        ? o.relatedFileId.trim().slice(0, 64)
+        : typeof o.pipelineFileId === "string"
+          ? o.pipelineFileId.trim().slice(0, 64)
+          : "";
+    const title =
+      typeof o.title === "string" ? o.title.trim().slice(0, 200) : "";
+    if (!relatedFileId || !title) return null;
+    const body =
+      typeof o.body === "string" && o.body.trim()
+        ? o.body.trim().slice(0, 2000)
+        : typeof o.description === "string" && o.description.trim()
+          ? o.description.trim().slice(0, 2000)
+          : undefined;
+    const triageLabelId =
+      typeof o.triageLabelId === "string" && o.triageLabelId.trim()
+        ? o.triageLabelId.trim().slice(0, 64)
+        : undefined;
+    const triageLabelName =
+      typeof o.triageLabelName === "string" && o.triageLabelName.trim()
+        ? o.triageLabelName.trim().slice(0, 120)
+        : undefined;
+    const categoryRaw =
+      typeof o.category === "string" ? o.category.trim().toLowerCase() : "";
+    if (categoryRaw && categoryRaw !== "call") return null;
+    const statusRaw =
+      typeof o.status === "string" ? o.status.trim().toLowerCase() : "";
+    if (statusRaw && statusRaw !== "todo") return null;
+    return {
+      type: "create_file_task",
+      relatedFileId,
+      title,
+      body,
+      triageLabelId,
+      triageLabelName,
+      category: "call" as const,
+      status: "todo" as const,
+    };
   }
   if (type === "enqueue_integration_job") {
     const category = o.category;

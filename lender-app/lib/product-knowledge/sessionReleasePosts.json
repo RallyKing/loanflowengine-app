@@ -1,5 +1,17 @@
 [
   {
+    "slug": "2026-08-22-inbound-file-linked-new-lead-task",
+    "title": "New pipeline files from Confirm Interest get a Make Contact task",
+    "summary": "When a GHL Confirm Interest webhook creates a new Loan Flow Engine file, that file now gets a NEW LEAD: Make Contact task (Central Time date) with the BFS follow-up label. Grok connectors can also create a file-linked task via webhook without a staff login.",
+    "deploymentId": "dpl_8YMXnjECY3Br927hcSUQWHztXK5v",
+    "body": [
+      "Confirm Interest ingest still upserts the pipeline file first. Only a newly created file gets the task; re-ingesting the same lead does not add another. If that file already has a task whose title starts with NEW LEAD: Make Contact, ingest skips creating a duplicate.",
+      "The task is attached with relatedFileId (not org-wide), category call, status todo. The title uses America’s Chicago calendar date as M/D/YYYY. The BFS: Follow-up w/ Client triage label is applied when it exists on the org; a missing label does not block the file.",
+      "Private connectors can POST action create_file_task to the existing inbound webhook URL with X-Integration-Token. The queue responds HTTP 202 with accepted and jobId. create_org_task org automations are unchanged. The bot API also accepts create_file_task as a synchronous 200."
+    ],
+    "changeType": "added"
+  },
+  {
     "slug": "2026-08-17-convex-query-cache-fixes",
     "title": "Lists and badges reuse cached Convex results instead of re-running every time",
     "summary": "Unread counts, triage highlights, pipeline snooze, and related badges still show the same information. The backend no longer treats “what time is it?” as a reason to recompute those queries, so repeat calls drop without changing what you see.",

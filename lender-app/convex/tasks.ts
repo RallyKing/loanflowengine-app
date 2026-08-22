@@ -557,50 +557,166 @@ export async function assertAndResolveTaskTriageFields(
   };
 }
 
+export type CanonicalTaskCreateFields = {
+  organizationId: Id<"organizations">;
+  actorUserKey: string;
+  now: number;
+  title: string;
+  description?: string;
+  type: Doc<"tasks">["type"];
+  category: Doc<"tasks">["category"];
+  quadrant: number;
+  status: Doc<"tasks">["status"];
+  priority: number;
+  dueDate?: number;
+  startDate?: number;
+  parentTaskId?: Id<"tasks">;
+  relatedFileId?: Id<"pipeline">;
+  relatedContactId?: Id<"contacts">;
+  assigneeId?: string;
+  sharedWithIds?: string[];
+  recurrence?: Doc<"tasks">["recurrence"];
+  links?: Array<{ url: string; label?: string; kind?: string }>;
+  linkedTaskIds?: Id<"tasks">[];
+  checklist?: Doc<"tasks">["checklist"];
+  errandLocations?: Doc<"tasks">["errandLocations"];
+  snoozedUntil?: number;
+  reminderAt?: number;
+  triageLabelId?: Id<"organizationTriageLabels">;
+  scheduledTriggerTime?: number;
+  /** When true, omit triage instead of throwing if the label id is missing/foreign. */
+  skipInvalidTriageLabel?: boolean;
+};
+
+/**
+ * Canonical task insert used by UI `tasks.create` and inbound integrations.
+ * Callers must already have established org + actor (JWT member or connector owner).
+ */
+export async function createTaskRecord(
+  ctx: MutationCtx,
+  rest: CanonicalTaskCreateFields,
+): Promise<{ id: Id<"tasks">; skippedTriageReason?: string }> {
+  const organizationId = rest.organizationId;
+  const actor = rest.actorUserKey.trim();
+  if (!actor) throw new Error("actorUserKey is required");
+  if (!rest.title.trim()) {
+    throw new Error("Title is required");
+  }
+  if (rest.parentTaskId) {
+    const parent = await ctx.db.get(rest.parentTaskId);
+    if (!parent) {
+      throw new Error("parentTaskId: parent task not found");
+    }
+  }
+  if (rest.relatedFileId) {
+    const file = await ctx.db.get(rest.relatedFileId);
+    if (!file) {
+      throw new Error("relatedFileId: pipeline row not found");
+    }
+  }
+  await assertRelatedContactExists(ctx, rest.relatedContactId);
+  await assertTaskRelationsInOrg(
+    ctx,
+    organizationId,
+    rest.relatedFileId,
+    rest.relatedContactId,
+    rest.parentTaskId,
+  );
+  let skippedTriageReason: string | undefined;
+  let resolved: Awaited<ReturnType<typeof assertAndResolveTaskTriageFields>>;
+  try {
+    resolved = await assertAndResolveTaskTriageFields(ctx, organizationId, {
+      triageLabelId: rest.triageLabelId,
+      scheduledTriggerTime: rest.scheduledTriggerTime,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!rest.skipInvalidTriageLabel) throw e;
+    skippedTriageReason = msg;
+    resolved = await assertAndResolveTaskTriageFields(ctx, organizationId, {
+      scheduledTriggerTime: rest.scheduledTriggerTime,
+    });
+  }
+  const now = rest.now;
+  const nextPos =
+    rest.parentTaskId == null
+      ? await nextQuadrantPositionForParent(ctx, rest.quadrant, organizationId)
+      : undefined;
+  const id = await ctx.db.insert("tasks", {
+    title: rest.title.trim(),
+    description: rest.description?.trim() || undefined,
+    type: rest.type,
+    category: rest.category,
+    quadrant: rest.quadrant,
+    quadrantPosition: nextPos,
+    status: rest.status,
+    priority: rest.priority,
+    dueDate: rest.dueDate,
+    startDate: rest.startDate,
+    parentTaskId: rest.parentTaskId,
+    relatedFileId: rest.relatedFileId,
+    relatedContactId: rest.relatedContactId,
+    assigneeId: rest.assigneeId?.trim() || undefined,
+    sharedWithIds:
+      rest.sharedWithIds && rest.sharedWithIds.length > 0
+        ? rest.sharedWithIds
+        : undefined,
+    recurrence: rest.recurrence,
+    links: normalizeLinks(rest.links),
+    linkedTaskIds:
+      rest.linkedTaskIds && rest.linkedTaskIds.length > 0
+        ? rest.linkedTaskIds
+        : undefined,
+    checklist: normalizeChecklist(rest.checklist),
+    errandLocations: normalizeErrandLocations(rest.errandLocations),
+    completedAt: rest.status === "done" ? now : undefined,
+    snoozedUntil:
+      rest.snoozedUntil && rest.snoozedUntil > 0
+        ? rest.snoozedUntil
+        : undefined,
+    reminderAt:
+      rest.reminderAt && rest.reminderAt > 0 ? rest.reminderAt : undefined,
+    triageLabelId: resolved.triageLabelId,
+    labelAppliedAt: resolved.triageLabelId ? now : undefined,
+    highlightColorId: resolved.highlightColorId,
+    scheduledTriggerTime: resolved.scheduledTriggerTime,
+    organizationId,
+    ...ownerUserIdFieldsForInsert(actor),
+    createdAt: now,
+    updatedAt: now,
+  });
+  const inserted = await ctx.db.get(id);
+  if (inserted) {
+    await appendTaskFeed(
+      ctx,
+      inserted,
+      "task_created",
+      `Created task “${inserted.title.trim()}”`,
+      actor,
+    );
+    await syncAssigneeNotification(ctx, null, inserted, actor);
+  }
+  await refreshTaskGlobalSearchText(ctx, id);
+  await syncIndexedGraphTaskEdge(ctx, id, {
+    actor,
+  });
+  return { id, skippedTriageReason };
+}
+
 export const create = mutation({
   args: { ...taskInput, ...orgScopeArgs, actorUserKey: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const { actorUserKey, organizationId, memberUserKey, ...rest } = args;
     const actor = await requireTaskOrg(ctx, organizationId, memberUserKey);
-    if (!rest.title.trim()) {
-      throw new Error("Title is required");
-    }
-    if (rest.parentTaskId) {
-      const parent = await ctx.db.get(rest.parentTaskId);
-      if (!parent) {
-        throw new Error("parentTaskId: parent task not found");
-      }
-    }
-    if (rest.relatedFileId) {
-      const file = await ctx.db.get(rest.relatedFileId);
-      if (!file) {
-        throw new Error("relatedFileId: pipeline row not found");
-      }
-    }
-    await assertRelatedContactExists(ctx, rest.relatedContactId);
-    await assertTaskRelationsInOrg(
-      ctx,
+    const created = await createTaskRecord(ctx, {
       organizationId,
-      rest.relatedFileId,
-      rest.relatedContactId,
-      rest.parentTaskId,
-    );
-    const resolved = await assertAndResolveTaskTriageFields(ctx, organizationId, {
-      triageLabelId: rest.triageLabelId,
-      scheduledTriggerTime: rest.scheduledTriggerTime,
-    });
-    const now = Date.now();
-    const nextPos =
-      rest.parentTaskId == null
-        ? await nextQuadrantPositionForParent(ctx, rest.quadrant, organizationId)
-        : undefined;
-    const id = await ctx.db.insert("tasks", {
-      title: rest.title.trim(),
-      description: rest.description?.trim() || undefined,
+      actorUserKey: actorUserKey ?? actor,
+      now: Date.now(),
+      title: rest.title,
+      description: rest.description,
       type: rest.type,
       category: rest.category,
       quadrant: rest.quadrant,
-      quadrantPosition: nextPos,
       status: rest.status,
       priority: rest.priority,
       dueDate: rest.dueDate,
@@ -608,51 +724,19 @@ export const create = mutation({
       parentTaskId: rest.parentTaskId,
       relatedFileId: rest.relatedFileId,
       relatedContactId: rest.relatedContactId,
-      assigneeId: rest.assigneeId?.trim() || undefined,
-      sharedWithIds:
-        rest.sharedWithIds && rest.sharedWithIds.length > 0
-          ? rest.sharedWithIds
-          : undefined,
+      assigneeId: rest.assigneeId,
+      sharedWithIds: rest.sharedWithIds,
       recurrence: rest.recurrence,
-      links: normalizeLinks(rest.links),
-      linkedTaskIds:
-        rest.linkedTaskIds && rest.linkedTaskIds.length > 0
-          ? rest.linkedTaskIds
-          : undefined,
-      checklist: normalizeChecklist(rest.checklist),
-      errandLocations: normalizeErrandLocations(rest.errandLocations),
-      completedAt: rest.status === "done" ? now : undefined,
-      snoozedUntil:
-        rest.snoozedUntil && rest.snoozedUntil > 0
-          ? rest.snoozedUntil
-          : undefined,
-      reminderAt:
-        rest.reminderAt && rest.reminderAt > 0 ? rest.reminderAt : undefined,
-      triageLabelId: resolved.triageLabelId,
-      labelAppliedAt: resolved.triageLabelId ? now : undefined,
-      highlightColorId: resolved.highlightColorId,
-      scheduledTriggerTime: resolved.scheduledTriggerTime,
-      organizationId,
-      ...ownerUserIdFieldsForInsert(actor),
-      createdAt: now,
-      updatedAt: now,
+      links: rest.links,
+      linkedTaskIds: rest.linkedTaskIds,
+      checklist: rest.checklist,
+      errandLocations: rest.errandLocations,
+      snoozedUntil: rest.snoozedUntil,
+      reminderAt: rest.reminderAt,
+      triageLabelId: rest.triageLabelId,
+      scheduledTriggerTime: rest.scheduledTriggerTime,
     });
-    const inserted = await ctx.db.get(id);
-    if (inserted) {
-      await appendTaskFeed(
-        ctx,
-        inserted,
-        "task_created",
-        `Created task “${inserted.title.trim()}”`,
-        actorUserKey ?? actor,
-      );
-      await syncAssigneeNotification(ctx, null, inserted, actorUserKey ?? actor);
-    }
-    await refreshTaskGlobalSearchText(ctx, id);
-    await syncIndexedGraphTaskEdge(ctx, id, {
-      actor: actorUserKey ?? actor,
-    });
-    return { id };
+    return { id: created.id };
   },
 });
 

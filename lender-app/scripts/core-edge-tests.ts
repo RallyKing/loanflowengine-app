@@ -185,6 +185,12 @@ import {
   shouldChainAutoArchiveSweep,
 } from "../lib/pipelineAutoArchive";
 import { DURABLE_JOB_BACKUP_SWEEP_MINUTES } from "../lib/convexCronIntervals";
+import {
+  formatNewLeadMakeContactTitle,
+  parseCreateFileTaskPayload,
+  titleStartsWithNewLeadMakeContact,
+} from "../lib/inboundFileTask";
+import { sanitizeOrganizationIntegrationRules } from "../lib/orgIntegrationWorkflowsModel";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -2104,6 +2110,38 @@ test("created vault HTML docs default download format to PDF", () => {
   assert.equal(
     vaultOutboundPdfFileName("Acme Term Sheet", "Term Sheet.html"),
     "Acme Term Sheet.pdf",
+  );
+});
+
+test("inbound file-linked NEW LEAD task title + create_org_task still sanitizes", () => {
+  const chicagoAfternoon = Date.UTC(2026, 7, 22, 20, 0, 0);
+  assert.equal(
+    formatNewLeadMakeContactTitle(chicagoAfternoon),
+    "NEW LEAD: Make Contact 8/22/2026",
+  );
+  assert.equal(
+    titleStartsWithNewLeadMakeContact("NEW LEAD: Make Contact 8/22/2026"),
+    true,
+  );
+  const rules = sanitizeOrganizationIntegrationRules([
+    {
+      id: "org-task-1",
+      enabled: true,
+      action: { type: "create_org_task", title: "Inbox ping" },
+    },
+  ]);
+  assert.equal(rules[0]?.action.type, "create_org_task");
+  assert.equal(
+    parseCreateFileTaskPayload({
+      body: {
+        action: "create_file_task",
+        relatedFileId: "file1",
+        title: "NEW LEAD: Make Contact 8/22/2026",
+        category: "call",
+        status: "todo",
+      },
+    })?.title,
+    "NEW LEAD: Make Contact 8/22/2026",
   );
 });
 
