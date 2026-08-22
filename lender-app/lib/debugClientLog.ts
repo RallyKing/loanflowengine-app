@@ -7,10 +7,47 @@ export const DEBUG_CLIENT_PRIORITY_KEY = "dlc.debug.f25461.priority.ndjson";
 const MAX_BYTES = 250_000;
 const PRIORITY_MAX_BYTES = 120_000;
 
+/** Remote debug ingest is local-dev only — never hit prod CSP / missing API routes. */
+export function isDebugAgentRemoteEnabled(): boolean {
+  return process.env.NODE_ENV === "development";
+}
+
 /** Same-origin absolute URL — avoids rare relative `fetch` issues (embedded/preview hosts). */
 export function debugAgentLogPostUrl(): string {
   if (typeof window === "undefined") return "/api/debug-agent-log";
   return new URL("/api/debug-agent-log", window.location.origin).href;
+}
+
+/** No-op outside development. Prefer this over raw `fetch(debugAgentLogPostUrl())`. */
+export function postDebugAgentRemote(payload: Record<string, unknown>): void {
+  if (!isDebugAgentRemoteEnabled() || typeof window === "undefined") return;
+  try {
+    const body = JSON.stringify({
+      sessionId: "f25461",
+      ...payload,
+      timestamp:
+        typeof payload.timestamp === "number" ? payload.timestamp : Date.now(),
+    });
+    void fetch(
+      "http://127.0.0.1:7412/ingest/32d854df-a7db-4c6f-bb28-ee2545e32c91",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "f25461",
+        },
+        body,
+      },
+    ).catch(() => {});
+    void fetch(debugAgentLogPostUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
 }
 
 export function appendDebugClientLog(payload: Record<string, unknown>): void {
@@ -39,45 +76,8 @@ export function appendPriorityDebugClientLog(
   } catch {
     /* private mode / quota */
   }
-  if (typeof window === "undefined") return;
   // #region agent log
-  try {
-    const body = JSON.stringify({
-      sessionId: "f25461",
-      ...payload,
-      timestamp:
-        typeof payload.timestamp === "number" ? payload.timestamp : Date.now(),
-    });
-    if (process.env.NODE_ENV === "development") {
-      void fetch(
-        "http://127.0.0.1:7412/ingest/32d854df-a7db-4c6f-bb28-ee2545e32c91",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "f25461",
-          },
-          body,
-        },
-      ).catch(() => {});
-      void fetch(debugAgentLogPostUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        keepalive: true,
-      })
-        .then((r) => {
-          if (!r.ok) {
-            console.warn("[debug-agent-log] POST failed", r.status, r.statusText);
-          }
-        })
-        .catch((e) => {
-          console.warn("[debug-agent-log] POST error", e);
-        });
-    }
-  } catch {
-    /* ignore */
-  }
+  postDebugAgentRemote(payload);
   // #endregion
 }
 
@@ -90,7 +90,7 @@ export async function flushPriorityBufferToWorkspaceViaApi(): Promise<{
   skipped: number;
   failed: number;
 }> {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isDebugAgentRemoteEnabled()) {
     return { posted: 0, skipped: 0, failed: 0 };
   }
   let raw = "";

@@ -197,10 +197,19 @@ export async function uploadLocalFilesViaConvexUrl(options: {
   return { ok, failures, attempted: total };
 }
 
+export type AttachmentKind =
+  | "image"
+  | "pdf"
+  | "html"
+  | "text"
+  | "spreadsheet"
+  | "word"
+  | "other";
+
 export function guessAttachmentKind(
   contentType: string | undefined,
-  fileName: string
-): "image" | "pdf" | "html" | "text" | "other" {
+  fileName: string,
+): AttachmentKind {
   const ct = (contentType || "").toLowerCase();
   const n = fileName.toLowerCase();
   if (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(n)) {
@@ -217,7 +226,23 @@ export function guessAttachmentKind(
   ) {
     return "html";
   }
-  if (ct.startsWith("text/") || /\.(txt|csv|md|log)$/i.test(n)) {
+  if (
+    ct.includes("spreadsheet") ||
+    ct.includes("excel") ||
+    ct === "text/csv" ||
+    ct === "application/csv" ||
+    /\.(xlsx|xls|csv)$/i.test(n)
+  ) {
+    return "spreadsheet";
+  }
+  if (
+    ct.includes("wordprocessingml") ||
+    ct.includes("msword") ||
+    /\.(docx|doc)$/i.test(n)
+  ) {
+    return "word";
+  }
+  if (ct.startsWith("text/") || /\.(txt|md|log)$/i.test(n)) {
     return "text";
   }
   return "other";

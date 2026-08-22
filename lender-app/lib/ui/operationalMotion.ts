@@ -62,18 +62,25 @@ export function opMotionChevronRightClass(expanded: boolean): string {
   );
 }
 
-/** Grid-based collapse panel (scroll-safe; no animated grid-template-rows). */
-export const opMotionCollapseGrid = cn("grid", opMotionStructuralTransition);
+/**
+ * Grid-based collapse panel (scroll-safe; no animated grid-template-rows).
+ * Explicit `minmax(0,1fr)` column + `w-full` prevents width collapse when the
+ * inner track uses `overflow:hidden` (min-content contribution → 0).
+ */
+export const opMotionCollapseGrid = cn(
+  "grid w-full min-w-0 grid-cols-[minmax(0,1fr)]",
+  opMotionStructuralTransition,
+);
 
 export const opMotionCollapseOpen = "grid-rows-[1fr]";
 export const opMotionCollapseClosed = "grid-rows-[0fr]";
 
 export const opMotionCollapseInner =
-  "min-h-0 overflow-hidden [overflow-anchor:none]";
+  "w-full min-w-0 min-h-0 overflow-hidden [overflow-anchor:none]";
 
 /** Disclosure body fade — pairs with grid collapse. */
 export const opMotionDisclosureBodyClass = cn(
-  "min-w-0 space-y-2 border-t border-border/40 pt-2",
+  "w-full min-w-0 space-y-2 border-t border-border/40 pt-2",
   opMotionFastTransition,
 );
 

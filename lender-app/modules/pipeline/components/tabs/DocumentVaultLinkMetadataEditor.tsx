@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { LibraryDocumentsProof } from "@/components/LibraryDocumentsPanel";
@@ -12,18 +12,27 @@ import {
   type LibraryDocumentCategory,
   vaultTaxYearOptions,
 } from "@/lib/library/documentVaultTaxonomy";
+import {
+  categoryOptionValue,
+  parseCategoryOptionValue,
+} from "@/lib/library/documentCategoryCatalog";
 
 const DEBOUNCE_MS = 400;
 
 export type DocumentVaultLinkMetadataEditorProps = {
   documentId: Id<"libraryDocuments">;
   proof: LibraryDocumentsProof;
+  organizationId?: Id<"organizations">;
   memberUserKey?: string;
   canMutate: boolean;
   documentCategory?: LibraryDocumentCategory;
+  customDocumentCategoryId?: Id<"organizationDocumentCategories">;
+  customDocumentCategoryName?: string;
   taxYear?: string;
   onOptimisticChange?: (patch: {
     documentCategory?: LibraryDocumentCategory | null;
+    customDocumentCategoryId?: Id<"organizationDocumentCategories"> | null;
+    customDocumentCategoryName?: string | null;
     taxYear?: string | null;
   }) => void;
   onError?: (message: string) => void;
@@ -33,9 +42,12 @@ export type DocumentVaultLinkMetadataEditorProps = {
 export function DocumentVaultLinkMetadataEditor({
   documentId,
   proof,
+  organizationId,
   memberUserKey,
   canMutate,
   documentCategory,
+  customDocumentCategoryId,
+  customDocumentCategoryName,
   taxYear,
   onOptimisticChange,
   onError,
@@ -44,19 +56,42 @@ export function DocumentVaultLinkMetadataEditor({
   const patchLinkMetadata = useMutation(
     api.libraryDocuments.patchDocumentLinkMetadata,
   );
+  const customCategories = useQuery(
+    api.documentCategories.listForOrganization,
+    organizationId
+      ? {
+          organizationId,
+          ...(memberUserKey ? { memberUserKey } : {}),
+        }
+      : "skip",
+  );
 
-  const [category, setCategory] = useState(documentCategory ?? "");
+  const initialCategory = documentCategory
+    ? categoryOptionValue("builtin", documentCategory)
+    : customDocumentCategoryId
+      ? categoryOptionValue("custom", customDocumentCategoryId)
+      : "";
+  const [category, setCategory] = useState(initialCategory);
   const [year, setYear] = useState(taxYear ?? "");
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestArgsRef = useRef<{
     documentCategory?: LibraryDocumentCategory | "__unset__";
+    customDocumentCategoryId?:
+      | Id<"organizationDocumentCategories">
+      | "__unset__";
     taxYear?: string | "__unset__";
   } | null>(null);
 
   useEffect(() => {
-    setCategory(documentCategory ?? "");
+    setCategory(
+      documentCategory
+        ? categoryOptionValue("builtin", documentCategory)
+        : customDocumentCategoryId
+          ? categoryOptionValue("custom", customDocumentCategoryId)
+          : "",
+    );
     setYear(taxYear ?? "");
-  }, [documentCategory, taxYear, documentId]);
+  }, [customDocumentCategoryId, documentCategory, taxYear, documentId]);
 
   useEffect(
     () => () => {
@@ -84,6 +119,9 @@ export function DocumentVaultLinkMetadataEditor({
   const schedulePatch = useCallback(
     (args: {
       documentCategory?: LibraryDocumentCategory | "__unset__";
+      customDocumentCategoryId?:
+        | Id<"organizationDocumentCategories">
+        | "__unset__";
       taxYear?: string | "__unset__";
     }) => {
       latestArgsRef.current = {
@@ -100,45 +138,72 @@ export function DocumentVaultLinkMetadataEditor({
   );
 
   const onCategoryChange = (nextRaw: string) => {
+    const nextSelection = parseCategoryOptionValue(nextRaw);
     const nextCategory =
-      nextRaw === ""
-        ? null
-        : (nextRaw as LibraryDocumentCategory);
+      nextSelection?.kind === "builtin" ? nextSelection.value : null;
+    const nextCustomCategory =
+      nextSelection?.kind === "custom"
+        ? (nextSelection.value as Id<"organizationDocumentCategories">)
+        : null;
     setCategory(nextRaw);
     if (nextCategory !== "tax_return") {
       setYear("");
     }
     onOptimisticChange?.({
       documentCategory: nextCategory,
+      customDocumentCategoryId: nextCustomCategory,
+      customDocumentCategoryName:
+        nextSelection?.kind === "custom"
+          ? customCategories?.find(
+              (item) => String(item._id) === nextSelection.value,
+            )?.displayName ?? null
+          : null,
       taxYear: nextCategory === "tax_return" ? year || null : null,
     });
     if (!canMutate || !memberUserKey) return;
     if (nextRaw === "") {
-      schedulePatch({ documentCategory: "__unset__" });
+      schedulePatch({
+        documentCategory: "__unset__",
+        customDocumentCategoryId: "__unset__",
+      });
       return;
     }
-    schedulePatch({
-      documentCategory: nextRaw as LibraryDocumentCategory,
-      ...(nextRaw !== "tax_return" ? { taxYear: "__unset__" } : {}),
-    });
+    if (nextSelection?.kind === "builtin") {
+      schedulePatch({
+        documentCategory: nextSelection.value,
+        customDocumentCategoryId: "__unset__",
+        ...(nextSelection.value !== "tax_return"
+          ? { taxYear: "__unset__" }
+          : {}),
+      });
+    } else if (nextCustomCategory) {
+      schedulePatch({
+        documentCategory: "__unset__",
+        customDocumentCategoryId: nextCustomCategory,
+        taxYear: "__unset__",
+      });
+    }
   };
 
   const onYearChange = (nextYear: string) => {
+    const currentSelection = parseCategoryOptionValue(category);
+    const currentCategory =
+      currentSelection?.kind === "builtin" ? currentSelection.value : null;
     setYear(nextYear);
     onOptimisticChange?.({
-      documentCategory: (category || null) as LibraryDocumentCategory | null,
+      documentCategory: currentCategory,
       taxYear: nextYear || null,
     });
-    if (!canMutate || !memberUserKey || category !== "tax_return") return;
+    if (!canMutate || !memberUserKey || currentCategory !== "tax_return") return;
     schedulePatch({
       taxYear: nextYear.trim() ? nextYear.trim() : "__unset__",
     });
   };
 
   const categoryLabel =
-    category && LIBRARY_DOCUMENT_CATEGORY_LABELS[category as LibraryDocumentCategory]
-      ? LIBRARY_DOCUMENT_CATEGORY_LABELS[category as LibraryDocumentCategory]
-      : "Unassigned";
+    documentCategory
+      ? LIBRARY_DOCUMENT_CATEGORY_LABELS[documentCategory]
+      : customDocumentCategoryName || "Unassigned";
 
   if (!canMutate) {
     return (
@@ -149,7 +214,7 @@ export function DocumentVaultLinkMetadataEditor({
         <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 font-medium text-muted-foreground">
           {categoryLabel}
         </span>
-        {category === "tax_return" && taxYear ? (
+        {documentCategory === "tax_return" && taxYear ? (
           <span className="text-muted-foreground">Tax year {taxYear}</span>
         ) : null}
       </div>
@@ -174,13 +239,21 @@ export function DocumentVaultLinkMetadataEditor({
         >
           <option value="">Unassigned</option>
           {LIBRARY_DOCUMENT_CATEGORIES.map((cat) => (
-            <option key={cat} value={cat}>
+            <option key={cat} value={categoryOptionValue("builtin", cat)}>
               {LIBRARY_DOCUMENT_CATEGORY_LABELS[cat]}
+            </option>
+          ))}
+          {(customCategories ?? []).map((customCategory) => (
+            <option
+              key={customCategory._id}
+              value={categoryOptionValue("custom", customCategory._id)}
+            >
+              {customCategory.displayName}
             </option>
           ))}
         </select>
       </label>
-      {category === "tax_return" ? (
+      {category === categoryOptionValue("builtin", "tax_return") ? (
         <label className="flex min-w-[5.5rem] flex-col gap-0.5 text-[10px]">
           <span className="font-medium text-muted-foreground">Tax year</span>
           <select

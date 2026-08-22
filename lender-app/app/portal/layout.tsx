@@ -11,6 +11,7 @@ import {
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/cn";
+import { PublicPortalProviders } from "@/components/portal/PublicPortalProviders";
 
 export default function PortalLayout({
   children,
@@ -18,20 +19,23 @@ export default function PortalLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-dvh flex-col">
-      <PortalHeader />
-      <main className="mx-auto w-full max-w-lg flex-1 px-4 py-8 sm:max-w-2xl sm:px-6">
-        {children}
-      </main>
-      <footer className="border-t border-border py-6 text-center text-[11px] leading-relaxed text-muted-foreground">
-        <p>
-          Questions about your loan? Contact your loan officer or broker directly.
-        </p>
-        <p className="mt-1 opacity-90">
-          This portal does not replace legal disclosures or signed agreements.
-        </p>
-      </footer>
-    </div>
+    <PublicPortalProviders>
+      <div className="flex min-h-dvh flex-col">
+        <PortalHeader />
+        <main className="mx-auto w-full max-w-lg flex-1 px-4 py-8 sm:max-w-2xl sm:px-6">
+          {children}
+        </main>
+        <footer className="border-t border-border py-6 text-center text-[11px] leading-relaxed text-muted-foreground">
+          <p>
+            Questions about your loan? Contact your loan officer or broker
+            directly.
+          </p>
+          <p className="mt-1 opacity-90">
+            This portal does not replace legal disclosures or signed agreements.
+          </p>
+        </footer>
+      </div>
+    </PublicPortalProviders>
   );
 }
 

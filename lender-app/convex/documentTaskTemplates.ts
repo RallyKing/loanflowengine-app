@@ -16,6 +16,14 @@ import {
   fileTaskTypeV,
   persistAssignedBlocksPatch,
 } from "./documentVaultTaskTypes";
+import {
+  clientTemplateAttachmentV,
+  copyClientTemplateAttachments,
+  deleteRemovedClientTemplateStorage,
+  taskTypeAllowsClientTemplateAttachments,
+  validateClientTemplateAttachments,
+  type ClientTemplateAttachment,
+} from "./clientTemplateAttachments";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -326,6 +334,10 @@ export const injectTemplates = mutation({
 
     for (const template of templatesToInject) {
       const taskType = template.taskType ?? "document_upload";
+      const clientTemplateAttachments =
+        taskTypeAllowsClientTemplateAttachments(taskType)
+          ? copyClientTemplateAttachments(template.clientTemplateAttachments)
+          : undefined;
       const id = await ctx.db.insert("documentVaultFileTasks", {
         pipelineFileId,
         title: template.title,
@@ -339,6 +351,7 @@ export const injectTemplates = mutation({
             : undefined,
         instructionUrl:
           taskType === "client_instruction" ? template.instructionUrl : undefined,
+        clientTemplateAttachments,
         isRequired: template.isRequired,
         isPortalVisible:
           taskType === "internal_task" ? false : template.isPortalVisible,
@@ -450,10 +463,25 @@ export const deleteTemplateStack = mutation({
       .withIndex("by_stack", (q) => q.eq("stackId", stackId))
       .collect();
     for (const tpl of templates) {
+      await deleteRemovedClientTemplateStorage(
+        ctx,
+        tpl.clientTemplateAttachments,
+        undefined,
+      );
       await ctx.db.delete(tpl._id);
     }
     await ctx.db.delete(stackId);
     return { ok: true as const, deletedTemplates: templates.length };
+  },
+});
+
+export const generateUploadUrl = mutation({
+  args: {
+    ...orgArgs,
+  },
+  handler: async (ctx, { organizationId, memberUserKey }) => {
+    await requireOrgFilesEditor(ctx, organizationId, memberUserKey);
+    return await ctx.storage.generateUploadUrl();
   },
 });
 
@@ -470,6 +498,7 @@ export const createTemplate = mutation({
     taskType: v.optional(fileTaskTypeV),
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
+    clientTemplateAttachments: v.optional(v.array(clientTemplateAttachmentV)),
     assignedBlockEntries: v.optional(v.array(assignedBlockEntryV)),
     assignedBlocks: v.optional(v.array(v.string())),
     folderTemplate: v.optional(v.array(folderTemplateRowV)),
@@ -515,6 +544,16 @@ export const createTemplate = mutation({
       taskType === "document_upload"
         ? normalizeFolderTemplateRows(args.folderTemplate)
         : [];
+    let clientTemplateAttachments: ClientTemplateAttachment[] | undefined;
+    if (
+      taskTypeAllowsClientTemplateAttachments(taskType) &&
+      (args.clientTemplateAttachments?.length ?? 0) > 0
+    ) {
+      clientTemplateAttachments = await validateClientTemplateAttachments(
+        ctx,
+        args.clientTemplateAttachments ?? [],
+      );
+    }
     const id = await ctx.db.insert("documentTaskTemplates", {
       organizationId: args.organizationId,
       stackId: args.stackId,
@@ -529,6 +568,7 @@ export const createTemplate = mutation({
         taskType === "client_instruction"
           ? args.instructionUrl?.trim().slice(0, 2000) || undefined
           : undefined,
+      clientTemplateAttachments,
       isRequired: args.isRequired,
       isPortalVisible:
         taskType === "internal_task" ? false : args.isPortalVisible,
@@ -559,6 +599,7 @@ export const updateTemplate = mutation({
     taskType: v.optional(fileTaskTypeV),
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
+    clientTemplateAttachments: v.optional(v.array(clientTemplateAttachmentV)),
     assignedBlockEntries: v.optional(v.array(assignedBlockEntryV)),
     assignedBlocks: v.optional(v.array(v.string())),
     folderTemplate: v.optional(v.array(folderTemplateRowV)),
@@ -595,7 +636,8 @@ export const updateTemplate = mutation({
       taskType,
       clientInstructionText: nextInstructionText,
       instructionUrl: nextInstructionUrl,
-      assignedBlockEntries: nextBlockEntries,
+      assignedBlockEntries:
+        taskType === "block_assignment" ? nextBlockEntries : undefined,
     });
 
     const patch: Partial<Doc<"documentTaskTemplates">> = {
@@ -639,23 +681,63 @@ export const updateTemplate = mutation({
     if (args.priority !== undefined) {
       patch.priority = args.priority === null ? undefined : args.priority;
     }
-    if (args.assignedBlockEntries !== undefined) {
-      Object.assign(patch, persistAssignedBlocksPatch(args.assignedBlockEntries));
-    } else if (args.assignedBlocks !== undefined) {
-      Object.assign(
-        patch,
-        persistAssignedBlocksPatch(
-          args.assignedBlocks.map((blockId, index) => ({
-            blockId,
-            sortOrder: (index + 1) * 1000,
-          })),
-        ),
+
+    if (taskType === "block_assignment") {
+      if (args.assignedBlockEntries !== undefined) {
+        Object.assign(patch, persistAssignedBlocksPatch(args.assignedBlockEntries));
+      } else if (args.assignedBlocks !== undefined) {
+        Object.assign(
+          patch,
+          persistAssignedBlocksPatch(
+            args.assignedBlocks.map((blockId, index) => ({
+              blockId,
+              sortOrder: (index + 1) * 1000,
+            })),
+          ),
+        );
+      }
+    } else if (args.taskType !== undefined) {
+      patch.assignedBlockEntries = undefined;
+      patch.assignedBlocks = undefined;
+    }
+
+    if (taskType === "document_upload") {
+      if (args.folderTemplate !== undefined) {
+        const folderRows = normalizeFolderTemplateRows(args.folderTemplate);
+        patch.folderTemplate = folderRows.length > 0 ? folderRows : undefined;
+      }
+    } else if (args.taskType !== undefined || args.folderTemplate !== undefined) {
+      patch.folderTemplate = undefined;
+    }
+
+    if (taskTypeAllowsClientTemplateAttachments(taskType)) {
+      if (args.clientTemplateAttachments !== undefined) {
+        const next =
+          args.clientTemplateAttachments.length > 0
+            ? await validateClientTemplateAttachments(
+                ctx,
+                args.clientTemplateAttachments,
+              )
+            : undefined;
+        await deleteRemovedClientTemplateStorage(
+          ctx,
+          tpl.clientTemplateAttachments,
+          next,
+        );
+        patch.clientTemplateAttachments = next;
+      }
+    } else if (
+      args.taskType !== undefined ||
+      args.clientTemplateAttachments !== undefined
+    ) {
+      await deleteRemovedClientTemplateStorage(
+        ctx,
+        tpl.clientTemplateAttachments,
+        undefined,
       );
+      patch.clientTemplateAttachments = undefined;
     }
-    if (args.folderTemplate !== undefined) {
-      const folderRows = normalizeFolderTemplateRows(args.folderTemplate);
-      patch.folderTemplate = folderRows.length > 0 ? folderRows : undefined;
-    }
+
     if (args.stackId !== undefined) {
       if (args.stackId === null) {
         patch.stackId = undefined;
@@ -683,6 +765,11 @@ export const deleteTemplate = mutation({
     if (!tpl || tpl.organizationId !== organizationId) {
       throw new Error("Template not found.");
     }
+    await deleteRemovedClientTemplateStorage(
+      ctx,
+      tpl.clientTemplateAttachments,
+      undefined,
+    );
     await ctx.db.delete(templateId);
     return { ok: true as const };
   },

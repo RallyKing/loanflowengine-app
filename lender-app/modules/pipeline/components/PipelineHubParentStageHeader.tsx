@@ -2,6 +2,12 @@
 
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { cn } from "@/lib/cn";
+import {
+  hubStageCountClass,
+  hubStageHeaderClass,
+  hubStageHeaderNestedClass,
+  hubStageTitleClass,
+} from "@/lib/ui/pipelineHubSurfaces";
 
 export type PipelineHubParentStageHeaderVariant = "default" | "nested";
 
@@ -52,11 +58,13 @@ export function PipelineHubParentStageHeader({
         "flex w-full min-w-0 items-center gap-2",
         nested
           ? cn(
-              "rounded-md border border-border/50 bg-muted/25 px-2 py-1.5",
+              hubStageHeaderNestedClass,
+              "px-2 py-1.5",
               isFirstInSection ? "border-t-0" : "border-t",
             )
           : cn(
-              "sticky top-0 z-[1] border-t border-slate-200/80 bg-slate-50/70 px-3 py-2 backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/50",
+              hubStageHeaderClass,
+              "px-3 py-2",
               isFirstInSection && "border-t-0",
             ),
         className,
@@ -64,27 +72,15 @@ export function PipelineHubParentStageHeader({
     >
       <span
         className={cn(
-          "shrink-0 rounded-full",
+          "shrink-0 rounded-dlc-full shadow-dlc-1 ring-2 ring-background/80",
           nested ? "h-1.5 w-1.5" : "h-2 w-2",
         )}
         style={{ backgroundColor: stage.color }}
         aria-hidden
       />
-      <h2
-        className={cn(
-          "min-w-0 truncate text-xs font-semibold uppercase tracking-wider",
-          nested
-            ? "text-muted-foreground"
-            : "text-slate-500 dark:text-slate-400",
-        )}
-      >
+      <h2 className={cn(hubStageTitleClass, nested && "text-muted-foreground")}>
         {stage.name}
-        <span
-          className={cn(
-            "font-medium normal-case tracking-normal",
-            nested ? "text-muted-foreground/80" : "text-slate-400 dark:text-slate-500",
-          )}
-        >
+        <span className={hubStageCountClass}>
           {" "}
           ({fileCount})
         </span>
@@ -127,31 +123,21 @@ export function PipelineHubUnassignedStageHeader({
         "flex w-full min-w-0 items-center gap-2",
         nested
           ? cn(
-              "rounded-md border border-border/50 bg-muted/25 px-2 py-1.5",
+              hubStageHeaderNestedClass,
+              "px-2 py-1.5",
               isFirstInSection ? "border-t-0" : "border-t",
             )
           : cn(
-              "sticky top-0 z-[1] border-t border-slate-200/80 bg-slate-50/70 px-3 py-2 backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/50",
+              hubStageHeaderClass,
+              "px-3 py-2",
               isFirstInSection && "border-t-0",
             ),
         className,
       )}
     >
-      <h2
-        className={cn(
-          "text-xs font-semibold uppercase tracking-wider",
-          nested
-            ? "text-muted-foreground"
-            : "text-slate-500 dark:text-slate-400",
-        )}
-      >
+      <h2 className={hubStageTitleClass}>
         Unassigned
-        <span
-          className={cn(
-            "font-medium normal-case tracking-normal",
-            nested ? "text-muted-foreground/80" : "text-slate-400 dark:text-slate-500",
-          )}
-        >
+        <span className={hubStageCountClass}>
           {" "}
           ({fileCount})
         </span>

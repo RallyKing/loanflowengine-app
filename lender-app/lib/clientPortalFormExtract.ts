@@ -70,7 +70,9 @@ export function extractFormDataForAtomicBlock(
         "additionalNotes",
       ]);
     case "pfs_statement":
-      return pickKeys(sheetRecord, ["assets", "liabilities", "pfs"]);
+      return pickKeys(sheetRecord, ["assets", "liabilities", "pfs", "pfsInstances"]);
+    case "simple_pl":
+      return pickKeys(sheetRecord, ["simplePl", "simplePlInstances"]);
     case "construction_budget":
     case "investor_experience":
       return moduleDraft ?? {};

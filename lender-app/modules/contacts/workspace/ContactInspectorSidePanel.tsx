@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import {
   Building2,
   ExternalLink,
@@ -16,6 +16,8 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { Input, Label, Textarea } from "@/components/ui/Input";
 import { RegistryRoleMultiSelect } from "@/components/registry/RegistryRoleMultiSelect";
+import { EntityWebsitesPanel } from "@/components/contacts/EntityWebsitesPanel";
+import { EntityWebsitesList } from "@/components/contacts/EntityWebsitesList";
 import { CopyableField } from "@/modules/contacts/workspace/CopyableField";
 import type { RegistryItem } from "@/lib/registry/registryItem";
 import { registryCommandCenterHref } from "@/lib/registry/registryRoutes";
@@ -103,6 +105,17 @@ export function ContactInspectorSidePanel({
 }: ContactInspectorSidePanelProps) {
   const updateContact = useMutation(api.contacts.update);
   const patchClient = useMutation(api.hierarchyCrudMutations.patchClient);
+
+  const entityHubDetail = useQuery(
+    api.pipelineHierarchyQueries.getClientHubDetail,
+    item.registryType === "entity"
+      ? {
+          organizationId,
+          clientId: item._id as Id<"clients">,
+          memberUserKey,
+        }
+      : "skip",
+  );
 
   const [form, setForm] = useState<InspectorFormState>(() => formFromItem(item));
   const [baseline, setBaseline] = useState<InspectorFormState>(() => formFromItem(item));
@@ -310,6 +323,23 @@ export function ContactInspectorSidePanel({
             editable={rolesEditable && editable}
             aria-label="CRM roles"
           />
+
+          {item.registryType === "entity" ? (
+            entityHubDetail?.client ? (
+              <EntityWebsitesPanel
+                organizationId={organizationId}
+                memberUserKey={memberUserKey}
+                entityId={item._id as Id<"clients">}
+                client={entityHubDetail.client}
+                canEdit={editable && (entityHubDetail.canEdit ?? false)}
+              />
+            ) : item.websites && item.websites.length > 0 ? (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium text-foreground">Websites</p>
+                <EntityWebsitesList websites={item.websites} />
+              </div>
+            ) : null
+          ) : null}
 
           {item.registryType === "contact" ? (
             <>

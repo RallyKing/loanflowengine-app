@@ -29,9 +29,17 @@ import {
   primaryContactRoleIdFromDoc,
 } from "../lib/contact/contactRoles";
 import {
+  mergeEntityWebsites,
+} from "../lib/contacts/entityWebsites";
+import {
   primaryContactEmail,
   primaryContactPhone,
 } from "../lib/contact/contactMethods";
+import {
+  currentFicoFromHistory,
+  mergeFicoHistories,
+  type FicoHistoryEntry,
+} from "../lib/contacts/ficoHistory";
 import {
   isCoBorrowerFileLink,
   isPrimaryBorrowerFileLink,
@@ -501,6 +509,11 @@ export const mergeContacts = mutation({
     const affected: AffectedRelation[] = [];
     const resolutions = resolutionMap(args.fieldResolutions);
     const now = Date.now();
+    const ficoHistory = mergeFicoHistories(
+      surviving.ficoHistory as FicoHistoryEntry[] | undefined,
+      merged.ficoHistory as FicoHistoryEntry[] | undefined,
+    );
+    const ficoFromHistory = currentFicoFromHistory(ficoHistory);
 
     const patch: Partial<Doc<"contacts">> = {
       name: pickField("name", surviving.name, merged.name, resolutions),
@@ -511,7 +524,10 @@ export const mergeContacts = mutation({
         merged.companyName,
         resolutions,
       ),
-      fico: pickField("fico", surviving.fico, merged.fico, resolutions),
+      fico:
+        ficoFromHistory ??
+        pickField("fico", surviving.fico, merged.fico, resolutions),
+      ficoHistory,
       ssn: pickField("ssn", surviving.ssn, merged.ssn, resolutions),
       dob: pickField("dob", surviving.dob, merged.dob, resolutions),
       updatedAt: now,
@@ -820,6 +836,8 @@ export const mergeEntities = mutation({
         merged.dateOfFormation,
         resolutions,
       ),
+      // Always union websites (deduped); ignore fieldResolutions for this array.
+      websites: mergeEntityWebsites(surviving.websites, merged.websites),
       updatedAt: now,
     });
 

@@ -25,7 +25,7 @@ import {
   useViewportNavSignals,
   type ResponsiveNavLayout,
 } from "@/lib/navigation/useResponsiveNavLayout";
-import { debugAgentLogPostUrl } from "@/lib/debugClientLog";
+import { appendPriorityDebugClientLog } from "@/lib/debugClientLog";
 import { shellZIndexStyle } from "@/lib/ui/layerTokens";
 
 function responsiveLayoutFingerprint(l: ResponsiveNavLayout): string {
@@ -228,11 +228,7 @@ export function ResponsiveNavProvider({ children }: { children: ReactNode }) {
       timestamp: Date.now(),
     };
     // #region agent log
-    void fetch(debugAgentLogPostUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(() => {});
+    appendPriorityDebugClientLog(payload);
     // #endregion
   }, [layoutFingerprint]);
 

@@ -24,8 +24,37 @@ function resolveGitSha() {
 const dlcBuildTime = new Date().toISOString();
 const dlcGitSha = resolveGitSha();
 
+// Set DLC_NEXT_DIST_DIR=1 for `.next-local`, or an absolute path (e.g. under
+// %LOCALAPPDATA%) to avoid OneDrive rename races during multitask builds.
+// Never honor custom distDir on Vercel/CI — remote builds must use `.next`.
+const onHostedCi = Boolean(
+  process.env.VERCEL ||
+    process.env.VERCEL_ENV ||
+    process.env.CI ||
+    process.env.VERCEL_URL,
+);
+const dlcDistDirEnv = onHostedCi
+  ? ""
+  : process.env.DLC_NEXT_DIST_DIR?.trim() || "";
+const dlcDistDirRaw =
+  dlcDistDirEnv === "1"
+    ? ".next-local"
+    : dlcDistDirEnv.length > 0
+      ? dlcDistDirEnv
+      : null;
+// Next joins distDir to the project root; convert absolute Windows paths to
+// a relative path so LocalAppData builds stay outside OneDrive.
+const dlcDistDir =
+  dlcDistDirRaw && path.isAbsolute(dlcDistDirRaw)
+    ? path.relative(__dirname, dlcDistDirRaw)
+    : dlcDistDirRaw;
+const dlcDistDirOutsideProject = Boolean(
+  dlcDistDirRaw && path.isAbsolute(dlcDistDirRaw),
+);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  ...(dlcDistDir ? { distDir: dlcDistDir } : {}),
   env: {
     NEXT_PUBLIC_DLC_GIT_SHA: dlcGitSha,
     NEXT_PUBLIC_DLC_BUILD_TIME: dlcBuildTime,
@@ -33,21 +62,29 @@ const nextConfig = {
       process.env.VERCEL_DEPLOYMENT_ID ?? "local",
   },
   /**
-   * Prefer the repo folder (`…/Lender List`) over a stray `package-lock.json`
+   * Prefer the repo folder (`ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/Lender List`) over a stray `package-lock.json`
    * higher in the tree (e.g. user profile) when resolving the tracing root.
    * `node_modules` remains under `lender-app/`.
    *
    * Skip on Vercel: there `__dirname` is `/vercel/path0` and the parent is
    * `/vercel/`, which makes Next emit traces one directory too high and the
    * deployer fail to lstat `routes-manifest.json` (path0/path0/...).
+   * When distDir is absolute outside the app, keep tracing rooted at lender-app
+   * so module resolution still finds `node_modules`.
    */
   ...(process.env.VERCEL
     ? {}
-    : { outputFileTracingRoot: path.join(__dirname, "..") }),
+    : {
+        // Custom distDir (incl. junction Ã¢â€ â€™ %LOCALAPPDATA%) must resolve
+        // node_modules from lender-app, not the repo parent / AppData target.
+        outputFileTracingRoot: dlcDistDir
+          ? __dirname
+          : path.join(__dirname, ".."),
+      }),
   reactStrictMode: true,
   /**
    * Strip stray `console.log` in production; keep `console.error` / `console.warn` for
-   * diagnostics and error boundaries (reliability under load — less main-thread noise).
+   * diagnostics and error boundaries (reliability under load ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â less main-thread noise).
    */
   compiler: {
     removeConsole:
@@ -128,7 +165,7 @@ const nextConfig = {
     ];
   },
   /**
-   * Legacy lender-tool paths (pre–unified workspace). Keeps bookmarks and
+   * Legacy lender-tool paths (preÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“unified workspace). Keeps bookmarks and
    * external links working without maintaining duplicate App Router pages.
    */
   async redirects() {

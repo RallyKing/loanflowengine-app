@@ -38,14 +38,14 @@ export function pipelineWorkspaceCardFrame(extra?: string) {
  * Expandable regions: grid row snap — **no** animated `grid-template-rows` (scroll-safe).
  */
 export const pipelineWorkspaceCollapseGrid = cn(
-  "grid transition-[grid-template-rows] duration-dlc-standard ease-dlc-standard motion-reduce:transition-none",
+  "grid w-full min-w-0 grid-cols-[minmax(0,1fr)] transition-[grid-template-rows] duration-dlc-standard ease-dlc-standard motion-reduce:transition-none",
 );
 
 export const pipelineWorkspaceCollapseOpen = "grid-rows-[1fr]";
 export const pipelineWorkspaceCollapseClosed = "grid-rows-[0fr]";
 
 export const pipelineWorkspaceCollapseInner = cn(
-  "min-h-0 overflow-hidden [overflow-anchor:none]",
+  "w-full min-w-0 min-h-0 overflow-hidden [overflow-anchor:none]",
   "transition-opacity duration-dlc-standard ease-dlc-standard motion-reduce:transition-none",
 );
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Eye, Layers, Link2, Plus, Search, Shield, ShieldOff } from "lucide-react";
+import { BookOpen, Eye, Layers, Link2, Plus, Search, Shield, ShieldOff, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
@@ -21,6 +21,8 @@ export type DocumentVaultCommandBarProps = {
   uploadBusy: boolean;
   searchQuery: string;
   onSearchChange: (value: string) => void;
+  /** Same handler as Explorer + Tasks — opens file-task batch create. */
+  onAddFileTasks?: () => void;
   onCreate?: () => void;
   onCompile?: () => void;
   onRecallFromClientVault?: () => void;
@@ -29,6 +31,7 @@ export type DocumentVaultCommandBarProps = {
   onApplyTemplates?: () => void;
   onViewAsClient?: () => void;
   onDeliverToLender?: () => void;
+  onDueDiligence?: () => void;
   onFilesSelected?: (files: FileList | File[]) => void;
   typeFilters: ReadonlySet<VaultGridTypeFilter>;
   onTypeFiltersChange: (next: Set<VaultGridTypeFilter>) => void;
@@ -51,6 +54,7 @@ export function DocumentVaultCommandBar({
   uploadBusy,
   searchQuery,
   onSearchChange,
+  onAddFileTasks,
   onCreate,
   onCompile,
   onRecallFromClientVault,
@@ -59,6 +63,7 @@ export function DocumentVaultCommandBar({
   onApplyTemplates,
   onViewAsClient,
   onDeliverToLender,
+  onDueDiligence,
   onFilesSelected,
   typeFilters,
   onTypeFiltersChange,
@@ -82,6 +87,20 @@ export function DocumentVaultCommandBar({
       <div className="flex min-w-0 flex-col gap-2.5">
         {/* Row 1 — primary vault actions (wraps cleanly on narrow widths) */}
         <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
+          {canMutate && onAddFileTasks ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={actionButtonClass}
+              onClick={onAddFileTasks}
+              data-testid="document-vault-add-file-tasks-command"
+              title="Add file tasks"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Tasks
+            </Button>
+          ) : null}
           {canMutate && onCreate ? (
             <Button
               type="button"
@@ -182,6 +201,20 @@ export function DocumentVaultCommandBar({
               <Shield className="h-3.5 w-3.5 shrink-0" aria-hidden />
               <span className="hidden lg:inline">Deliver to Lender</span>
               <span className="lg:hidden">Lender</span>
+            </Button>
+          ) : null}
+          {canMutate && onDueDiligence ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={actionButtonClass}
+              onClick={onDueDiligence}
+              data-testid="document-vault-due-diligence-command"
+            >
+              <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="hidden lg:inline">Due Diligence</span>
+              <span className="lg:hidden">DD</span>
             </Button>
           ) : null}
         </div>

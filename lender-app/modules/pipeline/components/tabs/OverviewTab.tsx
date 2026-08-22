@@ -118,7 +118,8 @@ const OVERVIEW_SECTION_DESCRIPTIONS: Record<OverviewSectionId, ReactNode> = {
   notes: "Pinned notes, links, and attachments for this file.",
   contacts: "People linked to this loan file.",
   tasks: "File-level triage and follow-ups.",
-  lenders: "Search lenders to add to the shortlist; assign Primary or Secondary roles on the board.",
+  lenders:
+    "Add lenders to the shortlist, then assign Primary or Secondary on the board.",
 };
 
 function overviewAnchorForSection(sectionId: OverviewSectionId): string {
@@ -475,6 +476,7 @@ export function OverviewTab({
             onOpenChange={onOpenChange}
             headerRight={headerRight}
             lazyMount={false}
+            contentClassName="space-y-2 px-3 py-2.5 sm:px-4 sm:py-3"
           >
             <FileLendersBlock {...lenders} />
           </OverviewCollapsibleSection>

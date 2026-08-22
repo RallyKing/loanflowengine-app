@@ -10,6 +10,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
@@ -43,10 +44,19 @@ import {
   snoozedUntilToMs,
   startOfLocalDayOffsetMs,
 } from "@/lib/pipelineSnooze";
+import { lastPipelineActivityAt } from "@/lib/pipelineAutoArchive";
+import { PipelineFileAutoArchiveControl } from "@/components/pipeline/PipelineFileAutoArchiveControl";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
-import type { PipelineFileSharedSource } from "@/lib/fileSharedFields";
+import {
+  normalizeFileSharedStateFromPipeline,
+  type PipelineFileSharedSource,
+} from "@/lib/fileSharedFields";
 import { revenueTotalsFromPipelineRow } from "@/lib/fileRevenue";
+import {
+  isTermOptionsOnlyPipelinePatch,
+  patchWithConflictRetry,
+} from "@/lib/pipeline/patchWithConflictRetry";
 import { useUserSettings } from "@/lib/userSettingsContext";
 import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { useLiveConnection } from "@/lib/useLiveConnection";
@@ -85,6 +95,7 @@ import { drawerLayoutConvexPersistKey } from "@/lib/pipelineDrawerLayoutPersist"
 import {
   buildLicenseDisplay,
   buildDealSheetForMetrics,
+  buildProjectSiblingFileRows,
 } from "@/lib/pipeline/workspaceDataDerivations";
 import { buildDocumentCreatorTokenContext } from "@/lib/pipeline/buildDocumentCreatorTokenContext";
 import { Button } from "@/components/ui/Button";
@@ -109,7 +120,6 @@ import {
   showOperationalToast,
   showOperationalToastRemoved,
 } from "@/lib/ui/operationalToast";
-import { touchTargetIconClass } from "@/lib/ui/touchTarget";
 import {
   pipelineLicensesHref,
   pipelineHubHref,
@@ -117,6 +127,7 @@ import {
   pipelineHubProjectionHref,
   PIPELINE_FILE_BLOCK_QUERY,
   PIPELINE_FILE_TAB_QUERY,
+  PIPELINE_FILE_DOCUMENT_QUERY,
   PIPELINE_HUB_PROJECTION_QUERY,
   PIPELINE_HUB_ENTITY_QUERY,
   PIPELINE_HUB_CLIENT_QUERY,
@@ -180,11 +191,7 @@ import {
   type PipelineBlockId,
 } from "@/lib/pipelineBlockRegistry";
 import { FileFavoritesBar } from "@/components/pipeline/FileFavoritesBar";
-import {
-  RecordInspectorBody,
-  RecordInspectorHeader,
-  RecordInspectorShell,
-} from "@/components/RecordInspectorShell";
+import { PipelineOptionalBlocksAddBar } from "@/components/pipeline/PipelineOptionalBlocksAddBar";
 import { ADVANCED_PIPELINE_BLOCK_IDS } from "@/lib/orgPlanFeatures";
 import {
   extractDrawerVisibilitySignals,
@@ -267,7 +274,17 @@ import {
 } from "@/components/pipeline/blocks/FeesSplitsBlock";
 import type { FileTaskCreatePayload } from "@/lib/inFileTaskTriageUi";
 import { resolvePrimaryBorrowerContactId } from "@/lib/library/documentVaultHydration";
+import {
+  resolveEntityDisplayNameForClientTitle,
+  resolveFileHeaderPrimaryBorrowerLabel,
+} from "@/lib/pipeline/resolveFileHeaderPrimaryBorrowerLabel";
 import { DealWorkspaceEditorProvider } from "@/lib/file/useDealWorkspaceEditor";
+import {
+  FloatingBlockWindowProvider,
+  useFloatingBlockWindow,
+} from "@/components/ui/FloatingBlockWindowProvider";
+import { ClientBlockAssignProvider } from "@/lib/clientBlockAssignContext";
+import { DocumentVaultStateProvider } from "@/lib/library/documentVaultState";
 import {
   isLegacyDealWorkspaceMigratedDrawerBlockHidden,
   isLegacyFileAdminDrawerBlockHidden,
@@ -281,6 +298,7 @@ import {
 import {
   DEAL_INFO_TAB_SECTION_IDS,
   DOCUMENTS_TAB_SECTION_IDS,
+  floatingBlockKeyForPipelineBlock,
   scrollTargetForDrawerBlock,
   scrollToPipelineWorkspaceAnchor,
   dealInfoAnchorForDrawerBlock,
@@ -440,22 +458,131 @@ const PfsBlockLazy = nextDynamic(
   { ssr: false },
 );
 
+const TrackRecordBlockLazy = nextDynamic(
+  () =>
+    import("@/components/pipeline/blocks/TrackRecordBlock").then((m) => ({
+      default: m.TrackRecordBlock,
+    })),
+  { ssr: false },
+);
+
+const SimplePlBlockLazy = nextDynamic(
+  () =>
+    import("@/components/pipeline/blocks/SimplePlBlock").then((m) => ({
+      default: m.SimplePlBlock,
+    })),
+  { ssr: false },
+);
+
 /**
- * Phase Modular-D — favorites bar. Blocks with a self-contained renderer open in
- * the favorites slide-over; all other favorites deep-link to their tab section.
+ * Favorites bar — open pinned blocks in window-in-window (FloatingBlockWindow
+ * host, same as CollapsibleBlock “Open in window”). Seed-capable blocks use a
+ * dedicated `favorite-float:` key with standalone content (avoids nested
+ * detachable stubs). Other blocks with a layout CollapsibleBlock key request
+ * detach after the parent tab mounts. Fallback: deep-link to section.
  */
-const FAVORITE_INSPECTOR_CAPABLE_BLOCKS = new Set<PipelineBlockId>([
+const FAVORITE_FLOATING_CAPABLE_BLOCKS = new Set<PipelineBlockId>([
   "fileNotes",
   "tasks",
   "contacts",
   "constructionBudget",
   "investorExperience",
   "pfs",
+  "trackRecord",
+  "simplePl",
 ]);
 
 /** Blocks offered in the favorites manage popover (destructive admin excluded). */
 const FAVORITE_PINNABLE_BLOCK_IDS: readonly PipelineBlockId[] =
   PIPELINE_BLOCK_IDS.filter((id) => id !== "dangerZone");
+
+/**
+ * Pins FileFavoritesBar inside FloatingBlockWindowProvider so chip clicks call
+ * the same detach host as CollapsibleBlock “Open in window”.
+ */
+function FileFavoritesFloatingLauncher({
+  favorites,
+  pinnableBlockIds,
+  disabled = false,
+  onToggleFavorite,
+  onPrepareBlock,
+  onEnsureMounted,
+  onJumpToSection,
+  renderContent,
+}: {
+  favorites: readonly PipelineBlockId[];
+  pinnableBlockIds: readonly PipelineBlockId[];
+  disabled?: boolean;
+  onToggleFavorite: (blockId: PipelineBlockId) => void;
+  onPrepareBlock: (blockId: PipelineBlockId) => void;
+  /** Switch parent tab so an in-layout CollapsibleBlock can mount / fulfill detach. */
+  onEnsureMounted: (blockId: PipelineBlockId) => void;
+  onJumpToSection: (blockId: PipelineBlockId) => void;
+  renderContent: (blockId: PipelineBlockId) => ReactNode;
+}) {
+  const floating = useFloatingBlockWindow();
+
+  const openFavoriteBlock = useCallback(
+    (blockId: PipelineBlockId) => {
+      onPrepareBlock(blockId);
+      if (!floating) {
+        onJumpToSection(blockId);
+        return;
+      }
+
+      if (FAVORITE_FLOATING_CAPABLE_BLOCKS.has(blockId)) {
+        const def = getPipelineBlock(blockId);
+        // Dedicated key — favorites render a standalone content instance (same as the
+        // former slide-over). Do not reuse CollapsibleBlock section ids or nested
+        // detachable wrappers (PFS / construction budget) would stub inside the WiW.
+        const blockKey = `favorite-float:${blockId}`;
+        if (floating.isDetached(blockKey)) {
+          return;
+        }
+        floating.detach({
+          blockKey,
+          title: def.label,
+          description: def.description,
+          persistKey: `favorite-float:${blockId}`,
+          content: renderContent(blockId),
+          onGoToSection: () => {
+            onJumpToSection(blockId);
+          },
+          testId: `pipeline-favorite-${blockId}-floating-window`,
+        });
+        return;
+      }
+
+      const layoutKey = floatingBlockKeyForPipelineBlock(blockId);
+      if (!layoutKey) {
+        onJumpToSection(blockId);
+        return;
+      }
+      if (floating.isDetached(layoutKey)) {
+        return;
+      }
+      floating.requestDetach(layoutKey);
+      onEnsureMounted(blockId);
+    },
+    [
+      floating,
+      onPrepareBlock,
+      onEnsureMounted,
+      onJumpToSection,
+      renderContent,
+    ],
+  );
+
+  return (
+    <FileFavoritesBar
+      favorites={favorites}
+      pinnableBlockIds={pinnableBlockIds}
+      onOpenBlock={openFavoriteBlock}
+      onToggleFavorite={onToggleFavorite}
+      disabled={disabled}
+    />
+  );
+}
 
 /** Stable empty reference for lender rows while `detail` is loading. */
 const EMPTY_PIPELINE_LENDER_ROWS: Doc<"lenders">[] = [];
@@ -858,6 +985,7 @@ function PipelineFileWorkspaceLoaded({
 
   const deepLinkBlock = searchParams.get(PIPELINE_FILE_BLOCK_QUERY);
   const deepLinkTab = searchParams.get(PIPELINE_FILE_TAB_QUERY);
+  const deepLinkDocument = searchParams.get(PIPELINE_FILE_DOCUMENT_QUERY);
   const pipelineReadyId = detail?.pipeline?._id;
 
   useEffect(() => {
@@ -866,6 +994,20 @@ function PipelineFileWorkspaceLoaded({
     if (!normalized) return;
     setWorkspaceActiveTab(normalized);
   }, [pipelineReadyId, deepLinkTab]);
+
+  useEffect(() => {
+    if (!deepLinkDocument?.trim() || pipelineReadyId == null) return;
+    const docId = deepLinkDocument.trim() as Id<"libraryDocuments">;
+    setDocumentsVaultFocus(
+      createDocumentVaultNavigationFocus({ highlightDocumentId: docId }),
+    );
+    setWorkspaceActiveTab("documents");
+    const anchorId = DOCUMENTS_TAB_SECTION_IDS.vault;
+    const t = window.requestAnimationFrame(() => {
+      scrollToPipelineWorkspaceAnchor(anchorId, "auto");
+    });
+    return () => window.cancelAnimationFrame(t);
+  }, [pipelineReadyId, deepLinkDocument]);
 
   useEffect(() => {
     if (!deepLinkBlock || pipelineReadyId == null) return;
@@ -972,7 +1114,21 @@ function PipelineFileWorkspaceLoaded({
     async (args: Parameters<typeof patchPipeline>[0]) => {
       if (accessReadOnly) return;
       const pipe = detail?.pipeline;
-      const expectedUpdatedAt = pipe?._id === args.id ? pipe.updatedAt : undefined;
+      // Online File Details edits (TERM, scenario, commission, …) must not send
+      // expectedUpdatedAt: background writers (Generate Terms, patchDeal, layout)
+      // bump updatedAt constantly, and production redacts CONFLICT_DATA_CHANGED
+      // to a bare "Server Error" (requests 7bfb56523352ca45 / 0e56365204c62ef1).
+      // Offline queue still carries the guard; patchWithConflictRetry remains a
+      // safety net when a guard is present.
+      const termOptionsOnly = isTermOptionsOnlyPipelinePatch(
+        args as Record<string, unknown>,
+      );
+      const expectedUpdatedAt =
+        !canUseHub &&
+        !termOptionsOnly &&
+        pipe?._id === args.id
+          ? pipe.updatedAt
+          : undefined;
       const payload = {
         ...args,
         ...(preferencesAccountId ? { preferencesAccountId } : {}),
@@ -980,7 +1136,7 @@ function PipelineFileWorkspaceLoaded({
       } as Parameters<typeof patchPipeline>[0];
       if (canUseHub) {
         traceConvexMutation("PipelineFileWorkspace", "pipeline.patch");
-        return patchPipeline(payload);
+        return patchWithConflictRetry(payload, (next) => patchPipeline(next));
       }
       await offline.enqueue({
         kind: "pipeline.patch",
@@ -997,6 +1153,8 @@ function PipelineFileWorkspaceLoaded({
       preferencesAccountId,
     ],
   );
+  const runPatchPipelineRef = useRef(runPatchPipeline);
+  runPatchPipelineRef.current = runPatchPipeline;
   const runPatchDeal = useCallback(
     async (args: Parameters<typeof patchDeal>[0]) => {
       if (accessReadOnly) return;
@@ -1304,14 +1462,22 @@ function PipelineFileWorkspaceLoaded({
   const restoreLenderLink = useMutation(api.fileLenders.restoreLenderLink);
   const clearOtherLenders = useMutation(api.pipeline.clearOtherLenders);
   const removePipeline = useMutation(api.pipeline.remove);
+  const leaveShareMut = useMutation(api.pipelineFileShares.leaveShare);
   const archivePipeline = useMutation(api.pipeline.archive);
   const unarchivePipeline = useMutation(api.pipeline.unarchive);
   const snoozePipeline = useMutation(api.pipeline.snooze);
   const unsnoozePipeline = useMutation(api.pipeline.unsnooze);
+  const setAutoArchiveOnInactivity = useMutation(
+    api.pipeline.setAutoArchiveOnInactivity,
+  );
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [snoozing, setSnoozing] = useState(false);
   const [snoozeError, setSnoozeError] = useState<string | null>(null);
+  const [autoArchiving, setAutoArchiving] = useState(false);
+  const [autoArchiveError, setAutoArchiveError] = useState<string | null>(
+    null,
+  );
 
   const intakeSheetIdForLicense = detail?.pipeline?.intakeSheetId;
   const licenseDisplay = useMemo(
@@ -1529,7 +1695,12 @@ function PipelineFileWorkspaceLoaded({
     setSnoozeError(null);
   }, [id]);
 
-  // Hydrate Generate Terms from server when the underlying file changes.
+  // Hydrate Generate Terms only when termOptions payload changes — not on every
+  // unrelated `updatedAt` bump (File Details edits), which caused write storms.
+  const termOptionsHydrateKey = useMemo(
+    () => JSON.stringify(detail?.pipeline?.termOptions ?? null),
+    [detail?.pipeline?.termOptions],
+  );
   useEffect(() => {
     if (!detail?.pipeline) return;
     const next = (detail.pipeline.termOptions ?? []).map((o) => ({
@@ -1558,7 +1729,7 @@ function PipelineFileWorkspaceLoaded({
       includeQualifyingIncomeAmount: r.includeQualifyingIncomeAmount,
       qualifyingIncomeAmount: r.qualifyingIncomeAmount,
     }));
-  }, [detail?.pipeline?._id, detail?.pipeline?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps -- re-hydrate on id/updatedAt, not object identity
+  }, [detail?.pipeline?._id, termOptionsHydrateKey]); // eslint-disable-line react-hooks/exhaustive-deps -- hydrate from key, not object identity
 
   // Debounced persist for term options.
   useEffect(() => {
@@ -1580,7 +1751,8 @@ function PipelineFileWorkspaceLoaded({
     if (termsEqual(stripped, lastSyncedTerms.current)) return;
     const fileId = detail.pipeline._id;
     const handle = window.setTimeout(() => {
-      runPatchPipeline({ id: fileId, termOptions: stripped })
+      runPatchPipelineRef
+        .current({ id: fileId, termOptions: stripped })
         .then(() => {
           lastSyncedTerms.current = stripped;
         })
@@ -1589,7 +1761,7 @@ function PipelineFileWorkspaceLoaded({
         });
     }, 400);
     return () => window.clearTimeout(handle);
-  }, [termOptions, detail?.pipeline?._id, runPatchPipeline]); // eslint-disable-line react-hooks/exhaustive-deps -- avoid `detail.pipeline` to prevent patch loops
+  }, [termOptions, detail?.pipeline?._id]); // eslint-disable-line react-hooks/exhaustive-deps -- ref for patch; avoid callback-identity loops
 
   const dealCommitRow = useMemo(
     () =>
@@ -1803,25 +1975,31 @@ function PipelineFileWorkspaceLoaded({
   }, []);
 
   /**
-   * Phase Modular-D — favorites quick-access bar.
-   * Blocks with a standalone renderer open in a `RecordInspectorShell` slide-over
-   * (governance: overlays never steal `[data-pipeline-workspace-scroll]`); the
-   * rest deep-link to their canonical tab section via `jumpToDrawerSection`.
+   * Favorites quick-access — standalone-capable blocks open in window-in-window
+   * (same FloatingBlockWindow host as CollapsibleBlock detach). Others request
+   * detach on their layout CollapsibleBlock after the parent tab mounts, or
+   * deep-link via `jumpToDrawerSection`. Overlays never steal workspace scroll.
    */
-  const [favoriteInspectorBlockId, setFavoriteInspectorBlockId] =
-    useState<PipelineBlockId | null>(null);
+  const prepareFavoriteBlock = useCallback((blockId: PipelineBlockId) => {
+    // Always unhide so older files gain the block in-layout when opened from favorites.
+    startTransition(() => {
+      setDrawerLayout((prev) => unhideDrawerBlockInLayout(prev, blockId));
+    });
+  }, []);
 
-  const openFavoriteBlock = useCallback(
-    (blockId: PipelineBlockId) => {
-      if (FAVORITE_INSPECTOR_CAPABLE_BLOCKS.has(blockId)) {
-        setFavoriteInspectorBlockId(blockId);
-        return;
-      }
-      setFavoriteInspectorBlockId(null);
-      jumpToDrawerSection(blockId);
-    },
-    [jumpToDrawerSection],
-  );
+  const ensureFavoriteBlockMounted = useCallback((blockId: PipelineBlockId) => {
+    const tab = tabForDrawerBlock(blockId);
+    if (tab) {
+      setWorkspaceActiveTab(tab);
+    }
+    startTransition(() => {
+      setDrawerLayout((prev) => ({
+        ...prev,
+        hidden: prev.hidden.filter((x) => x !== blockId),
+        expanded: { ...prev.expanded, [blockId]: true },
+      }));
+    });
+  }, []);
 
   const toggleFavoriteBlock = useCallback(
     (blockId: PipelineBlockId) => {
@@ -1887,8 +2065,19 @@ function PipelineFileWorkspaceLoaded({
         : "None chosen";
     const rateDisplay = (() => {
       const busRaw = fileDetailsBusRate?.display;
-      const bus = busRaw == null ? "" : String(busRaw).trim();
-      if (bus) return bus.includes("%") ? bus : `${bus}%`;
+      const busNum =
+        typeof busRaw === "number"
+          ? busRaw
+          : busRaw == null
+            ? NaN
+            : Number(String(busRaw).replace(/[%\s,]/g, ""));
+      if (Number.isFinite(busNum) && busNum > 0) return fmtRate(busNum);
+      if (pipe) {
+        const shared = normalizeFileSharedStateFromPipeline(
+          pipe as unknown as PipelineFileSharedSource,
+        );
+        if (shared.interestRate > 0) return fmtRate(shared.interestRate);
+      }
       const first = termOptions[0]?.rate?.trim();
       return first ? (first.includes("%") ? first : `${first}%`) : "";
     })();
@@ -1924,7 +2113,9 @@ function PipelineFileWorkspaceLoaded({
     : "flex min-h-0 w-full min-w-0 max-w-full flex-1 flex-col overflow-x-hidden bg-background text-[color:var(--ui-body-text)]";
   const workspaceBodyClass = embedded
     ? "flex w-full min-w-0 flex-col overflow-x-clip pb-2"
-    : "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-clip pb-[max(1.5rem,env(safe-area-inset-bottom))]";
+    /* File route: no outer bottom safe-area — that left a dead white band under the
+       fixed bottom nav. Clearance lives in `[data-pipeline-workspace-scroll]` spacer. */
+    : "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-clip pb-0";
   const presenceModel = useMemo(() => {
     const fieldEditing = focusedDealFieldPaths.length > 0;
     if (openTaskId) {
@@ -1965,6 +2156,9 @@ function PipelineFileWorkspaceLoaded({
     hubBackHref: workspaceHubBackHref,
     hubBackLabel: workspaceHubBackLabel,
     clientHubHref: workspaceClientHubHref,
+    projectHref: workspaceProjectHref,
+    projectLabel: workspaceProjectLabel,
+    hasProject: workspaceHasProject,
   } = useWorkspaceHierarchyCrumbs({
     fileId: detail?.pipeline?._id,
     row: globalBannerSwitchRow,
@@ -1973,6 +2167,20 @@ function PipelineFileWorkspaceLoaded({
     memberUserKey: convexMemberKey,
     focusFileId: id,
   });
+
+  const projectSiblingFiles = useMemo(() => {
+    const projectId =
+      detail?.pipeline?.projectId != null
+        ? String(detail.pipeline.projectId)
+        : globalBannerSwitchRow?.projectId != null
+          ? String(globalBannerSwitchRow.projectId)
+          : null;
+    return buildProjectSiblingFileRows(pipelineSwitcherRows, projectId);
+  }, [
+    detail?.pipeline?.projectId,
+    globalBannerSwitchRow?.projectId,
+    pipelineSwitcherRows,
+  ]);
 
   /** Hierarchy trail terminates at the active tab: … > [File] > [Active Tab]. */
   const workspaceCrumbsWithTab = useMemo(() => {
@@ -1990,12 +2198,28 @@ function PipelineFileWorkspaceLoaded({
     const accessUx = resourceAccessFromViewerAccess(detail.viewerAccess);
     const canMutate =
       detail.viewerAccess?.canMutate ?? detail.canMutateFile === true;
-    const clientDisplayName =
-      globalBannerSwitchRow?.clientDisplayName?.trim() || "Client";
+    const fallbackClientDisplayName =
+      globalBannerSwitchRow?.clientDisplayName?.trim() || "";
+    const entityDisplayName = resolveEntityDisplayNameForClientTitle({
+      linkedClients: globalBannerSwitchRow?.linkedClients,
+      clientRecordLabel: fallbackClientDisplayName,
+      clientRecordEntityType: null,
+      dealBusiness: dealSheetForMetrics?.business,
+    });
+    const { label: clientDisplayName } = resolveFileHeaderPrimaryBorrowerLabel({
+      links: associatedContactLinks,
+      contactsById: workspaceContactById,
+      dealBorrowers: dealSheetForMetrics?.borrowers,
+      entityDisplayName,
+      fallbackClientDisplayName,
+    });
+    const primaryContactHref = primaryBorrowerContactId
+      ? `/contacts/${primaryBorrowerContactId}`
+      : null;
     return {
       fileName: pipelineRow.fileName ?? "",
       clientDisplayName,
-      clientHref: workspaceClientHubHref,
+      clientHref: primaryContactHref ?? workspaceClientHubHref,
       fundingAmount: fileDetailsLoanAmount,
       fundingDisplay: fileDetailsBusFund?.display,
       stageId: pipelineRow.stageId,
@@ -2015,6 +2239,11 @@ function PipelineFileWorkspaceLoaded({
     fileDetailsBusFund?.display,
     dealCommitRow,
     dealBackedForBus,
+    associatedContactLinks,
+    workspaceContactById,
+    dealSheetForMetrics?.business,
+    dealSheetForMetrics?.borrowers,
+    primaryBorrowerContactId,
   ]);
 
   if (detail === undefined) {
@@ -2124,14 +2353,31 @@ function PipelineFileWorkspaceLoaded({
     ...consideringLenders,
   ];
   const statusInfo = getPipelineStatusInfo(p.status);
+  const sharedNorm = normalizeFileSharedStateFromPipeline(
+    p as unknown as PipelineFileSharedSource,
+  );
   const dealCommandCenterRateDisplay = (() => {
     const busRaw = fileDetailsBusRate?.display;
-    const bus = busRaw == null ? "" : String(busRaw).trim();
-    if (bus) return bus.includes("%") ? bus : `${bus}%`;
+    const busNum =
+      typeof busRaw === "number"
+        ? busRaw
+        : busRaw == null
+          ? NaN
+          : Number(String(busRaw).replace(/[%\s,]/g, ""));
+    const fromBus =
+      Number.isFinite(busNum) && busNum > 0 ? busNum : null;
+    const fromShared =
+      sharedNorm.interestRate > 0 ? sharedNorm.interestRate : null;
+    const n = fromBus ?? fromShared;
+    if (n != null) return fmtRate(n);
     const first = termOptions[0]?.rate?.trim();
     return first ? (first.includes("%") ? first : `${first}%`) : "";
   })();
-  const dealCommandCenterTermDisplay = termOptions[0]?.term?.trim() ?? "";
+  const dealCommandCenterTermDisplay =
+    sharedNorm.term.trim() ||
+    (typeof p.term === "string" ? p.term.trim() : "") ||
+    termOptions[0]?.term?.trim() ||
+    "";
   const termSheetBullets = formatTermOptionsBulletTermSheet(termOptions);
   const termSheetEmail = formatTermOptionsEmail(termOptions, p.fileName);
 
@@ -2370,6 +2616,60 @@ function PipelineFileWorkspaceLoaded({
     });
   };
 
+  const isSharedRecipient =
+    detail?.ownership != null &&
+    detail.ownership.isOwner !== true &&
+    (detail.ownership.isSharedViewer === true ||
+      detail.ownership.badge === "shared_view" ||
+      detail.ownership.badge === "shared_edit" ||
+      detail.ownership.hierarchyAccessLabel === "Explicit Loan Share");
+
+  const openLeaveShareConfirm = () => {
+    void confirm({
+      variant: "delete",
+      title: "Leave shared loan file",
+      entityName: p.fileName,
+      impact:
+        "You will lose access to this file. The owner and other collaborators keep their access.",
+      confirmLabel: "Leave share",
+      cascade: [
+        { text: "This does not delete the owner’s loan file." },
+      ],
+      testId: "pipeline-file-leave-share-dialog",
+      onConfirm: async () => {
+        const result = await withOperationalTimeout(
+          leaveShareMut({
+            fileId: p._id,
+            ...(preferencesAccountId || convexMemberKey
+              ? { memberUserKey: (convexMemberKey ?? preferencesAccountId)! }
+              : {}),
+          }),
+          {
+            timeoutMs: 25_000,
+            message:
+              "Leave is taking longer than expected. Your connection may be slow — please try again.",
+          },
+        );
+        if (!result.ok) {
+          throw new Error(result.message);
+        }
+        showOperationalToast({
+          title: "Left share",
+          description: `“${p.fileName}” was removed from your pipeline.`,
+          variant: "success",
+        });
+        const href = goToPipelineHub();
+        window.setTimeout(() => {
+          try {
+            window.location.assign(href);
+          } catch {
+            /* ignore */
+          }
+        }, 400);
+      },
+    });
+  };
+
   async function toggleArchive() {
     if (readOnly) return;
     setArchiveError(null);
@@ -2464,6 +2764,40 @@ function PipelineFileWorkspaceLoaded({
       setSnoozeError(e instanceof Error ? e.message : String(e));
     } finally {
       setSnoozing(false);
+    }
+  }
+
+  async function commitAutoArchiveDays(days: number) {
+    if (readOnly) return;
+    setAutoArchiveError(null);
+    setAutoArchiving(true);
+    try {
+      await setAutoArchiveOnInactivity({
+        id: p._id,
+        inactivityDays: days,
+        ...(preferencesAccountId ? { preferencesAccountId } : {}),
+      });
+    } catch (e) {
+      setAutoArchiveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAutoArchiving(false);
+    }
+  }
+
+  async function clearAutoArchive() {
+    if (readOnly) return;
+    setAutoArchiveError(null);
+    setAutoArchiving(true);
+    try {
+      await setAutoArchiveOnInactivity({
+        id: p._id,
+        inactivityDays: null,
+        ...(preferencesAccountId ? { preferencesAccountId } : {}),
+      });
+    } catch (e) {
+      setAutoArchiveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAutoArchiving(false);
     }
   }
 
@@ -2813,9 +3147,19 @@ function PipelineFileWorkspaceLoaded({
         onOpenDealInfoSection: openDealInfoSection,
         workspaceSectionExcludeFilter: REALLOCATED_DEAL_WORKSPACE_SECTION_IDS,
       }}
+      optionalBlocksBar={
+        <PipelineOptionalBlocksAddBar
+          layout={drawerLayout}
+          onLayoutChange={(next) => setDrawerLayout(next)}
+          parentTab="financials"
+          blockIds={["pfs", "constructionBudget", "trackRecord", "simplePl"]}
+        />
+      }
       modularBlocks={
         activeDrawerBlockIds.has("constructionBudget") ||
-        activeDrawerBlockIds.has("pfs") ? (
+        activeDrawerBlockIds.has("pfs") ||
+        activeDrawerBlockIds.has("trackRecord") ||
+        activeDrawerBlockIds.has("simplePl") ? (
           <>
             {activeDrawerBlockIds.has("constructionBudget") ? (
               <ConstructionBudgetBlockLazy
@@ -2826,6 +3170,20 @@ function PipelineFileWorkspaceLoaded({
             ) : null}
             {activeDrawerBlockIds.has("pfs") ? (
               <PfsBlockLazy
+                contactId={primaryBorrowerContactId ?? null}
+                memberUserKey={preferencesAccountId || undefined}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {activeDrawerBlockIds.has("trackRecord") ? (
+              <TrackRecordBlockLazy
+                contactId={primaryBorrowerContactId ?? null}
+                memberUserKey={preferencesAccountId || undefined}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {activeDrawerBlockIds.has("simplePl") ? (
+              <SimplePlBlockLazy
                 contactId={primaryBorrowerContactId ?? null}
                 memberUserKey={preferencesAccountId || undefined}
                 readOnly={readOnly}
@@ -2883,11 +3241,13 @@ function PipelineFileWorkspaceLoaded({
       organizationId={p.organizationId ?? null}
       memberUserKey={preferencesAccountId}
       readOnly={readOnly}
+      isSharedRecipient={isSharedRecipient}
       archivedAt={p.archivedAt}
       archiving={archiving}
       archiveError={archiveError}
       onToggleArchive={() => void toggleArchive()}
       onDelete={openFileDeleteConfirm}
+      onLeaveShare={openLeaveShareConfirm}
       drawerLayout={drawerLayout}
       onDrawerLayoutChange={setDrawerLayout}
       layoutNonHideableIds={layoutNonHideableIds}
@@ -2931,9 +3291,12 @@ function PipelineFileWorkspaceLoaded({
     />
   );
 
-  const favoriteInspectorContent = (() => {
-    if (!favoriteInspectorBlockId) return null;
-    switch (favoriteInspectorBlockId) {
+  // Plain function (not useCallback): must stay after the detail early returns
+  // above — a hook here caused React #310 (more hooks after load than on skeleton).
+  function renderFavoriteFloatingContent(
+    blockId: PipelineBlockId,
+  ): ReactNode {
+    switch (blockId) {
       case "fileNotes":
         return p.organizationId ? (
           <FileNotesBlock
@@ -2975,14 +3338,26 @@ function PipelineFileWorkspaceLoaded({
             readOnly={readOnly}
           />
         );
+      case "trackRecord":
+        return (
+          <TrackRecordBlockLazy
+            contactId={primaryBorrowerContactId ?? null}
+            memberUserKey={preferencesAccountId || undefined}
+            readOnly={readOnly}
+          />
+        );
+      case "simplePl":
+        return (
+          <SimplePlBlockLazy
+            contactId={primaryBorrowerContactId ?? null}
+            memberUserKey={preferencesAccountId || undefined}
+            readOnly={readOnly}
+          />
+        );
       default:
         return null;
     }
-  })();
-
-  const favoriteInspectorDefinition = favoriteInspectorBlockId
-    ? getPipelineBlock(favoriteInspectorBlockId)
-    : null;
+  }
 
   return (
     <>
@@ -3008,6 +3383,21 @@ function PipelineFileWorkspaceLoaded({
         title={readOnly ? resourceAccessUx.viewOnlyTooltip : undefined}
       >
         <DealWorkspaceEditorProvider fileId={p._id}>
+        <ClientBlockAssignProvider
+          value={{
+            pipelineFileId: p._id,
+            memberUserKey: convexMemberKey ?? preferencesAccountId,
+            assignedContactId: primaryBorrowerContactId ?? null,
+            readOnly,
+          }}
+        >
+        {/*
+          DocumentVaultStateProvider must wrap FloatingBlockWindowProvider so
+          detached Document Vault content (host sibling of tab panels) keeps the
+          same vault nav state — not a tab-local provider that WiW leaves behind.
+        */}
+        <DocumentVaultStateProvider>
+        <FloatingBlockWindowProvider scopeKey={String(p._id)}>
         <PipelineFileWorkspaceShell
           embedded={embedded}
           isSnoozed={isSnoozed}
@@ -3036,6 +3426,13 @@ function PipelineFileWorkspaceLoaded({
                 rateDisplay={dealCommandCenterRateDisplay}
                 termDisplay={dealCommandCenterTermDisplay}
                 crumbs={workspaceCrumbsWithTab}
+                projectName={
+                  workspaceHasProject ? workspaceProjectLabel : null
+                }
+                projectHref={
+                  workspaceHasProject ? workspaceProjectHref : null
+                }
+                projectSiblingFiles={projectSiblingFiles}
                 accessHint={
                   !canMutateWorkspaceFile ? "View-only access" : undefined
                 }
@@ -3060,8 +3457,7 @@ function PipelineFileWorkspaceLoaded({
                         variant="ghost"
                         size="sm"
                         className={cn(
-                          "h-8 w-8 shrink-0 p-0",
-                          touchTargetIconClass,
+                          "h-8 w-8 shrink-0 p-0 max-md:h-10 max-md:w-10 max-md:min-h-10 max-md:min-w-10",
                         )}
                         data-testid="pipeline-workspace-header-overflow"
                       >
@@ -3117,9 +3513,10 @@ function PipelineFileWorkspaceLoaded({
                 <HeaderDisclosurePanel
                   open={headerDetailsExpanded}
                   testId="pipeline-workspace-header-details"
+                  className="w-full min-w-0"
                 >
-                  <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0 flex-1 space-y-2">
+                  <div className="grid w-full min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] lg:items-start">
+                    <div className="min-w-0 w-full space-y-2">
                       {p.organizationId && convexMemberKey ? (
                         <>
                           <ChangeFileProjectControl
@@ -3141,15 +3538,27 @@ function PipelineFileWorkspaceLoaded({
                       ) : null}
                     </div>
                     {pipelineSwitcherPreview !== undefined &&
-                      pipelineSwitcherRows.length > 1 ? (
-                        <label className="flex min-w-0 w-full flex-col gap-0.5 lg:w-auto lg:max-w-md">
+                    (projectSiblingFiles.length > 1 ||
+                      (!workspaceHasProject &&
+                        pipelineSwitcherRows.length > 1)) ? (
+                        <label className="flex min-w-0 w-full flex-col gap-0.5">
                           <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                            Switch file
+                            {workspaceHasProject
+                              ? "Switch file in project"
+                              : "Switch file"}
                           </span>
                           <select
-                            className="h-9 w-full min-w-0 rounded-md border border-border bg-background px-2 text-sm shadow-sm focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                            className={cn(
+                              "h-9 w-full min-w-0 rounded-dlc-md border border-border bg-background px-2 text-base shadow-dlc-1 md:text-sm",
+                              "focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                              "max-md:min-h-11",
+                            )}
                             value={id}
-                            aria-label="Switch to another pipeline file"
+                            aria-label={
+                              workspaceHasProject
+                                ? "Switch to another file in this project"
+                                : "Switch to another pipeline file"
+                            }
                             onChange={(e) => {
                               const next = e.target.value as Id<"pipeline">;
                               if (next === id) return;
@@ -3158,7 +3567,10 @@ function PipelineFileWorkspaceLoaded({
                               });
                             }}
                           >
-                            {pipelineSwitcherRows.map((r) => (
+                            {(workspaceHasProject
+                              ? projectSiblingFiles
+                              : pipelineSwitcherRows
+                            ).map((r) => (
                               <option key={r._id} value={r._id}>
                                 {r.fileName?.trim()
                                   ? r.fileName
@@ -3294,6 +3706,19 @@ function PipelineFileWorkspaceLoaded({
                         </Button>
                       </div>
                     </div>
+                    <PipelineFileAutoArchiveControl
+                      inactivityDays={p.autoArchiveInactivityDays}
+                      autoArchiveAfterAt={p.autoArchiveAfterAt}
+                      lastActivityAt={lastPipelineActivityAt(p)}
+                      archived={p.archivedAt != null}
+                      disabled={
+                        p.archivedAt != null || !canMutateWorkspaceFile
+                      }
+                      busy={autoArchiving}
+                      error={autoArchiveError}
+                      onEnable={(days) => void commitAutoArchiveDays(days)}
+                      onDisable={() => void clearAutoArchive()}
+                    />
                   </div>
                   {snoozeError ? (
                     <p className="text-xs text-destructive" role="alert">
@@ -3314,11 +3739,14 @@ function PipelineFileWorkspaceLoaded({
                   placement="pinned"
                   tabIndicators={workspaceTabIndicators}
                 />
-                <FileFavoritesBar
+                <FileFavoritesFloatingLauncher
                   favorites={preferences.favoriteFileBlocks}
                   pinnableBlockIds={FAVORITE_PINNABLE_BLOCK_IDS}
-                  onOpenBlock={openFavoriteBlock}
+                  onPrepareBlock={prepareFavoriteBlock}
+                  onEnsureMounted={ensureFavoriteBlockMounted}
+                  onJumpToSection={jumpToDrawerSection}
                   onToggleFavorite={toggleFavoriteBlock}
+                  renderContent={renderFavoriteFloatingContent}
                   disabled={!prefsServerReady}
                 />
               </>
@@ -3338,6 +3766,9 @@ function PipelineFileWorkspaceLoaded({
             />
           }
         />
+        </FloatingBlockWindowProvider>
+        </DocumentVaultStateProvider>
+        </ClientBlockAssignProvider>
         </DealWorkspaceEditorProvider>
       </div>
       <PipelineWorkspaceSection
@@ -3353,65 +3784,6 @@ function PipelineFileWorkspaceLoaded({
           onOpenTask={(taskId) => setOpenTaskId(taskId)}
         />
       </PipelineWorkspaceSection>
-      {favoriteInspectorBlockId && favoriteInspectorDefinition ? (
-        <PipelineWorkspaceSection
-          htmlId="pipeline-ws-favorite-block-overlay"
-          sectionId="favorite-block-overlay"
-          sectionType="overlay"
-          sectionLabel="Favorite block slide-over"
-          className="contents"
-        >
-          <RecordInspectorShell
-            onClose={() => setFavoriteInspectorBlockId(null)}
-            ariaLabel={`${favoriteInspectorDefinition.label} — favorite block`}
-            resizable
-          >
-            <RecordInspectorHeader>
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="truncate text-dlc-title-m font-semibold leading-dlc-title-m text-foreground">
-                    {favoriteInspectorDefinition.label}
-                  </h2>
-                  {favoriteInspectorDefinition.description ? (
-                    <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-                      {favoriteInspectorDefinition.description}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="min-h-[36px]"
-                    onClick={() => {
-                      const target = favoriteInspectorBlockId;
-                      setFavoriteInspectorBlockId(null);
-                      jumpToDrawerSection(target);
-                    }}
-                    data-testid="pipeline-favorite-inspector-go-to-section"
-                  >
-                    Go to section
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="min-h-[36px]"
-                    onClick={() => setFavoriteInspectorBlockId(null)}
-                    aria-label="Close favorite block"
-                  >
-                    Close
-                  </Button>
-                </div>
-              </div>
-            </RecordInspectorHeader>
-            <RecordInspectorBody id="pipeline-favorite-inspector-body">
-              {favoriteInspectorContent}
-            </RecordInspectorBody>
-          </RecordInspectorShell>
-        </PipelineWorkspaceSection>
-      ) : null}
     </PipelineWorkspaceSection>
 
       {rejectModalLenderId ? (

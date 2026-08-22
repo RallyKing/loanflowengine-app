@@ -42,6 +42,8 @@ export const PIPELINE_BLOCK_ARTICLE_SLUGS: Record<PipelineBlockId, string> = {
   constructionBudget: "block-construction-budget",
   investorExperience: "block-investor-experience",
   pfs: "block-pfs",
+  trackRecord: "block-track-record",
+  simplePl: "block-simple-pl",
 };
 
 const PIPELINE_BLOCK_CATEGORY: ProductKnowledgeCategoryId = "pipeline-file";

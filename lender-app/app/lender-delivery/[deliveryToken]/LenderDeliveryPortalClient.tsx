@@ -11,6 +11,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  Layers,
   Loader2,
   Shield,
 } from "lucide-react";
@@ -18,39 +19,35 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { LenderDeliveryBlockPanel } from "@/components/library/LenderDeliveryBlockPanel";
+import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
 import { cn } from "@/lib/cn";
-import {
-  buildFolderTree,
-  type DocumentFolderRow,
-  type FolderTreeNode,
-} from "@/lib/library/documentVaultFolders";
+import type { FolderTreeNode } from "@/lib/library/documentVaultFolders";
 import { downloadVaultDocumentsZip } from "@/lib/library/downloadVaultDocumentsZip";
-import { buildVaultDocumentZipPath } from "@/lib/library/vaultZipPaths";
+import {
+  buildLenderPackageTreeSections,
+  buildLenderPackageZipPath,
+  type LenderPackageContainer,
+  type LenderPackageDocumentRef,
+  type LenderPackageFolderRef,
+} from "@/lib/library/lenderDeliveryPackageTree";
 import {
   buildVerifyAccessPath,
   readPortalAccessProof,
 } from "@/lib/portalAccessProof";
+import { PortalPageComposition } from "@/components/portal/PortalPageSectionRenderer";
+import type { PortalPageSectionInstance } from "@/lib/portalPageSections";
 
 type LenderDeliveryPortalClientProps = {
   deliveryToken: string;
 };
 
-type DeliveryDocument = {
-  documentId: Id<"libraryDocuments">;
+type DeliveryDocument = LenderPackageDocumentRef & {
   versionId?: Id<"libraryDocumentVersions">;
-  title: string;
-  fileName?: string;
   contentType?: string;
   url?: string;
-  folderId?: Id<"documentFolders">;
 };
 
-type DeliveryFolder = {
-  _id: Id<"documentFolders">;
-  name: string;
-  parentFolderId?: Id<"documentFolders">;
-  fileTaskId?: Id<"documentVaultFileTasks">;
-};
+type DeliveryFolder = LenderPackageFolderRef;
 
 export function LenderDeliveryPortalClient({
   deliveryToken,
@@ -62,6 +59,10 @@ export function LenderDeliveryPortalClient({
     token: deliveryToken,
     accessProof,
   });
+  const composition = useQuery(
+    api.portalDefaults.resolveCompositionForLenderDelivery,
+    { token: deliveryToken },
+  );
   const recordAccess = useMutation(
     api.lenderDeliveryPortal.recordDeliveryPortalAccess,
   );
@@ -110,7 +111,13 @@ export function LenderDeliveryPortalClient({
 
   const handleDownloadAll = useCallback(async () => {
     if (delivery?.status !== "ok" || delivery.permission !== "downloadable") return;
-    const folderRows = delivery.folders as DocumentFolderRow[];
+    const folderRows = delivery.folders as LenderPackageFolderRef[];
+    const containersById = new Map(
+      (delivery.packageContainers ?? []).map((c) => [
+        String(c.fileTaskId),
+        c.title,
+      ]),
+    );
     const items = delivery.documents
       .filter((d) => d.url && d.versionId)
       .map((d) => ({
@@ -118,11 +125,13 @@ export function LenderDeliveryPortalClient({
         versionId: d.versionId!,
         fileName: d.fileName ?? d.title,
         url: d.url!,
-        zipPath: buildVaultDocumentZipPath(
-          folderRows,
-          d.folderId,
-          d.fileName ?? d.title,
-        ),
+        zipPath: buildLenderPackageZipPath({
+          folders: folderRows,
+          containersById,
+          folderId: d.folderId,
+          fileTaskId: d.fileTaskId,
+          fileName: d.fileName ?? d.title,
+        }),
       }));
     if (items.length === 0) {
       setZipError("No downloadable files in this package.");
@@ -175,26 +184,21 @@ export function LenderDeliveryPortalClient({
   }
 
   const canDownload = delivery.permission === "downloadable";
+  const packageContainers: LenderPackageContainer[] =
+    delivery.packageContainers ?? [];
 
-  return (
-    <div className="min-h-dvh bg-neutral-50 px-4 py-10">
-      <div className="mx-auto max-w-3xl">
-        <header className="mb-6">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {delivery.workspaceName}
-          </p>
-          <h1 className="mt-1 flex items-center gap-2 text-lg font-semibold text-foreground">
-            <Shield className="h-5 w-5 text-primary" aria-hidden />
-            Lender Data Room
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Secure package for {delivery.lenderName} · {delivery.fileLabel}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {canDownload ? "View and download" : "View only"} · Read-only deal data
-          </p>
-        </header>
+  const useComposition =
+    composition?.status === "ok" && (composition.sections?.length ?? 0) > 0;
+  const compositionChrome =
+    composition?.status === "ok" ? composition.chrome ?? null : null;
+  const compositionUsesChrome = Boolean(
+    compositionChrome &&
+      ((compositionChrome.sidebar?.items?.length ?? 0) > 0 ||
+        compositionChrome.top),
+  );
 
+  const packageBody = (
+    <>
         {canDownload ? (
           <div
             className="sticky top-4 z-10 mb-6 rounded-dlc-lg border border-border/80 bg-white p-3 shadow-dlc-2"
@@ -250,25 +254,100 @@ export function LenderDeliveryPortalClient({
             ))}
           </section>
         ) : null}
+    </>
+  );
 
-        <section data-testid="lender-data-room-documents">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Documents
-          </h2>
-          <LenderDataRoomDocumentTree
-            folders={delivery.folders}
-            documents={delivery.documents}
-            canDownload={canDownload}
-            onFolderExpand={(folderName, folderId) =>
-              emitEngagement("folder_expanded", { folderName, folderId })
-            }
-            onDocumentPreview={(documentTitle, documentId) =>
-              emitEngagement("document_previewed", { documentTitle, documentId })
-            }
+  const documentTree = (
+    <LenderDataRoomDocumentTree
+      folders={delivery.folders}
+      documents={delivery.documents}
+      packageContainers={packageContainers}
+      canDownload={canDownload}
+      onFolderExpand={(folderName, folderId) =>
+        emitEngagement("folder_expanded", {
+          folderName,
+          folderId,
+        })
+      }
+      onDocumentPreview={(documentTitle, documentId) =>
+        emitEngagement("document_previewed", {
+          documentTitle,
+          documentId,
+        })
+      }
+    />
+  );
+
+  return (
+    <div
+      className={
+        compositionUsesChrome
+          ? "min-h-dvh bg-neutral-50 px-0 py-0 sm:px-3 sm:py-6"
+          : "min-h-dvh bg-neutral-50 px-4 py-10"
+      }
+    >
+      <div
+        className={
+          compositionUsesChrome ? "mx-auto max-w-6xl" : "mx-auto max-w-3xl"
+        }
+      >
+        {useComposition && composition ? (
+          <PortalPageComposition
+            className="mb-6"
+            sections={composition.sections as PortalPageSectionInstance[]}
+            chrome={compositionChrome}
+            context={{
+              ...composition.context,
+              fileLabel:
+                composition.context?.fileLabel ?? delivery.fileLabel,
+              workspaceName:
+                composition.context?.workspaceName ?? delivery.workspaceName,
+              outstandingCount:
+                composition.context?.outstandingCount ??
+                delivery.documents.length,
+            }}
+            slots={{
+              documentPackage: (
+                <div className="space-y-4">
+                  {packageBody}
+                  {documentTree}
+                </div>
+              ),
+            }}
           />
-        </section>
+        ) : (
+          <header className="mb-6">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {delivery.workspaceName}
+            </p>
+            <h1 className="mt-1 flex items-center gap-2 text-lg font-semibold text-foreground">
+              <Shield className="h-5 w-5 text-primary" aria-hidden />
+              Lender Data Room
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Secure package for {delivery.lenderName} · {delivery.fileLabel}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {canDownload ? "View and download" : "View only"} · Read-only deal data
+            </p>
+          </header>
+        )}
 
-        {delivery.documents.length === 0 && delivery.folders.length === 0 ? (
+        {!useComposition ? (
+          <>
+            {packageBody}
+            <section data-testid="lender-data-room-documents">
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Documents
+              </h2>
+              {documentTree}
+            </section>
+          </>
+        ) : null}
+
+        {delivery.documents.length === 0 &&
+        delivery.folders.length === 0 &&
+        packageContainers.length === 0 ? (
           <p className="text-sm text-muted-foreground">No documents in this package.</p>
         ) : null}
       </div>
@@ -279,12 +358,14 @@ export function LenderDeliveryPortalClient({
 function LenderDataRoomDocumentTree({
   folders,
   documents,
+  packageContainers,
   canDownload,
   onFolderExpand,
   onDocumentPreview,
 }: {
   folders: DeliveryFolder[];
   documents: DeliveryDocument[];
+  packageContainers: LenderPackageContainer[];
   canDownload: boolean;
   onFolderExpand?: (folderName: string, folderId: Id<"documentFolders">) => void;
   onDocumentPreview?: (
@@ -292,20 +373,39 @@ function LenderDataRoomDocumentTree({
     documentId: Id<"libraryDocuments">,
   ) => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-
-  const folderTree = useMemo(
-    () => buildFolderTree(folders as DocumentFolderRow[], null),
-    [folders],
+  const sections = useMemo(
+    () =>
+      buildLenderPackageTreeSections({
+        folders,
+        documents,
+        containers: packageContainers,
+      }),
+    [folders, documents, packageContainers],
   );
 
-  const rootDocs = useMemo(
-    () => documents.filter((d) => !d.folderId),
-    [documents],
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() =>
+    new Set(folders.map((f) => String(f._id))),
+  );
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(() =>
+    new Set(packageContainers.map((c) => String(c.fileTaskId))),
   );
 
-  const toggle = (id: string, folderName: string, folderId: Id<"documentFolders">) => {
-    setExpanded((prev) => {
+  useEffect(() => {
+    setExpandedFolders(new Set(folders.map((f) => String(f._id))));
+  }, [folders]);
+
+  useEffect(() => {
+    setExpandedTasks(
+      new Set(packageContainers.map((c) => String(c.fileTaskId))),
+    );
+  }, [packageContainers]);
+
+  const toggleFolder = (
+    id: string,
+    folderName: string,
+    folderId: Id<"documentFolders">,
+  ) => {
+    setExpandedFolders((prev) => {
       const next = new Set(prev);
       const opening = !next.has(id);
       if (opening) {
@@ -318,7 +418,22 @@ function LenderDataRoomDocumentTree({
     });
   };
 
-  if (folders.length === 0) {
+  const toggleTask = (taskId: string) => {
+    setExpandedTasks((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
+
+  if (documents.length === 0 && folders.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">No documents in this package.</p>
+    );
+  }
+
+  if (sections.length === 0) {
     return (
       <ul className="space-y-3">
         {documents.map((doc) => (
@@ -326,9 +441,7 @@ function LenderDataRoomDocumentTree({
             key={String(doc.documentId)}
             doc={doc}
             canDownload={canDownload}
-            onPreview={() =>
-              onDocumentPreview?.(doc.title, doc.documentId)
-            }
+            onPreview={() => onDocumentPreview?.(doc.title, doc.documentId)}
           />
         ))}
       </ul>
@@ -336,40 +449,110 @@ function LenderDataRoomDocumentTree({
   }
 
   return (
-    <div className="space-y-4">
-      {folderTree.length > 0 ? (
-        <ul className="space-y-2 rounded-dlc-lg border border-border/70 bg-white p-3 shadow-dlc-1">
-          {folderTree.map((node) => (
-            <FolderDocumentNode
-              key={String(node.folder._id)}
-              node={node}
-              documents={documents}
-              expanded={expanded}
-              onToggle={toggle}
-              canDownload={canDownload}
-              depth={0}
-              onFolderExpand={onFolderExpand}
-              onDocumentPreview={onDocumentPreview}
-            />
-          ))}
-        </ul>
-      ) : null}
-      {rootDocs.length > 0 ? (
-        <ul className="space-y-3">
-          {rootDocs.map((doc) => (
-            <LenderDeliveryDocumentRow
-              key={String(doc.documentId)}
-              doc={doc}
-              canDownload={canDownload}
-              onPreview={() =>
-                onDocumentPreview?.(doc.title, doc.documentId)
-              }
-            />
-          ))}
-        </ul>
-      ) : null}
+    <div className="space-y-4" data-testid="lender-data-room-package-tree">
+      {sections.map((section) => {
+        const isTask = section.kind === "task";
+        const taskKey = section.fileTaskId
+          ? String(section.fileTaskId)
+          : "unassigned";
+        const isOpen = isTask ? expandedTasks.has(taskKey) : true;
+        const fileCount =
+          section.rootDocs.length +
+          countDocsInFolderTree(section.folderTree, documents);
+
+        return (
+          <div
+            key={taskKey}
+            className="rounded-dlc-lg border border-border/70 bg-white p-3 shadow-dlc-1"
+            data-testid={
+              isTask
+                ? `lender-package-task-${taskKey}`
+                : "lender-package-unassigned"
+            }
+          >
+            {isTask ? (
+              <button
+                type="button"
+                className="flex w-full min-h-10 items-center gap-2 text-left"
+                onClick={() => toggleTask(taskKey)}
+                aria-expanded={isOpen}
+              >
+                {isOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <Layers className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                  {section.title}
+                </span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  {fileCount} file{fileCount === 1 ? "" : "s"}
+                </span>
+              </button>
+            ) : (
+              <div className="mb-2 flex items-center gap-2 px-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {section.title}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  {fileCount} file{fileCount === 1 ? "" : "s"}
+                </span>
+              </div>
+            )}
+
+            {isOpen ? (
+              <div className={cn(isTask && "mt-2 border-t border-border/50 pt-2")}>
+                <ul className="space-y-2">
+                  {section.rootDocs.map((doc) => (
+                    <LenderDeliveryDocumentRow
+                      key={String(doc.documentId)}
+                      doc={doc as DeliveryDocument}
+                      canDownload={canDownload}
+                      compact
+                      onPreview={() =>
+                        onDocumentPreview?.(doc.title, doc.documentId)
+                      }
+                    />
+                  ))}
+                  {section.folderTree.map((node) => (
+                    <FolderDocumentNode
+                      key={String(node.folder._id)}
+                      node={node}
+                      documents={documents}
+                      expanded={expandedFolders}
+                      onToggle={toggleFolder}
+                      canDownload={canDownload}
+                      depth={0}
+                      onDocumentPreview={onDocumentPreview}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+function countDocsInFolderTree(
+  tree: FolderTreeNode[],
+  documents: DeliveryDocument[],
+): number {
+  let count = 0;
+  const walk = (nodes: FolderTreeNode[]) => {
+    for (const node of nodes) {
+      const id = String(node.folder._id);
+      count += documents.filter(
+        (d) => d.folderId && String(d.folderId) === id,
+      ).length;
+      walk(node.children);
+    }
+  };
+  walk(tree);
+  return count;
 }
 
 function FolderDocumentNode({
@@ -379,7 +562,6 @@ function FolderDocumentNode({
   onToggle,
   canDownload,
   depth,
-  onFolderExpand,
   onDocumentPreview,
 }: {
   node: FolderTreeNode;
@@ -388,7 +570,6 @@ function FolderDocumentNode({
   onToggle: (id: string, folderName: string, folderId: Id<"documentFolders">) => void;
   canDownload: boolean;
   depth: number;
-  onFolderExpand?: (folderName: string, folderId: Id<"documentFolders">) => void;
   onDocumentPreview?: (
     documentTitle: string,
     documentId: Id<"libraryDocuments">,
@@ -399,18 +580,21 @@ function FolderDocumentNode({
   const folderDocs = documents.filter(
     (d) => d.folderId && String(d.folderId) === String(folderId),
   );
+  const nestedCount =
+    folderDocs.length + countDocsInFolderTree(node.children, documents);
 
   return (
     <li>
       <div
-        className="flex items-center gap-1.5 py-1"
+        className="flex min-h-9 items-center gap-1.5 py-1"
         style={{ paddingLeft: depth * 12 }}
       >
         <button
           type="button"
-          className="inline-flex h-6 w-6 items-center justify-center rounded-dlc-sm text-muted-foreground hover:bg-muted/40"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-dlc-sm text-muted-foreground hover:bg-muted/40"
           onClick={() => onToggle(String(folderId), node.folder.name, folderId)}
           aria-expanded={isOpen}
+          aria-label={`${isOpen ? "Collapse" : "Expand"} folder ${node.folder.name}`}
         >
           {isOpen ? (
             <ChevronDown className="h-3.5 w-3.5" aria-hidden />
@@ -419,13 +603,15 @@ function FolderDocumentNode({
           )}
         </button>
         {isOpen ? (
-          <FolderOpen className="h-3.5 w-3.5 text-amber-600" aria-hidden />
+          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
         ) : (
-          <Folder className="h-3.5 w-3.5 text-amber-600" aria-hidden />
+          <Folder className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
         )}
-        <span className="text-xs font-medium">{node.folder.name}</span>
-        <span className="text-[10px] text-muted-foreground">
-          {folderDocs.length} file{folderDocs.length === 1 ? "" : "s"}
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          {node.folder.name}
+        </span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {nestedCount} file{nestedCount === 1 ? "" : "s"}
         </span>
       </div>
       {isOpen ? (
@@ -452,7 +638,6 @@ function FolderDocumentNode({
               onToggle={onToggle}
               canDownload={canDownload}
               depth={depth + 1}
-              onFolderExpand={onFolderExpand}
               onDocumentPreview={onDocumentPreview}
             />
           ))}
@@ -474,17 +659,33 @@ function LenderDeliveryDocumentRow({
   onPreview?: () => void;
 }) {
   const title = doc.title;
-  const fileName = doc.fileName;
+  const fileName = doc.fileName ?? doc.title;
   const contentType = doc.contentType;
   const url = doc.url;
-  const isPdf = (contentType ?? "").includes("pdf") || fileName?.endsWith(".pdf");
-  const isImage = (contentType ?? "").startsWith("image/");
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const handlePreview = () => {
     onPreview?.();
     setPreviewOpen(true);
   };
+
+  const previewPane =
+    url && (previewOpen || !canDownload) ? (
+      <div
+        className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
+        onContextMenu={(e) => e.preventDefault()}
+        onMouseEnter={!canDownload ? () => onPreview?.() : undefined}
+        data-testid="lender-doc-preview-pane"
+      >
+        <RichFilePreview
+          url={url}
+          fileName={fileName}
+          contentType={contentType}
+          protectMedia={!canDownload}
+          viewportClassName="min-h-[min(70vh,32rem)] max-h-[min(70vh,32rem)]"
+        />
+      </div>
+    ) : null;
 
   return (
     <li
@@ -498,8 +699,8 @@ function LenderDeliveryDocumentRow({
           <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{title}</p>
-            {fileName ? (
-              <p className="truncate text-xs text-muted-foreground">{fileName}</p>
+            {doc.fileName ? (
+              <p className="truncate text-xs text-muted-foreground">{doc.fileName}</p>
             ) : null}
           </div>
         </div>
@@ -531,64 +732,7 @@ function LenderDeliveryDocumentRow({
         )}
       </div>
 
-      {!canDownload && url ? (
-        <div
-          className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
-          onContextMenu={(e) => e.preventDefault()}
-          onMouseEnter={() => onPreview?.()}
-        >
-          {isPdf ? (
-            <iframe
-              title={title}
-              src={`${url}#toolbar=0&navpanes=0`}
-              className="h-[min(70vh,32rem)] w-full pointer-events-auto"
-              sandbox="allow-scripts allow-same-origin"
-            />
-          ) : isImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={title}
-              className="max-h-[min(70vh,32rem)] w-full object-contain pointer-events-none"
-              draggable={false}
-              onContextMenu={(e) => e.preventDefault()}
-            />
-          ) : (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              Inline preview not available for this file type.
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      {canDownload && previewOpen && url ? (
-        <div
-          className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
-          onContextMenu={(e) => e.preventDefault()}
-        >
-          {isPdf ? (
-            <iframe
-              title={title}
-              src={`${url}#toolbar=0&navpanes=0`}
-              className="h-[min(70vh,32rem)] w-full pointer-events-auto"
-              sandbox="allow-scripts allow-same-origin"
-            />
-          ) : isImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={title}
-              className="max-h-[min(70vh,32rem)] w-full object-contain pointer-events-none"
-              draggable={false}
-              onContextMenu={(e) => e.preventDefault()}
-            />
-          ) : (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              Inline preview not available for this file type.
-            </p>
-          )}
-        </div>
-      ) : null}
+      {previewPane}
     </li>
   );
 }

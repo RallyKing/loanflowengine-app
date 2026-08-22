@@ -20,6 +20,10 @@ import { pipelineClientWorkspaceHref } from "@/lib/pipeline/routes";
 
 import { EntityKycPanel } from "@/components/contacts/EntityKycPanel";
 
+import { EntityWebsitesPanel } from "@/components/contacts/EntityWebsitesPanel";
+
+import { EntityWebsitesList } from "@/components/contacts/EntityWebsitesList";
+
 import { EntityCapTableTab } from "@/components/contacts/EntityCapTableTab";
 
 import { EntityDealsTab } from "@/components/contacts/EntityDealsTab";
@@ -51,6 +55,8 @@ import {
   formatEntityFormationDate,
 
 } from "@/lib/contacts/entityKycTypes";
+
+import { resolveEntityWebsites } from "@/lib/contacts/entityWebsites";
 
 
 
@@ -282,6 +288,26 @@ export function EntityHubDetailPanel({
 
         </div>
 
+        {resolveEntityWebsites(client).length > 0 ? (
+
+          <div className="mt-4">
+
+            <p className={hubDetailStyles.sectionTitle}>Websites</p>
+
+            <EntityWebsitesList
+
+              className="mt-2"
+
+              websites={client.websites}
+
+              variant="chips"
+
+            />
+
+          </div>
+
+        ) : null}
+
       </div>
 
 
@@ -463,6 +489,20 @@ export function EntityHubDetailPanel({
       canEdit={canEdit}
 
     />
+
+      <EntityWebsitesPanel
+
+        organizationId={organizationId}
+
+        memberUserKey={memberUserKey}
+
+        entityId={entityId}
+
+        client={client}
+
+        canEdit={canEdit}
+
+      />
 
     </div>
 

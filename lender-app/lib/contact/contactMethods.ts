@@ -54,19 +54,86 @@ function isPhoneLabel(x: string): x is ContactPhoneLabel {
   return (CONTACT_PHONE_LABELS as readonly string[]).includes(x);
 }
 
+/** Stable fallback id when a stored method row is missing `id` (never random). */
+function stableMethodFallbackId(
+  kind: "email" | "phone",
+  index: number,
+  value: string,
+): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
+  return `${kind}-${index}-${slug || "empty"}`;
+}
+
+/**
+ * Drop progressive-typing junk: keep the longest value when one entry's value is
+ * a strict prefix of another (e.g. "M", "MP", "MPushye@…"). Exact duplicates
+ * also collapse to a single row (primary preferred).
+ */
+export function collapsePrefixContactMethodValues<
+  T extends { email?: string; number?: string; isPrimary: boolean },
+>(list: T[], valueOf: (item: T) => string): T[] {
+  if (list.length <= 1) return list;
+  const normalized = list.map((item, index) => ({
+    item,
+    index,
+    value: valueOf(item).trim().toLowerCase(),
+  }));
+  const keep = new Set<number>();
+  for (const candidate of normalized) {
+    if (!candidate.value) {
+      keep.add(candidate.index);
+      continue;
+    }
+    const dominated = normalized.some(
+      (other) =>
+        other.index !== candidate.index &&
+        other.value.length > candidate.value.length &&
+        other.value.startsWith(candidate.value),
+    );
+    if (!dominated) keep.add(candidate.index);
+  }
+  // Exact-duplicate collapse: keep primary, else first.
+  const byValue = new Map<string, number>();
+  for (const candidate of normalized) {
+    if (!keep.has(candidate.index) || !candidate.value) continue;
+    const prev = byValue.get(candidate.value);
+    if (prev === undefined) {
+      byValue.set(candidate.value, candidate.index);
+      continue;
+    }
+    const preferCurrent = list[candidate.index]?.isPrimary === true;
+    if (preferCurrent) {
+      keep.delete(prev);
+      byValue.set(candidate.value, candidate.index);
+    } else {
+      keep.delete(candidate.index);
+    }
+  }
+  return list.filter((_, index) => keep.has(index));
+}
+
 /** Resolve stored arrays with legacy scalar fallback (pre-migration rows). */
 export function resolveContactEmails(
   row: Pick<Doc<"contacts">, "email" | "emails">,
 ): ContactEmailEntry[] {
   const stored = row.emails ?? [];
   if (stored.length > 0) {
-    return sortPrimaryFirst(
-      stored.map((e) => ({
-        id: e.id?.trim() || newContactMethodId(),
+    const mapped = stored.map((e, index) => {
+      const email = (e.email ?? "").trim();
+      return {
+        id: e.id?.trim() || stableMethodFallbackId("email", index, email),
         label: isEmailLabel(e.label) ? e.label : "Other",
-        email: (e.email ?? "").trim(),
+        email,
         isPrimary: Boolean(e.isPrimary),
-      })),
+      };
+    });
+    return sortPrimaryFirst(
+      collapsePrefixContactMethodValues(mapped, (e) => e.email),
     );
   }
   const legacy = (row.email ?? "").trim();
@@ -86,13 +153,19 @@ export function resolveContactPhones(
 ): ContactPhoneEntry[] {
   const stored = row.phones ?? [];
   if (stored.length > 0) {
-    return sortPrimaryFirst(
-      stored.map((p) => ({
-        id: p.id?.trim() || newContactMethodId(),
+    const mapped = stored.map((p, index) => {
+      const number = (p.number ?? "").trim();
+      return {
+        id: p.id?.trim() || stableMethodFallbackId("phone", index, number),
         label: isPhoneLabel(p.label) ? p.label : "Other",
-        number: (p.number ?? "").trim(),
+        number,
         isPrimary: Boolean(p.isPrimary),
-      })),
+      };
+    });
+    return sortPrimaryFirst(
+      collapsePrefixContactMethodValues(mapped, (p) =>
+        p.number.replace(/\D/g, ""),
+      ),
     );
   }
   const legacy = (row.phone ?? "").trim();
@@ -244,6 +317,8 @@ export type ContactMethodsInput = {
   phones?: readonly ContactPhoneEntry[];
   legacyEmail?: string;
   legacyPhone?: string;
+  /** When true, legacyEmail/legacyPhone were explicitly set (scalar writers). */
+  legacyIsExplicitScalar?: boolean;
 };
 
 export type NormalizedContactMethods = {
@@ -258,53 +333,91 @@ export type NormalizedContactMethods = {
 function normalizeEmailEntries(
   raw: readonly ContactEmailEntry[] | undefined,
   legacyEmail: string,
+  options?: { legacyIsExplicitScalar?: boolean },
 ): ContactEmailEntry[] {
   const cleaned: ContactEmailEntry[] = [];
-  for (const e of raw ?? []) {
+  for (const [index, e] of (raw ?? []).entries()) {
     const email = e.email.trim();
     if (!email) continue;
     cleaned.push({
-      id: e.id?.trim() || newContactMethodId(),
+      id: e.id?.trim() || stableMethodFallbackId("email", index, email),
       label: isEmailLabel(e.label) ? e.label : "Other",
       email,
       isPrimary: Boolean(e.isPrimary),
     });
   }
-  if (cleaned.length === 0 && legacyEmail.trim()) {
+  const legacy = legacyEmail.trim();
+  if (cleaned.length === 0 && legacy) {
     cleaned.push({
       id: newContactMethodId(),
       label: "Other",
-      email: legacyEmail.trim(),
+      email: legacy,
       isPrimary: true,
     });
+  } else if (
+    cleaned.length > 0 &&
+    legacy &&
+    options?.legacyIsExplicitScalar === true
+  ) {
+    // Scalar-only writers (inspector): update primary in place — never append.
+    const legacyLower = legacy.toLowerCase();
+    if (!cleaned.some((e) => e.email.toLowerCase() === legacyLower)) {
+      const primaryIdx = cleaned.findIndex((e) => e.isPrimary);
+      const idx = primaryIdx >= 0 ? primaryIdx : 0;
+      cleaned[idx] = { ...cleaned[idx], email: legacy };
+    }
   }
-  return enforceSinglePrimary(cleaned, "email");
+  return enforceSinglePrimary(
+    collapsePrefixContactMethodValues(cleaned, (e) => e.email),
+    "email",
+  );
 }
 
 function normalizePhoneEntries(
   raw: readonly ContactPhoneEntry[] | undefined,
   legacyPhone: string,
+  options?: { legacyIsExplicitScalar?: boolean },
 ): ContactPhoneEntry[] {
   const cleaned: ContactPhoneEntry[] = [];
-  for (const p of raw ?? []) {
+  for (const [index, p] of (raw ?? []).entries()) {
     const number = p.number.trim();
     if (!number) continue;
     cleaned.push({
-      id: p.id?.trim() || newContactMethodId(),
+      id: p.id?.trim() || stableMethodFallbackId("phone", index, number),
       label: isPhoneLabel(p.label) ? p.label : "Other",
       number,
       isPrimary: Boolean(p.isPrimary),
     });
   }
-  if (cleaned.length === 0 && legacyPhone.trim()) {
+  const legacy = legacyPhone.trim();
+  if (cleaned.length === 0 && legacy) {
     cleaned.push({
       id: newContactMethodId(),
       label: "Other",
-      number: legacyPhone.trim(),
+      number: legacy,
       isPrimary: true,
     });
+  } else if (
+    cleaned.length > 0 &&
+    legacy &&
+    options?.legacyIsExplicitScalar === true
+  ) {
+    const legacyDigits = legacy.replace(/\D/g, "");
+    if (
+      legacyDigits &&
+      !cleaned.some((p) => p.number.replace(/\D/g, "") === legacyDigits)
+    ) {
+      const primaryIdx = cleaned.findIndex((p) => p.isPrimary);
+      const idx = primaryIdx >= 0 ? primaryIdx : 0;
+      cleaned[idx] = { ...cleaned[idx], number: legacy };
+    }
   }
-  return enforceSinglePrimary(cleaned, "number");
+  return enforceSinglePrimary(
+    collapsePrefixContactMethodValues(cleaned, (p) =>
+      p.number.replace(/\D/g, ""),
+    ),
+    "number",
+  );
 }
 
 function enforceSinglePrimary<T extends { isPrimary: boolean }>(
@@ -327,8 +440,11 @@ export function normalizeContactMethods(
 ): NormalizedContactMethods {
   const legacyEmail = (input.legacyEmail ?? "").trim();
   const legacyPhone = (input.legacyPhone ?? "").trim();
-  const emails = normalizeEmailEntries(input.emails, legacyEmail);
-  const phones = normalizePhoneEntries(input.phones, legacyPhone);
+  const scalarOpts = {
+    legacyIsExplicitScalar: input.legacyIsExplicitScalar === true,
+  };
+  const emails = normalizeEmailEntries(input.emails, legacyEmail, scalarOpts);
+  const phones = normalizePhoneEntries(input.phones, legacyPhone, scalarOpts);
   const email = primaryContactEmail({ email: legacyEmail, emails });
   const phone = primaryContactPhone({ phone: legacyPhone, phones });
   return {
@@ -346,15 +462,16 @@ export function contactMethodsToConvexFields(
   email: string;
   phone: string;
   emailKey?: string;
-  emails?: ContactEmailEntry[];
-  phones?: ContactPhoneEntry[];
+  emails: ContactEmailEntry[];
+  phones: ContactPhoneEntry[];
 } {
   return {
     email: normalized.email,
     phone: normalized.phone,
     emailKey: normalized.emailKey ?? undefined,
-    emails: normalized.emails.length ? normalized.emails : undefined,
-    phones: normalized.phones.length ? normalized.phones : undefined,
+    // Always write arrays so clears persist (empty = no methods).
+    emails: normalized.emails,
+    phones: normalized.phones,
   };
 }
 
@@ -400,7 +517,15 @@ export function contactMethodsCreateArgs(input: {
   };
 }
 
-/** Merge optional scalar values into existing contact methods (migration / link flows). */
+/**
+ * Merge optional scalar values into existing contact methods (migration / link /
+ * deal dual-write flows).
+ *
+ * Email is single-valued from scalar sources: update the primary entry in place
+ * instead of appending progressive keystroke values ("M", "MP", "MPu"…).
+ * Phones may append distinct numbers, but treat digit prefix/extension of the
+ * primary as an in-place edit (same typing bug).
+ */
 export function mergeScalarsIntoContactMethods(
   contact: Pick<Doc<"contacts">, "email" | "emails" | "phone" | "phones">,
   add: { email?: string; phone?: string },
@@ -414,23 +539,62 @@ export function mergeScalarsIntoContactMethods(
   );
   const addE = (add.email ?? "").trim();
   const addP = (add.phone ?? "").trim();
-  if (addE && !emailKeys.has(addE.toLowerCase())) {
-    emails.push({
-      id: newContactMethodId(),
-      label: "Other",
-      email: addE,
-      isPrimary: emails.length === 0,
-    });
+  if (addE) {
+    const lower = addE.toLowerCase();
+    if (!emailKeys.has(lower)) {
+      if (emails.length === 0) {
+        emails.push({
+          id: newContactMethodId(),
+          label: "Other",
+          email: addE,
+          isPrimary: true,
+        });
+      } else {
+        const primaryIdx = emails.findIndex((e) => e.isPrimary);
+        const idx = primaryIdx >= 0 ? primaryIdx : 0;
+        emails[idx] = { ...emails[idx], email: addE };
+      }
+    }
   }
   if (addP) {
     const digits = addP.replace(/\D/g, "");
     if (digits && !phoneKeys.has(digits)) {
-      phones.push({
-        id: newContactMethodId(),
-        label: "Other",
-        number: addP,
-        isPrimary: phones.length === 0,
-      });
+      if (phones.length === 0) {
+        phones.push({
+          id: newContactMethodId(),
+          label: "Other",
+          number: addP,
+          isPrimary: true,
+        });
+      } else {
+        const primaryIdx = phones.findIndex((p) => p.isPrimary);
+        const idx = primaryIdx >= 0 ? primaryIdx : 0;
+        const primary = phones[idx];
+        if (!primary) {
+          phones.push({
+            id: newContactMethodId(),
+            label: "Other",
+            number: addP,
+            isPrimary: true,
+          });
+        } else {
+          const primaryDigits = primary.number.replace(/\D/g, "");
+          const isTypingExtension =
+            Boolean(primaryDigits) &&
+            (digits.startsWith(primaryDigits) ||
+              primaryDigits.startsWith(digits));
+          if (isTypingExtension) {
+            phones[idx] = { ...primary, number: addP };
+          } else {
+            phones.push({
+              id: newContactMethodId(),
+              label: "Other",
+              number: addP,
+              isPrimary: false,
+            });
+          }
+        }
+      }
     }
   }
   return normalizeContactMethods({ emails, phones }, normalizeEmailKey);

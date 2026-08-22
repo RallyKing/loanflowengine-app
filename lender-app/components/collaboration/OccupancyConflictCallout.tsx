@@ -5,6 +5,7 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { cn } from "@/lib/cn";
+import { filterLivePresenceRows } from "@/lib/collaboration/presenceLiveness";
 import { useDocumentTabVisible } from "@/lib/hooks/useDocumentTabVisible";
 import {
   useConvexSubQueryArgsTrace,
@@ -59,7 +60,7 @@ export function OccupancyConflictCallout(props: {
       return null;
     }
     const my = props.memberUserKey.trim();
-    const others = rows.filter(
+    const others = filterLivePresenceRows(rows).filter(
       (r) =>
         r.userKey !== my &&
         r.status === "editing_file" &&

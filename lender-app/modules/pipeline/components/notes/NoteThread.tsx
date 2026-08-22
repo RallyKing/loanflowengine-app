@@ -31,6 +31,12 @@ import {
   OP_WORKSPACE_ISLAND,
 } from "@/lib/ui/operationalInputs";
 import { usePipelineFileNotes } from "@/hooks/usePipelineFileNotes";
+import {
+  NOTE_HISTORY_INITIAL_VISIBLE,
+  noteBodyNeedsPreview,
+  truncateNoteBodyPreview,
+} from "@/lib/pipeline/noteBodyPreview";
+import { noteLinkDisplayLabel } from "@/lib/pipeline/noteLinkUrl";
 import type { PipelineFileNoteView } from "@/lib/pipeline/pipelineFileNotesTypes";
 import { formatTaskAttemptNoteLabel } from "@/lib/pipeline/taskAttemptNoteLabel";
 
@@ -81,7 +87,7 @@ function NoteAttachments({ note }: { note: PipelineFileNoteView }) {
 
   return (
     <ul
-      className="mt-2 flex flex-wrap gap-1.5"
+      className="mt-1.5 flex flex-wrap gap-1"
       data-testid={`pipeline-note-attachments-${note._id}`}
     >
       {attachments.map((att) => (
@@ -92,10 +98,10 @@ function NoteAttachments({ note }: { note: PipelineFileNoteView }) {
               target="_blank"
               rel="noopener noreferrer"
               className={cn(
-                "inline-flex max-w-[16rem] items-center gap-1 rounded-full",
-                "border border-border/80 bg-muted/30 px-2.5 py-1",
+                "inline-flex h-8 max-w-[14rem] items-center gap-1 rounded-dlc-sm",
+                "border border-border/80 bg-muted/30 px-2",
                 "text-[11px] font-medium text-foreground no-underline",
-                "transition-colors hover:bg-muted/60",
+                "transition-colors duration-dlc-fast ease-dlc-standard hover:bg-muted/60",
               )}
             >
               <AttachmentKindIcon
@@ -108,11 +114,11 @@ function NoteAttachments({ note }: { note: PipelineFileNoteView }) {
             </a>
           ) : (
             <span
-              className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-1 text-[11px] text-muted-foreground"
+              className="inline-flex h-8 items-center gap-1 rounded-dlc-sm border border-dashed border-border px-2 text-[11px] text-muted-foreground"
               title="File unavailable"
             >
               <FileIcon className="h-3 w-3" aria-hidden />
-              {att.fileName}
+              <span className="truncate max-w-[12rem]">{att.fileName}</span>
             </span>
           )}
         </li>
@@ -125,19 +131,70 @@ function NoteAttachments({ note }: { note: PipelineFileNoteView }) {
             rel="noopener noreferrer"
             data-testid={`pipeline-note-link-${link._id}`}
             className={cn(
-              "inline-flex max-w-[18rem] items-center gap-1 rounded-full",
-              "border border-border/80 bg-muted/30 px-2.5 py-1",
+              "inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-dlc-sm",
+              "border border-border/80 bg-muted/30 px-2",
               "text-[11px] font-medium text-foreground no-underline",
-              "transition-colors hover:bg-muted/60",
+              "transition-colors duration-dlc-fast ease-dlc-standard hover:bg-muted/60",
             )}
             title={link.url}
           >
             <span aria-hidden>🔗</span>
-            <span className="truncate">{link.displayLabel}</span>
+            <span className="truncate min-w-0">
+              {noteLinkDisplayLabel(link.label ?? link.displayLabel, link.url)}
+            </span>
           </a>
         </li>
       ))}
     </ul>
+  );
+}
+
+function NoteBodyPreview({
+  noteId,
+  content,
+}: {
+  noteId: Id<"pipelineFileNotes">;
+  content: string;
+}) {
+  const needsPreview = noteBodyNeedsPreview(content);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [content]);
+
+  if (!needsPreview) {
+    return (
+      <p
+        className="whitespace-pre-wrap break-words text-sm leading-snug text-foreground/90 [overflow-wrap:anywhere]"
+        data-testid={`pipeline-note-body-${noteId}`}
+      >
+        {content}
+      </p>
+    );
+  }
+
+  const shown = expanded ? content : truncateNoteBodyPreview(content);
+
+  return (
+    <div data-testid={`pipeline-note-body-${noteId}`}>
+      <p className="whitespace-pre-wrap break-words text-sm leading-snug text-foreground/90 [overflow-wrap:anywhere]">
+        {shown}
+      </p>
+      <button
+        type="button"
+        className={cn(
+          "mt-1 inline-flex h-10 min-h-10 items-center text-xs font-semibold text-primary",
+          "underline-offset-2 hover:underline",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 rounded-dlc-sm",
+        )}
+        aria-expanded={expanded}
+        data-testid={`pipeline-note-body-toggle-${noteId}`}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "Show less" : "Show more"}
+      </button>
+    </div>
   );
 }
 
@@ -220,24 +277,25 @@ export function NoteCard({
   return (
     <li
       className={cn(
-        "border-b border-border/50 pb-4 last:border-0 last:pb-0",
-        note.isPinned && "rounded-dlc-md border-l-4 border-amber-500 pl-3",
+        "border-b border-border/40 pb-2.5 last:border-0 last:pb-0",
+        note.isPinned && "rounded-dlc-sm border-l-[3px] border-amber-500 pl-2.5",
       )}
       data-testid={`pipeline-note-row-${note._id}`}
       data-pinned={note.isPinned ? "true" : "false"}
     >
       {note.isPinned ? (
         <div
-          className="mb-2 rounded-dlc-sm border border-amber-500/30 bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"
+          className="mb-1 inline-flex items-center gap-1 rounded-dlc-sm border border-amber-500/30 bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"
           data-testid={`pipeline-note-pinned-banner-${note._id}`}
         >
-          Pinned note
+          <Pin className="h-3 w-3 shrink-0" aria-hidden />
+          Pinned
         </div>
       ) : null}
 
       {note.noteKind === "attempt" ? (
         <div
-          className="mb-2 inline-flex max-w-full items-center gap-1 rounded-dlc-sm border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-950 dark:text-amber-100"
+          className="mb-1 inline-flex max-w-full items-center gap-1 rounded-dlc-sm border border-amber-500/35 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-950 dark:text-amber-100"
           data-testid={`pipeline-note-attempt-banner-${note._id}`}
           title={formatTaskAttemptNoteLabel(
             note.attemptNumber,
@@ -252,7 +310,7 @@ export function NoteCard({
 
       {sourceFileLabel ? (
         <p
-          className="mb-2 inline-flex max-w-full items-center rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary"
+          className="mb-1 inline-flex max-w-full items-center rounded-dlc-sm border border-primary/25 bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary"
           data-testid={`pipeline-note-source-file-${note._id}`}
         >
           <span className="truncate" title={sourceFileLabel}>
@@ -261,7 +319,7 @@ export function NoteCard({
         </p>
       ) : null}
 
-      <header className="mb-1.5 flex items-start gap-2">
+      <header className="mb-1 flex items-start gap-2">
         <span
           className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary"
           aria-hidden
@@ -269,16 +327,16 @@ export function NoteCard({
           {authorInitials(note.authorDisplayName || "?")}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start justify-between gap-1.5">
             <div className="min-w-0">
               <p
-                className="text-sm font-medium text-foreground max-md:break-words max-md:whitespace-normal max-md:[overflow-wrap:anywhere] md:truncate"
+                className="text-sm font-medium leading-tight text-foreground max-md:break-words max-md:whitespace-normal max-md:[overflow-wrap:anywhere] md:truncate"
                 data-testid="note-author-display-name"
               >
                 {note.authorDisplayName || "Unknown"}
               </p>
               <time
-                className="text-[11px] text-muted-foreground"
+                className="text-[11px] leading-tight text-muted-foreground"
                 dateTime={new Date(note._creationTime).toISOString()}
               >
                 {NOTE_TIME_FMT.format(new Date(note._creationTime))}
@@ -292,7 +350,7 @@ export function NoteCard({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-8 w-8 shrink-0 p-0 text-muted-foreground"
+                    className="h-10 w-10 shrink-0 p-0 text-muted-foreground"
                     disabled={busy}
                     aria-label="Note actions"
                   >
@@ -351,7 +409,7 @@ export function NoteCard({
 
       {isEditing ? (
         <div
-          className="space-y-2"
+          className="space-y-1.5"
           data-testid={`pipeline-note-edit-form-${note._id}`}
         >
           <InlineFieldSync loading={busy}>
@@ -361,7 +419,10 @@ export function NoteCard({
               rows={3}
               disabled={busy}
               aria-label="Edit note body"
-              className={cn(OP_INLINE_TEXTAREA_CLASS, "resize-y")}
+              className={cn(
+                OP_INLINE_TEXTAREA_CLASS,
+                "min-h-10 resize-y py-2 leading-snug",
+              )}
               data-testid={`pipeline-note-edit-textarea-${note._id}`}
             />
           </InlineFieldSync>
@@ -370,10 +431,11 @@ export function NoteCard({
               {editError}
             </p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             <Button
               type="button"
               size="sm"
+              className="h-10 min-h-10"
               disabled={busy || !canSaveDraft}
               onClick={() => void saveEdit()}
               data-testid={`pipeline-note-edit-save-${note._id}`}
@@ -384,6 +446,7 @@ export function NoteCard({
               type="button"
               size="sm"
               variant="ghost"
+              className="h-10 min-h-10"
               disabled={busy}
               onClick={cancelEdit}
               data-testid={`pipeline-note-edit-cancel-${note._id}`}
@@ -393,9 +456,7 @@ export function NoteCard({
           </div>
         </div>
       ) : note.content ? (
-        <p className="whitespace-pre-wrap text-sm text-foreground/90">
-          {note.content}
-        </p>
+        <NoteBodyPreview noteId={note._id} content={note.content} />
       ) : null}
 
       <NoteAttachments note={note} />
@@ -407,24 +468,57 @@ function NoteListSection({
   title,
   notes,
   sectionTestId,
+  initialVisible,
   ...handlers
 }: {
   title: string;
   notes: PipelineFileNoteView[];
   sectionTestId: string;
+  /** When set, show this many newest notes first + reveal remaining. */
+  initialVisible?: number;
 } & NoteCardActionHandlers) {
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+
   if (notes.length === 0) return null;
 
+  const limit =
+    typeof initialVisible === "number" && initialVisible > 0
+      ? initialVisible
+      : notes.length;
+  const hasMore = notes.length > limit;
+  const visibleNotes =
+    hasMore && !historyExpanded ? notes.slice(0, limit) : notes;
+  const remaining = notes.length - limit;
+
   return (
-    <section className="space-y-3" data-testid={sectionTestId}>
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    <section className="space-y-1.5" data-testid={sectionTestId}>
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         {title}
       </h3>
-      <ul className="space-y-4">
-        {notes.map((note) => (
+      <ul className="space-y-2.5">
+        {visibleNotes.map((note) => (
           <NoteCard key={note._id} note={note} {...handlers} />
         ))}
       </ul>
+      {hasMore ? (
+        <button
+          type="button"
+          className={cn(
+            "inline-flex h-10 min-h-10 w-full items-center justify-center",
+            "rounded-dlc-sm text-xs font-semibold text-primary",
+            "underline-offset-2 hover:underline hover:bg-primary/5",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+            "transition-colors duration-dlc-fast ease-dlc-standard",
+          )}
+          aria-expanded={historyExpanded}
+          data-testid={`${sectionTestId}-history-toggle`}
+          onClick={() => setHistoryExpanded((v) => !v)}
+        >
+          {historyExpanded
+            ? "Show less"
+            : `Show remaining ${remaining} note${remaining === 1 ? "" : "s"}`}
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -532,7 +626,7 @@ function NoteThreadInner({
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
         Loading notes…
       </div>
@@ -541,30 +635,31 @@ function NoteThreadInner({
 
   if (notes.length === 0) {
     return (
-      <p className="py-4 text-sm text-muted-foreground">
-        No notes yet. Post the first entry with optional attachments or links.
+      <p className="py-1.5 text-sm text-muted-foreground">
+        No notes yet — post the first entry below.
       </p>
     );
   }
 
   return (
     <div
-      className="space-y-6"
+      className="space-y-3"
       data-testid="pipeline-file-notes-thread"
       data-note-count={notes.length}
       data-pinned-count={pinnedNotes.length}
     >
       <NoteListSection
-        title="Pinned Notes"
+        title="Pinned"
         notes={pinnedNotes}
         sectionTestId="pipeline-notes-section-pinned"
         {...handlers}
       />
       {unpinnedNotes.length > 0 ? (
         <NoteListSection
-          title="All Notes"
+          title="All notes"
           notes={unpinnedNotes}
           sectionTestId="pipeline-notes-section-all"
+          initialVisible={NOTE_HISTORY_INITIAL_VISIBLE}
           {...handlers}
         />
       ) : null}
@@ -574,7 +669,7 @@ function NoteThreadInner({
 
 export function NoteThread(props: NoteThreadProps) {
   return (
-    <div className={OP_WORKSPACE_ISLAND}>
+    <div className={cn(OP_WORKSPACE_ISLAND, "px-3 py-2.5 sm:px-4 sm:py-3")}>
       <NoteThreadInner {...props} />
     </div>
   );

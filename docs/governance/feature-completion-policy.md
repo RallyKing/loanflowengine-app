@@ -26,6 +26,8 @@
 - **`npm run qa:governance`** from `lender-app/` for user-facing merges unless explicitly exempt (`docs/testing/governance-qa-checklist.md`).
 - **`npm run deploy:prod`** when the change should be live (CLI Vercel).
 
+When the change reads or writes Convex: also **`resource-consumption-policy.md` §D** (load-check) and **`convex-reactivity-policy.md` §6** (architectural validation on a **dev** backend — never production).
+
 ---
 
 ## Checklist artifact
@@ -38,3 +40,5 @@ Printable / PR template: **`feature-completion-checklist.md`**.
 
 - `production-deployment-policy.md`
 - `ai-governance-policy.md`
+- `resource-consumption-policy.md`
+- `convex-reactivity-policy.md`

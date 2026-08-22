@@ -29,6 +29,8 @@ import {
   contactStickyLiabilityRowV,
   libraryDocumentCategoryV,
 } from "./contactStickyData/validators";
+import { contactTrackRecordPropertyFieldsV } from "./trackRecordValidators";
+import { contactSimplePlStatementFieldsV } from "./simplePlValidators";
 import { entityContactRelationshipRoleV } from "./crmLinkValidators";
 import { registryRoleIdV } from "./registryRoleValidators";
 
@@ -684,6 +686,19 @@ export default defineSchema({
         nextMorningMinute: v.number(),
       }),
     ),
+    /**
+     * Merchant channel notifications (SenseBS / GHL pattern).
+     * One HTTPS URL; separate POSTs per deliveryMethod SMS | EMAIL | INTERNAL.
+     * @see docs/WEBHOOK_SMS_EMAIL_NOTIFICATION_SPEC.md
+     */
+    notificationWebhookUrl: v.optional(v.string()),
+    merchantNotificationChannels: v.optional(
+      v.object({
+        enableSms: v.boolean(),
+        enableEmail: v.boolean(),
+        enableInternal: v.boolean(),
+      }),
+    ),
     updatedAt: v.number(),
     updatedByUserKey: v.optional(v.string()),
   }).index("by_organization", ["organizationId"]),
@@ -793,6 +808,130 @@ export default defineSchema({
     .index("by_organization_updated", ["organizationId", "updatedAt"]),
 
   /**
+   * Org-scoped AI API providers (user-supplied keys). Secrets are AES-GCM sealed
+   * via `CLIENT_PORTAL_FIELD_ENCRYPTION_KEY` when configured. Clients only ever
+   * see `apiKeyLast4` — never the full key after save.
+   */
+  orgAiProviders: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    kind: v.union(
+      v.literal("openai"),
+      v.literal("anthropic"),
+      v.literal("google"),
+      v.literal("custom"),
+    ),
+    model: v.string(),
+    baseUrl: v.optional(v.string()),
+    apiKeyEnc: v.string(),
+    apiKeyLast4: v.string(),
+    enabled: v.boolean(),
+    isDefault: v.boolean(),
+    createdByUserKey: v.string(),
+    updatedByUserKey: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastTestedAt: v.optional(v.number()),
+    lastTestOk: v.optional(v.boolean()),
+    lastTestError: v.optional(v.string()),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_default", ["organizationId", "isDefault"]),
+
+  /**
+   * Org-scoped due diligence prompt library (create / save / deploy).
+   * Deployed prompts appear in the Document Vault Due Diligence picker.
+   */
+  dueDiligencePrompts: defineTable({
+    organizationId: v.id("organizations"),
+    title: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    templateKey: v.union(
+      v.literal("fraud_irregularities"),
+      v.literal("loi_review"),
+      v.literal("deal_analysis"),
+      v.literal("custom"),
+    ),
+    body: v.string(),
+    deployed: v.boolean(),
+    archivedAt: v.optional(v.number()),
+    createdByUserKey: v.string(),
+    updatedByUserKey: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_updated", ["organizationId", "updatedAt"])
+    .index("by_organization_slug", ["organizationId", "slug"])
+    .index("by_organization_deployed", ["organizationId", "deployed"]),
+
+  /** Persisted AI Due Diligence runs (org + optional pipeline file history). */
+  dueDiligenceRuns: defineTable({
+    organizationId: v.id("organizations"),
+    pipelineFileId: v.optional(v.id("pipeline")),
+    promptId: v.optional(v.id("dueDiligencePrompts")),
+    promptTitle: v.string(),
+    promptBody: v.string(),
+    providerId: v.optional(v.id("orgAiProviders")),
+    providerKind: v.string(),
+    providerName: v.string(),
+    model: v.string(),
+    documentIds: v.array(v.id("libraryDocuments")),
+    documentSummaries: v.array(
+      v.object({
+        documentId: v.id("libraryDocuments"),
+        title: v.string(),
+        fileName: v.optional(v.string()),
+        kind: v.string(),
+        usedAs: v.union(
+          v.literal("text"),
+          v.literal("vision"),
+          v.literal("skipped"),
+        ),
+        skipReason: v.optional(v.string()),
+      }),
+    ),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    resultMarkdown: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    warnings: v.array(v.string()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_organization_created", ["organizationId", "createdAt"])
+    .index("by_pipeline_created", ["pipelineFileId", "createdAt"])
+    .index("by_organization_status", ["organizationId", "status"]),
+
+  /**
+   * Org-scoped internal underwriting workflow checklists (Portals & Progress).
+   * Applied onto `dealData.workflow[]` — does not replace portal status steps.
+   */
+  internalWorkflowTemplates: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    steps: v.array(
+      v.object({
+        id: v.string(),
+        label: v.string(),
+      }),
+    ),
+    archivedAt: v.optional(v.number()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_updated", ["organizationId", "updatedAt"]),
+
+  /**
    * Candidate lenders surfaced by the AI Discovery feature.
    * Users review, edit and either accept (converts to a real `lenders` row)
    * or dismiss each candidate.
@@ -856,7 +995,35 @@ export default defineSchema({
     contentType: v.optional(v.string()),
     size: v.optional(v.number()),
     label: v.optional(v.string()),
+    /** Free-form notation on the document. */
+    notes: v.optional(v.string()),
+    /** Optional folder/group label for organizing docs in the lender profile. */
+    groupName: v.optional(v.string()),
+    /** Preview zoom preference (0.5–2). Viewer UX only. */
+    previewScale: v.optional(v.number()),
     createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_lender", ["lenderId"])
+    .index("by_organization", ["organizationId"])
+    .index("by_lender_group", ["lenderId", "groupName"]),
+
+  /**
+   * Partner-portal login vault for a lender (URL + username/password).
+   * Password/username sealed via AES-GCM when `CLIENT_PORTAL_FIELD_ENCRYPTION_KEY`
+   * is set; otherwise stored under org-auth-only Convex access (never logged).
+   */
+  lenderPortalCredentials: defineTable({
+    lenderId: v.id("lenders"),
+    organizationId: v.id("organizations"),
+    portalUrl: v.optional(v.string()),
+    /** Sealed or org-gated username. */
+    usernameEnc: v.optional(v.string()),
+    /** Sealed or org-gated password — never returned unless revealPassword=true. */
+    passwordEnc: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    updatedAt: v.number(),
+    updatedByUserKey: v.optional(v.string()),
   })
     .index("by_lender", ["lenderId"])
     .index("by_organization", ["organizationId"]),
@@ -968,6 +1135,18 @@ export default defineSchema({
     ein: v.optional(v.string()),
     stateOfIncorporation: v.optional(v.string()),
     dateOfFormation: v.optional(v.number()),
+    /**
+     * Entity websites (company sites, portals, etc.). Additive — older rows omit
+     * this field; readers treat undefined as []. Each entry is `{ url, label? }`.
+     */
+    websites: v.optional(
+      v.array(
+        v.object({
+          url: v.string(),
+          label: v.optional(v.string()),
+        }),
+      ),
+    ),
     /** When true, org-wide share defaults may apply to child projects/files (future). */
     inheritOrgSharingDefaults: v.optional(v.boolean()),
     createdAt: v.number(),
@@ -1244,9 +1423,32 @@ export default defineSchema({
     .index("by_org_entity", ["organizationId", "lenderId"]),
 
   /**
+   * Construction budget header (Excel “Budget” sheet: applicant, property,
+   * contractor, project type, summaries, completion timeframe). One row per file.
+   */
+  constructionBudgetSheets: defineTable({
+    organizationId: v.optional(v.id("organizations")),
+    fileId: v.id("pipeline"),
+    applicantName: v.optional(v.string()),
+    propertyAddress: v.optional(v.string()),
+    contractor: v.optional(v.string()),
+    projectType: v.optional(v.string()),
+    plannedSummary: v.optional(v.string()),
+    qualityOfFinishes: v.optional(v.string()),
+    completionTimeframeMonths: v.optional(v.string()),
+    migratedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_file", ["fileId"])
+    .index("by_organization", ["organizationId"]),
+
+  /**
    * Phase Modular-C — construction budget lines for a pipeline file
    * (`constructionBudget` block). Amounts are strings to match the sticky-data
    * money-field convention across the CRM.
+   *
+   * Template rows set `templateKey` (Excel catalog). Legacy / custom rows omit it.
    */
   constructionBudgetLines: defineTable({
     organizationId: v.optional(v.id("organizations")),
@@ -1256,6 +1458,10 @@ export default defineSchema({
     budgetAmount: v.optional(v.string()),
     spentAmount: v.optional(v.string()),
     drawNumber: v.optional(v.string()),
+    templateKey: v.optional(v.string()),
+    repairReplace: v.optional(v.string()),
+    quantity: v.optional(v.string()),
+    unitOfMeasure: v.optional(v.string()),
     status: v.union(
       v.literal("planned"),
       v.literal("in_progress"),
@@ -1268,6 +1474,7 @@ export default defineSchema({
   })
     .index("by_file", ["fileId"])
     .index("by_file_sort", ["fileId", "sortOrder"])
+    .index("by_file_template_key", ["fileId", "templateKey"])
     .index("by_organization", ["organizationId"]),
 
   fileReferralPartners: defineTable({
@@ -1721,6 +1928,21 @@ export default defineSchema({
     snoozedUntil: v.optional(v.union(v.string(), v.number())),
 
     /**
+     * Auto-archive on inactivity (separate from snooze). When set, if
+     * `pipeline.updatedAt` (fallback `createdAt`) is older than this many
+     * whole days, a scheduled sweep archives the file via the same soft-archive
+     * path as `pipeline.archive`. Configuring this timer / snooze does not
+     * bump the inactivity clock.
+     */
+    autoArchiveInactivityDays: v.optional(v.number()),
+    /**
+     * Denormalized deadline (`lastActivity + inactivityDays`) for
+     * `by_autoArchiveAfterAt` sweep. Recomputed when meaningful activity
+     * bumps `updatedAt`, or self-healed in the sweep.
+     */
+    autoArchiveAfterAt: v.optional(v.number()),
+
+    /**
      * Quote-style term options drafted in the PipelineDrawer's
      * Generate Terms section. Persisted so they survive a page close
      * and can be reproduced on the bullet/email exports.
@@ -1861,6 +2083,8 @@ export default defineSchema({
     .index("by_projectId", ["projectId"])
     .index("by_org_client", ["organizationId", "clientId"])
     .index("by_org_project", ["organizationId", "projectId"])
+    .index("by_autoArchiveAfterAt", ["autoArchiveAfterAt"])
+    .index("by_org_autoArchiveAfter", ["organizationId", "autoArchiveAfterAt"])
     .searchIndex("global_search", {
       searchField: "globalSearchText",
       filterFields: ["organizationId"],
@@ -2276,6 +2500,7 @@ export default defineSchema({
     .index("by_parent", ["parentTaskId"])
     .index("by_organization", ["organizationId"])
     .index("by_org_demoBundle", ["organizationId", "demoBundleId"])
+    .index("by_org_quadrant", ["organizationId", "quadrant"])
     .index("by_assignee_updatedAt", ["assigneeId", "updatedAt"])
     .searchIndex("global_search", {
       searchField: "globalSearchText",
@@ -2324,9 +2549,18 @@ export default defineSchema({
     fileId: v.optional(v.id("pipeline")),
     lenderId: v.optional(v.id("lenders")),
     libraryDocumentId: v.optional(v.id("libraryDocuments")),
+    /** Document Vault file-task that triggered the alert (client submission, etc.). */
+    documentVaultFileTaskId: v.optional(v.id("documentVaultFileTasks")),
     collaborationThreadId: v.optional(v.id("collaborationThreads")),
     /** Correlation to structured `collaborationActivityEvents` row when applicable. */
     collaborationEventId: v.optional(v.id("collaborationActivityEvents")),
+    /**
+     * Denormalized deal / client / stage labels for Alerts inbox (written at
+     * dispatch; list query backfills when missing for historical rows).
+     */
+    contextFileName: v.optional(v.string()),
+    contextContactName: v.optional(v.string()),
+    contextStageLabel: v.optional(v.string()),
     /**
      * When set (e.g. cron deadline digest), duplicate notifications for the
      * same key are skipped for that user.
@@ -2470,6 +2704,17 @@ export default defineSchema({
     ),
     /** Phase CRM overhaul — persistent identity / credit fields (deal sync in Phase 2). */
     fico: v.optional(v.number()),
+    /** Dated FICO pulls; newest `recordedAt` is current (`fico`). */
+    ficoHistory: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          score: v.number(),
+          recordedAt: v.number(),
+          note: v.optional(v.string()),
+        }),
+      ),
+    ),
     ssn: v.optional(v.string()),
     dob: v.optional(v.string()),
     organizationId: v.optional(v.id("organizations")),
@@ -2494,6 +2739,13 @@ export default defineSchema({
     lastActivityAt: v.optional(v.number()),
     lastInteractionAt: v.optional(v.number()),
     crmTags: v.optional(v.array(v.string())),
+
+    /**
+     * Org portal default templates assigned to this contact (additive).
+     * At most one id per portal type is enforced in mutations; Portals & Progress
+     * resolves these when the contact is linked to a pipeline file.
+     */
+    portalDefaultIds: v.optional(v.array(v.id("portalDefaults"))),
 
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -2690,6 +2942,40 @@ export default defineSchema({
     .index("by_contact_sort", ["contactId", "sortOrder"])
     .index("by_organization_contact", ["organizationId", "contactId"]),
 
+  /**
+   * Investment Property Track Record — sticky contact-scoped properties
+   * (workbook rows travel across files like REO / PFS).
+   */
+  contactTrackRecordProperties: defineTable({
+    organizationId: v.optional(v.id("organizations")),
+    contactId: v.id("contacts"),
+    sortOrder: v.number(),
+    ...contactTrackRecordPropertyFieldsV,
+    archivedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_contact", ["contactId"])
+    .index("by_contact_sort", ["contactId", "sortOrder"])
+    .index("by_organization_contact", ["organizationId", "contactId"]),
+
+  /**
+   * Simple P&L — sticky contact-scoped statements (YTD / past years travel
+   * across files like PFS / Track Record).
+   */
+  contactSimplePlStatements: defineTable({
+    organizationId: v.optional(v.id("organizations")),
+    contactId: v.id("contacts"),
+    sortOrder: v.number(),
+    ...contactSimplePlStatementFieldsV,
+    archivedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_contact", ["contactId"])
+    .index("by_contact_sort", ["contactId", "sortOrder"])
+    .index("by_organization_contact", ["organizationId", "contactId"]),
+
   contactBusinessEntities: defineTable({
     organizationId: v.optional(v.id("organizations")),
     /**
@@ -2848,6 +3134,20 @@ export default defineSchema({
     clientInstructionText: v.optional(v.string()),
     /** External URL for client_instruction tasks (payment portal, etc.). */
     instructionUrl: v.optional(v.string()),
+    /**
+     * Broker-attached template / reference files for client-visible requests
+     * (document_upload / client_instruction). Stored in Convex `_storage`.
+     */
+    clientTemplateAttachments: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          fileName: v.string(),
+          mimeType: v.string(),
+          size: v.number(),
+        }),
+      ),
+    ),
     assignedContactId: v.optional(v.id("contacts")),
     assignedClientId: v.optional(v.id("clients")),
     assignedLenderId: v.optional(v.id("lenders")),
@@ -2865,10 +3165,26 @@ export default defineSchema({
     /** Broker note when rejecting a client upload for rework. */
     rejectionNote: v.optional(v.string()),
     lastNotifiedAt: v.optional(v.number()),
+    /**
+     * Origin of a generated block-assignment task (e.g. one PFS instance).
+     * Used so each borrower PFS gets its own vault/portal task.
+     */
+    sourceKind: v.optional(
+      v.union(v.literal("pfs_instance"), v.literal("simple_pl_instance")),
+    ),
+    sourceInstanceId: v.optional(v.string()),
+    /**
+     * Optional per-task portal password (PBKDF2 hash + salt). Never store plaintext.
+     * Lets multiple borrowers share one package link while only unlocking their PFS.
+     */
+    accessPasswordSalt: v.optional(v.string()),
+    accessPasswordHash: v.optional(v.string()),
     createdByUserKey: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_pipeline_sort", ["pipelineFileId", "sortOrder"]),
+  })
+    .index("by_pipeline_sort", ["pipelineFileId", "sortOrder"])
+    .index("by_pipeline_source", ["pipelineFileId", "sourceKind", "sourceInstanceId"]),
 
   /**
    * Tokenized direct-upload gateway for a single File Task (unauthenticated).
@@ -2912,6 +3228,21 @@ export default defineSchema({
     ),
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
+    /**
+     * Broker-attached template / reference files for client-visible request
+     * templates (document_upload / client_instruction). Carried onto live
+     * `documentVaultFileTasks` when the template is applied.
+     */
+    clientTemplateAttachments: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          fileName: v.string(),
+          mimeType: v.string(),
+          size: v.number(),
+        }),
+      ),
+    ),
     assignedBlockEntries: v.optional(
       v.array(
         v.object({
@@ -2963,6 +3294,144 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_org_kind", ["organizationId", "kind"]),
+
+  /**
+   * Org-scoped portal default templates (Settings → Portal defaults).
+   * Contact assignment via `contacts.portalDefaultIds`; file surface via
+   * `contactFileLinks` → Portals & Progress. Does not replace live
+   * `clientPortalLinks` / grants / lender delivery tokens.
+   * Page composition: `config.sections` promoted from `portalDefaultVersions`.
+   */
+  portalDefaults: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    portalType: v.union(
+      v.literal("client"),
+      v.literal("lender"),
+      v.literal("referrer"),
+      v.literal("deal_partner"),
+    ),
+    config: v.object({
+      welcomeMessage: v.optional(v.string()),
+      permission: v.optional(
+        v.union(v.literal("view"), v.literal("view_upload")),
+      ),
+      linkExpiresPreset: v.optional(
+        v.union(
+          v.literal("1h"),
+          v.literal("24h"),
+          v.literal("7d"),
+          v.literal("30d"),
+        ),
+      ),
+      grantExpiresPreset: v.optional(
+        v.union(
+          v.literal("never"),
+          v.literal("30d"),
+          v.literal("90d"),
+        ),
+      ),
+      checklistId: v.optional(v.string()),
+      requestChecklist: v.optional(
+        v.array(
+          v.object({
+            title: v.string(),
+            description: v.optional(v.string()),
+            folderName: v.optional(v.string()),
+          }),
+        ),
+      ),
+      lenderPermission: v.optional(
+        v.union(v.literal("view_only"), v.literal("downloadable")),
+      ),
+      includeAllDocumentsByDefault: v.optional(v.boolean()),
+      showDealSummary: v.optional(v.boolean()),
+      allowMessaging: v.optional(v.boolean()),
+      statusVisibility: v.optional(
+        v.union(v.literal("basic"), v.literal("detailed")),
+      ),
+      sections: v.optional(
+        v.array(
+          v.object({
+            instanceId: v.string(),
+            sectionId: v.string(),
+            enabled: v.optional(v.boolean()),
+            /** Sanitized in portalDefaults / lib/portalSectionConfig. */
+            props: v.optional(v.any()),
+            layout: v.optional(
+              v.object({
+                colSpan: v.optional(v.number()),
+                order: v.optional(v.number()),
+              }),
+            ),
+          }),
+        ),
+      ),
+      chrome: v.optional(v.any()),
+    }),
+    /** Version currently promoted into `config.sections` (live default). */
+    activeVersionId: v.optional(v.id("portalDefaultVersions")),
+    archivedAt: v.optional(v.number()),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization_updated", ["organizationId", "updatedAt"])
+    .index("by_organization_type", ["organizationId", "portalType", "updatedAt"]),
+
+  /**
+   * Draft / published page compositions under a portal default.
+   * Promote copies `sections` (+ chrome) onto the parent `portalDefaults.config`.
+   */
+  portalDefaultVersions: defineTable({
+    organizationId: v.id("organizations"),
+    portalDefaultId: v.id("portalDefaults"),
+    name: v.string(),
+    sections: v.array(
+      v.object({
+        instanceId: v.string(),
+        sectionId: v.string(),
+        enabled: v.optional(v.boolean()),
+        /** Sanitized in portalDefaults / lib/portalSectionConfig. */
+        props: v.optional(v.any()),
+        layout: v.optional(
+          v.object({
+            colSpan: v.optional(v.number()),
+            order: v.optional(v.number()),
+          }),
+        ),
+      }),
+    ),
+    /** Sidebar / top / layout chrome for this version. */
+    chrome: v.optional(v.any()),
+    status: v.union(v.literal("draft"), v.literal("published")),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_portal_default", ["portalDefaultId", "updatedAt"])
+    .index("by_organization", ["organizationId", "updatedAt"]),
+
+  /**
+   * Portal viewer progress on custom status-bar checklist steps.
+   * Stable `stepId` + completion timestamps enable future automations.
+   */
+  portalSectionStepProgress: defineTable({
+    organizationId: v.id("organizations"),
+    pipelineFileId: v.id("pipeline"),
+    portalDefaultId: v.optional(v.id("portalDefaults")),
+    sectionInstanceId: v.string(),
+    stepId: v.string(),
+    completedAt: v.number(),
+    /** emailKey, session subject, or "__preview__" for builder. */
+    completedByKey: v.string(),
+    /** Last event type written (stable for automation subscribers). */
+    eventType: v.literal("portal.status_step.completed"),
+  })
+    .index("by_file_section", ["pipelineFileId", "sectionInstanceId"])
+    .index("by_file_step", ["pipelineFileId", "stepId"])
+    .index("by_organization", ["organizationId", "completedAt"]),
 
   documentVaultClientBundleTokens: defineTable({
     pipelineFileId: v.id("pipeline"),
@@ -3019,10 +3488,17 @@ export default defineSchema({
         v.literal("lender_delivery"),
         v.literal("task_upload"),
         v.literal("portal_grant"),
+        /** Selective client portal link scoped to one block_assignment file task. */
+        v.literal("block_fill"),
       ),
     ),
     /** True when the live URL still uses `/lender-delivery/{token}` instead of slug URLs. */
     legacyPath: v.optional(v.boolean()),
+    /**
+     * Last issued absolute URL (token plaintext only stored here for operator copy).
+     * Rotates on regenerate; never exposed on public portal queries.
+     */
+    issuedUrl: v.optional(v.string()),
     requiresVerification: v.optional(v.boolean()),
     verificationType: v.optional(
       v.union(v.literal("passcode"), v.literal("email_otp")),
@@ -3050,6 +3526,20 @@ export default defineSchema({
   })
     .index("by_proofToken", ["proofToken"])
     .index("by_tokenHash", ["tokenHash"]),
+
+  /**
+   * Short-lived proof after a client unlocks a password-protected vault task
+   * (e.g. per-borrower PFS) on an already-authorized portal bundle.
+   */
+  portalFileTaskAccessProofs: defineTable({
+    fileTaskId: v.id("documentVaultFileTasks"),
+    tokenHash: v.string(),
+    proofToken: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_proofToken", ["proofToken"])
+    .index("by_fileTask_tokenHash", ["fileTaskId", "tokenHash"]),
 
   /** Pending email OTP codes for portal link verification. */
   portalVerificationOtps: defineTable({
@@ -3177,6 +3667,21 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_document_order", ["documentId", "order"]),
 
+  /**
+   * Organization-owned custom labels that extend the built-in document taxonomy.
+   * `normalizedName` enforces case-insensitive uniqueness within the tenant.
+   */
+  organizationDocumentCategories: defineTable({
+    organizationId: v.id("organizations"),
+    displayName: v.string(),
+    normalizedName: v.string(),
+    createdByUserKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization_name", ["organizationId", "normalizedName"])
+    .index("by_organization_display", ["organizationId", "displayName"]),
+
   /** Phase 40.3 — lightweight view/edit audit for document properties panel. */
   libraryDocumentAccessEvents: defineTable({
     documentId: v.id("libraryDocuments"),
@@ -3215,6 +3720,10 @@ export default defineSchema({
     assignedLenderId: v.optional(v.id("lenders")),
     /** Phase 37.1.B — filter contact docs (ID, DD214, tax return, etc.). */
     documentCategory: v.optional(libraryDocumentCategoryV),
+    /** Organization-owned category; mutually exclusive with `documentCategory`. */
+    customDocumentCategoryId: v.optional(
+      v.id("organizationDocumentCategories"),
+    ),
     /** Tax return year (e.g. "2024") when `documentCategory` is `tax_return`. */
     taxYear: v.optional(v.string()),
     /** Phase 40.3 — enterprise classification tags (pipeline scope). */
@@ -3241,6 +3750,28 @@ export default defineSchema({
     .index("by_task_linkedAt", ["taskId", "linkedAt"])
     .index("by_folder", ["folderId"])
     .index("by_fileTask", ["fileTaskId"]),
+
+  /**
+   * Per-user Document Vault stars (Explorer starred filter).
+   * Scoped to org + member + pipeline file. One row per document or folder.
+   */
+  vaultStars: defineTable({
+    organizationId: v.optional(v.id("organizations")),
+    memberUserKey: v.string(),
+    pipelineFileId: v.id("pipeline"),
+    targetKind: v.union(v.literal("document"), v.literal("folder")),
+    documentId: v.optional(v.id("libraryDocuments")),
+    folderId: v.optional(v.id("documentFolders")),
+    starredAt: v.number(),
+  })
+    .index("by_user_pipeline", ["memberUserKey", "pipelineFileId"])
+    .index("by_org_user_pipeline", [
+      "organizationId",
+      "memberUserKey",
+      "pipelineFileId",
+    ])
+    .index("by_user_document", ["memberUserKey", "documentId"])
+    .index("by_user_folder", ["memberUserKey", "folderId"]),
 
   /**
    * E-signature envelopes for library document versions (Dropbox Sign / HelloSign
@@ -3744,6 +4275,16 @@ export default defineSchema({
             body: v.optional(v.string()),
           }),
           v.object({
+            type: v.literal("create_file_task"),
+            relatedFileId: v.string(),
+            title: v.string(),
+            body: v.optional(v.string()),
+            triageLabelId: v.optional(v.string()),
+            triageLabelName: v.optional(v.string()),
+            category: v.optional(v.literal("call")),
+            status: v.optional(v.literal("todo")),
+          }),
+          v.object({
             type: v.literal("enqueue_integration_job"),
             category: v.union(
               v.literal("crm"),
@@ -3753,6 +4294,10 @@ export default defineSchema({
             providerKey: v.string(),
             kind: v.union(v.literal("action"), v.literal("sync_push")),
             connectorPublicId: v.optional(v.string()),
+          }),
+          v.object({
+            type: v.literal("upsert_pipeline_lead"),
+            defaultStatus: v.optional(v.string()),
           }),
         ),
       }),
@@ -3952,11 +4497,17 @@ export default defineSchema({
     .index("by_message_at", ["outboundMessageId", "at"])
     .index("by_org_at", ["organizationId", "at"]),
 
+  /**
+   * Org-scoped (or global seed-backed) message templates for email / SMS / portal.
+   * Versions live in `communicationTemplateVersions`. Custom merge inputs are
+   * defined on the template + snapshotted on each version.
+   */
   communicationTemplates: defineTable({
     organizationId: v.optional(v.id("organizations")),
     scope: v.union(v.literal("global"), v.literal("organization")),
     slug: v.string(),
     name: v.string(),
+    description: v.optional(v.string()),
     channel: v.union(
       v.literal("email"),
       v.literal("sms"),
@@ -3970,16 +4521,41 @@ export default defineSchema({
       v.literal("published"),
       v.literal("archived"),
     ),
+    /**
+     * Custom merge fields the sender fills (or defaults) when applying the
+     * template — keys become `{{key}}` tokens alongside built-in variables.
+     */
+    customInputs: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          inputType: v.union(
+            v.literal("text"),
+            v.literal("textarea"),
+            v.literal("number"),
+            v.literal("phone"),
+            v.literal("email"),
+          ),
+          defaultValue: v.optional(v.string()),
+          required: v.optional(v.boolean()),
+          helpText: v.optional(v.string()),
+        }),
+      ),
+    ),
     roleRestrictions: v.optional(v.array(v.string())),
     publishedVersion: v.optional(v.number()),
     currentDraftVersion: v.optional(v.number()),
     createdByUserKey: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
   })
     .index("by_org_slug", ["organizationId", "slug"])
     .index("by_scope_slug", ["scope", "slug"])
-    .index("by_org_updated", ["organizationId", "updatedAt"]),
+    .index("by_org_updated", ["organizationId", "updatedAt"])
+    .index("by_org_channel_updated", ["organizationId", "channel", "updatedAt"])
+    .index("by_org_status_updated", ["organizationId", "status", "updatedAt"]),
 
   communicationTemplateVersions: defineTable({
     templateId: v.id("communicationTemplates"),
@@ -3992,6 +4568,25 @@ export default defineSchema({
     ),
     subjectTemplate: v.optional(v.string()),
     bodyTemplate: v.string(),
+    /** Snapshot of custom input definitions at this version. */
+    customInputs: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          inputType: v.union(
+            v.literal("text"),
+            v.literal("textarea"),
+            v.literal("number"),
+            v.literal("phone"),
+            v.literal("email"),
+          ),
+          defaultValue: v.optional(v.string()),
+          required: v.optional(v.boolean()),
+          helpText: v.optional(v.string()),
+        }),
+      ),
+    ),
     previewVariables: v.optional(v.any()),
     conditionalBlocks: v.optional(v.any()),
     createdByUserKey: v.string(),
@@ -4224,6 +4819,33 @@ export default defineSchema({
   })
     .index("by_webhook", ["webhookId", "createdAt"])
     .index("by_organization", ["organizationId", "createdAt"]),
+
+  /**
+   * Delivery results for org-level merchant SMS/EMAIL/INTERNAL companion webhooks.
+   * Distinct from multi-endpoint `webhook_logs`.
+   */
+  merchantNotificationDeliveryLogs: defineTable({
+    organizationId: v.id("organizations"),
+    event: v.string(),
+    context: v.string(),
+    deliveryMethod: v.union(
+      v.literal("SMS"),
+      v.literal("EMAIL"),
+      v.literal("INTERNAL"),
+    ),
+    result: v.string(),
+    isTest: v.boolean(),
+    httpStatus: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+    payload: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_organization", ["organizationId", "createdAt"])
+    .index("by_organization_method", [
+      "organizationId",
+      "deliveryMethod",
+      "createdAt",
+    ]),
 
   /**
    * Snapshots of rows quarantined during `referentialIntegrity` repair (orphan / cross-org links).
@@ -4869,6 +5491,8 @@ export default defineSchema({
     ),
     publishedAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
+    /** Optional Vercel deployment id (e.g. dpl_…) for ship traceability. */
+    deploymentId: v.optional(v.string()),
     visibility: v.optional(
       v.object({
         orgPlans: v.optional(

@@ -108,7 +108,7 @@ export function RecallFromClientVaultDrawer({
     api.libraryDocuments.patchDocumentLinkMetadata,
   );
 
-  const folderRows = vaultFolders ?? [];
+  const folderRows = useMemo(() => vaultFolders ?? [], [vaultFolders]);
   const contacts = linkedContacts ?? [];
 
   const recallableDocs = useMemo((): ContactDocRow[] => {

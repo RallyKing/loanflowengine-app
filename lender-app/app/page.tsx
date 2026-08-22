@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { PublicLandingPage } from "@/components/marketing/PublicLandingPage";
+import { APP_HOME_HREF } from "@/lib/brandIdentity";
 import {
   MARKETING_BRAND_NAME,
   MARKETING_DESCRIPTION,
@@ -22,7 +23,7 @@ export default async function HomePage() {
   const session = await verifySession(token, impersonationToken);
 
   if (session) {
-    redirect("/tasks");
+    redirect(APP_HOME_HREF);
   }
 
   return <PublicLandingPage />;

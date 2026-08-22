@@ -12,6 +12,10 @@ import type { RegistryItem, RegistryType } from "@/lib/registry/registryItem";
 import { registryCommandCenterHref } from "@/lib/registry/registryRoutes";
 import { registryRoleDisplayName } from "@/lib/registry/universalRoles";
 import { formatRelativeTimestamp } from "@/lib/formatRelativeTimestamp";
+import {
+  websiteDisplayLabel,
+  websiteHref,
+} from "@/lib/contacts/entityWebsites";
 import { HubDataTable, type HubDataTableColumn } from "@/components/contacts/hub/HubDataTable";
 import { OperationalSkeletonList } from "@/components/ui/OperationalSkeleton";
 import {
@@ -158,7 +162,24 @@ export function RegistryDataTable({
         render: (row) => (
           <div className="flex min-w-0 items-center gap-2">
             <RegistryTypeIcon type={row.registryType} />
-            <span className="min-w-0 truncate">{row.displayName}</span>
+            <div className="min-w-0">
+              <span className="block min-w-0 truncate">{row.displayName}</span>
+              {row.websites?.[0] ? (
+                <a
+                  href={websiteHref(row.websites[0].url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-0.5 block min-w-0 truncate text-xs text-primary hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                  title={row.websites[0].url}
+                >
+                  {websiteDisplayLabel(row.websites[0])}
+                  {(row.websites?.length ?? 0) > 1
+                    ? ` +${(row.websites?.length ?? 1) - 1}`
+                    : ""}
+                </a>
+              ) : null}
+            </div>
           </div>
         ),
       },

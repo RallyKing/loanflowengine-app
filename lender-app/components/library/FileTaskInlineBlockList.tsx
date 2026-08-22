@@ -55,7 +55,7 @@ export function FileTaskInlineBlockList({
       data-testid={`file-task-inline-blocks-${fileTask._id}`}
     >
       <div
-        className="border-b border-border/40 bg-muted/5 px-2 py-1"
+        className="border-b border-border/40 bg-muted/5 px-2 py-0.5"
         style={{ paddingLeft: `${indentPx}px` }}
       >
         <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">

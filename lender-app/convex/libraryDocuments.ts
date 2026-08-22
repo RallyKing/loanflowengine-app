@@ -24,6 +24,11 @@ import {
   effectiveLinkExpiresAt,
   resolveDocumentExpiryStatus,
 } from "../lib/library/documentVaultExpiry";
+import {
+  resolveVaultOutboundFileName,
+  vaultFileIdentityFromRename,
+} from "../lib/library/vaultOutboundFileName";
+import { findExistingRegistryAssignment } from "../lib/library/documentCategoryCatalog";
 
 const MAX_NAME_LEN = 255;
 const MAX_TITLE_LEN = 400;
@@ -579,6 +584,91 @@ export const linkAndCategorizeDocument = mutation({
  * Assign a vault document to a CRM contact or entity with category metadata.
  * Ensures pipeline + registry links exist without duplicating storage blobs.
  */
+export const listDocumentRegistryAssignments = query({
+  args: {
+    documentId: v.id("libraryDocuments"),
+    pipelineFileId: v.id("pipeline"),
+    ...memberKeyArg,
+  },
+  returns: v.array(
+    v.object({
+      kind: v.union(v.literal("contact"), v.literal("entity")),
+      registryId: v.string(),
+      displayName: v.string(),
+      documentCategory: v.optional(libraryDocumentCategoryV),
+      customDocumentCategoryId: v.optional(
+        v.id("organizationDocumentCategories"),
+      ),
+    }),
+  ),
+  handler: async (
+    ctx,
+    { documentId, pipelineFileId, memberUserKey },
+  ) => {
+    const doc = await ctx.db.get(documentId);
+    if (!doc) throw new Error("Document not found.");
+    const pipeline = await ctx.db.get(pipelineFileId);
+    if (!pipeline) throw new Error("Pipeline file not found.");
+    await assertCanReadPipelineRow(ctx, pipeline, memberUserKey);
+    if (
+      doc.organizationId &&
+      pipeline.organizationId &&
+      doc.organizationId !== pipeline.organizationId
+    ) {
+      throw new Error("Document belongs to a different organization.");
+    }
+
+    const links = await ctx.db
+      .query("libraryDocumentLinks")
+      .withIndex("by_document", (q) => q.eq("documentId", documentId))
+      .collect();
+    const assignments: Array<{
+      kind: "contact" | "entity";
+      registryId: string;
+      displayName: string;
+      documentCategory?: Doc<"libraryDocumentLinks">["documentCategory"];
+      customDocumentCategoryId?: Id<"organizationDocumentCategories">;
+    }> = [];
+    for (const link of links) {
+      if (link.contactId) {
+        const contact = await ctx.db.get(link.contactId);
+        if (!contact) continue;
+        try {
+          await assertCanReadContactRow(ctx, contact, memberUserKey);
+        } catch {
+          continue;
+        }
+        assignments.push({
+          kind: "contact",
+          registryId: String(contact._id),
+          displayName: contact.name?.trim() || "Contact",
+          documentCategory: link.documentCategory,
+          customDocumentCategoryId: link.customDocumentCategoryId,
+        });
+      } else if (link.clientId) {
+        const client = await ctx.db.get(link.clientId);
+        if (!client) continue;
+        try {
+          await assertCanReadClientVault(ctx, client, memberUserKey);
+        } catch {
+          continue;
+        }
+        assignments.push({
+          kind: "entity",
+          registryId: String(client._id),
+          displayName:
+            client.displayName?.trim() ||
+            client.companyName?.trim() ||
+            "Entity",
+          documentCategory: link.documentCategory,
+          customDocumentCategoryId: link.customDocumentCategoryId,
+        });
+      }
+    }
+    return assignments;
+  },
+});
+
 export const assignDocumentToRegistry = mutation({
   args: {
     documentId: v.id("libraryDocuments"),
@@ -586,10 +676,17 @@ export const assignDocumentToRegistry = mutation({
     assigneeKind: v.union(v.literal("contact"), v.literal("entity")),
     contactId: v.optional(v.id("contacts")),
     clientId: v.optional(v.id("clients")),
-    documentCategory: libraryDocumentCategoryV,
+    documentCategory: v.optional(libraryDocumentCategoryV),
+    customDocumentCategoryId: v.optional(
+      v.id("organizationDocumentCategories"),
+    ),
     folderId: v.optional(v.union(v.id("documentFolders"), linkMetadataUnset)),
     ...memberKeyArg,
   },
+  returns: v.object({
+    ok: v.literal(true),
+    alreadyAssigned: v.boolean(),
+  }),
   handler: async (ctx, args) => {
     const {
       documentId,
@@ -598,6 +695,7 @@ export const assignDocumentToRegistry = mutation({
       contactId,
       clientId,
       documentCategory,
+      customDocumentCategoryId,
       folderId,
       memberUserKey,
     } = args;
@@ -607,6 +705,11 @@ export const assignDocumentToRegistry = mutation({
     }
     if (assigneeKind === "entity" && !clientId) {
       throw new Error("clientId is required for entity assignment.");
+    }
+    if (
+      (documentCategory == null) === (customDocumentCategoryId == null)
+    ) {
+      throw new Error("Choose exactly one document category.");
     }
 
     const doc = await ctx.db.get(documentId);
@@ -625,6 +728,7 @@ export const assignDocumentToRegistry = mutation({
     } else {
       client = await ctx.db.get(clientId!);
       if (!client) throw new Error("Entity not found.");
+      await assertCanMutateClientVault(ctx, client, memberUserKey);
       if (client.organizationId && pipeline.organizationId) {
         if (client.organizationId !== pipeline.organizationId) {
           throw new Error("Entity does not belong to this organization.");
@@ -633,6 +737,18 @@ export const assignDocumentToRegistry = mutation({
     }
 
     await ensureOrgAligned(ctx, doc, orgKey(pipeline, contact, null, client));
+
+    if (customDocumentCategoryId) {
+      const customCategory = await ctx.db.get(customDocumentCategoryId);
+      if (
+        !customCategory ||
+        customCategory.organizationId !== pipeline.organizationId
+      ) {
+        throw new Error(
+          "Custom category does not belong to this organization.",
+        );
+      }
+    }
 
     const key = memberUserKey?.trim() || "__system__";
     const now = Date.now();
@@ -652,10 +768,13 @@ export const assignDocumentToRegistry = mutation({
       pipelineLink = (await ctx.db.get(linkId))!;
     }
 
-    const registryLink =
-      assigneeKind === "contact"
-        ? existing.find((l) => l.contactId === contactId)
-        : existing.find((l) => l.clientId === clientId);
+    const assigneeId =
+      assigneeKind === "contact" ? String(contactId) : String(clientId);
+    const registryLink = findExistingRegistryAssignment(
+      existing,
+      assigneeKind,
+      assigneeId,
+    );
 
     let registryLinkRow = registryLink;
     if (!registryLinkRow) {
@@ -665,12 +784,16 @@ export const assignDocumentToRegistry = mutation({
           ? { contactId: contactId! }
           : { clientId: clientId! }),
         documentCategory,
+        customDocumentCategoryId,
         linkedAt: now,
         linkedByUserKey: key,
       });
       registryLinkRow = (await ctx.db.get(linkId))!;
     } else {
-      await ctx.db.patch(registryLinkRow._id, { documentCategory });
+      await ctx.db.patch(registryLinkRow._id, {
+        documentCategory,
+        customDocumentCategoryId,
+      });
     }
 
     const pipelinePatch: {
@@ -693,7 +816,7 @@ export const assignDocumentToRegistry = mutation({
     }
 
     await ctx.db.patch(documentId, { updatedAt: now });
-    return { ok: true as const };
+    return { ok: true as const, alreadyAssigned: registryLink != null };
   },
 });
 
@@ -813,13 +936,37 @@ export const patchDocumentTitle = mutation({
     ...memberKeyArg,
   },
   handler: async (ctx, { documentId, title, proof, memberUserKey }) => {
-    const t = title.trim().slice(0, MAX_TITLE_LEN);
-    if (!t) throw new Error("Title is required.");
+    const raw = title.trim().slice(0, MAX_TITLE_LEN);
+    if (!raw) throw new Error("Title is required.");
     await assertProofWrite(ctx, proof, memberUserKey);
     await requireLinkForProof(ctx, documentId, proof);
+
+    const doc = await ctx.db.get(documentId);
+    if (!doc) throw new Error("Document not found.");
+
+    // Sync title + latestFileName / latest version fileName so download, ZIP,
+    // and lender delivery use the renamed identity (not only a UI label).
+    const { title: t, fileName } = vaultFileIdentityFromRename(
+      raw,
+      doc.latestFileName,
+    );
+    const safeName = safeFileName(fileName);
     const now = Date.now();
-    await ctx.db.patch(documentId, { title: t, updatedAt: now });
-    return { ok: true as const, title: t };
+
+    await ctx.db.patch(documentId, {
+      title: t,
+      latestFileName: safeName,
+      updatedAt: now,
+    });
+
+    if (doc.latestVersionId) {
+      const ver = await ctx.db.get(doc.latestVersionId);
+      if (ver && ver.documentId === documentId) {
+        await ctx.db.patch(doc.latestVersionId, { fileName: safeName });
+      }
+    }
+
+    return { ok: true as const, title: t, fileName: safeName };
   },
 });
 
@@ -846,6 +993,12 @@ export const patchDocumentLinkMetadata = mutation({
     documentCategory: v.optional(
       v.union(libraryDocumentCategoryV, linkMetadataUnset),
     ),
+    customDocumentCategoryId: v.optional(
+      v.union(
+        v.id("organizationDocumentCategories"),
+        linkMetadataUnset,
+      ),
+    ),
     taxYear: v.optional(v.union(v.string(), linkMetadataUnset)),
     /** Phase 39.3 — vault folder placement (pipeline links only). Pass `__unset__` for root. */
     folderId: v.optional(
@@ -860,14 +1013,25 @@ export const patchDocumentLinkMetadata = mutation({
     ),
     ...memberKeyArg,
   },
+  returns: v.object({ ok: v.literal(true) }),
   handler: async (ctx, args) => {
-    const { documentId, proof, documentCategory, taxYear, folderId, fileTaskId, customTags, memberUserKey } =
-      args;
+    const {
+      documentId,
+      proof,
+      documentCategory,
+      customDocumentCategoryId,
+      taxYear,
+      folderId,
+      fileTaskId,
+      customTags,
+      memberUserKey,
+    } = args;
     await assertProofWrite(ctx, proof, memberUserKey);
     const link = await requireLinkForProof(ctx, documentId, proof);
 
     const patch: {
       documentCategory?: Doc<"libraryDocumentLinks">["documentCategory"];
+      customDocumentCategoryId?: Id<"organizationDocumentCategories">;
       taxYear?: string;
       folderId?: Id<"documentFolders">;
       fileTaskId?: Id<"documentVaultFileTasks">;
@@ -881,9 +1045,31 @@ export const patchDocumentLinkMetadata = mutation({
         patch.taxYear = undefined;
       } else {
         patch.documentCategory = documentCategory;
+        patch.customDocumentCategoryId = undefined;
         if (documentCategory !== "tax_return") {
           patch.taxYear = undefined;
         }
+      }
+    }
+
+    if (customDocumentCategoryId !== undefined) {
+      if (customDocumentCategoryId === "__unset__") {
+        patch.customDocumentCategoryId = undefined;
+      } else {
+        const customCategory = await ctx.db.get(customDocumentCategoryId);
+        const document = await ctx.db.get(documentId);
+        if (
+          !customCategory ||
+          (document?.organizationId &&
+            customCategory.organizationId !== document.organizationId)
+        ) {
+          throw new Error(
+            "Custom category does not belong to this organization.",
+          );
+        }
+        patch.customDocumentCategoryId = customDocumentCategoryId;
+        patch.documentCategory = undefined;
+        patch.taxYear = undefined;
       }
     }
 
@@ -1166,6 +1352,10 @@ async function listDocumentsForScopedLinks(
     latestUploadedAt: number | undefined;
     updatedAt: number;
     documentCategory: Doc<"libraryDocumentLinks">["documentCategory"];
+    customDocumentCategoryId:
+      | Id<"organizationDocumentCategories">
+      | undefined;
+    customDocumentCategoryName: string | undefined;
     taxYear: string | undefined;
     folderId: Id<"documentFolders"> | undefined;
     fileTaskId: Id<"documentVaultFileTasks"> | undefined;
@@ -1195,6 +1385,9 @@ async function listDocumentsForScopedLinks(
       .withIndex("by_document", (q) => q.eq("documentId", doc._id))
       .collect();
     const savedToContactProfile = docLinks.some((row) => row.contactId != null);
+    const customCategory = l.customDocumentCategoryId
+      ? await ctx.db.get(l.customDocumentCategoryId)
+      : null;
     const expiresAt = effectiveLinkExpiresAt(l, doc.latestUploadedAt);
     out.push({
       _id: doc._id,
@@ -1208,6 +1401,8 @@ async function listDocumentsForScopedLinks(
       latestUploadedAt: doc.latestUploadedAt,
       updatedAt: doc.updatedAt,
       documentCategory: l.documentCategory,
+      customDocumentCategoryId: l.customDocumentCategoryId,
+      customDocumentCategoryName: customCategory?.displayName,
       taxYear: l.taxYear,
       folderId: l.folderId,
       fileTaskId: l.fileTaskId,
@@ -1280,10 +1475,16 @@ export const getVersionUrl = query({
       return { status: "not_found" as const };
     }
     const url = await ctx.storage.getUrl(ver.storageId);
+    const doc = await ctx.db.get(documentId);
+    // Prefer renamed title over stale upload name for the current version.
+    const outboundName =
+      doc && doc.latestVersionId === versionId
+        ? resolveVaultOutboundFileName(doc.title, ver.fileName)
+        : ver.fileName;
     return {
       status: "ok" as const,
       url,
-      fileName: ver.fileName,
+      fileName: outboundName,
       contentType: ver.contentType,
       version: ver.version,
       annotations: ver.annotations,
@@ -1366,6 +1567,7 @@ export const getDocumentProperties = query({
       latestSize: doc.latestSize,
       latestUploadedAt: doc.latestUploadedAt,
       documentCategory: link.documentCategory,
+      customDocumentCategoryId: link.customDocumentCategoryId,
       taxYear: link.taxYear,
       folderId: link.folderId,
       customTags: link.customTags ?? [],

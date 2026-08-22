@@ -9,11 +9,45 @@ import {
   scheduleWebhookQueueEvent,
   webhookVaultContext,
 } from "./webhookEventHelpers";
+import { scheduleMerchantNotificationChannels } from "./merchantNotifications";
 import {
   loadLinkByTokenHash,
   registerTaskUploadPortalLink,
 } from "./clientPortalLinks";
 import { assertLinkAccessAllowed } from "./portalAccessVerification";
+
+function dealContactFromPipeline(pipeline: Doc<"pipeline">): {
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+} {
+  const name = pipelineDealName(pipeline);
+  const deal = pipeline.dealData;
+  if (!deal || typeof deal !== "object" || Array.isArray(deal)) {
+    return { name, phone: null, email: null };
+  }
+  const record = deal as Record<string, unknown>;
+  const borrower =
+    record.borrower && typeof record.borrower === "object"
+      ? (record.borrower as Record<string, unknown>)
+      : null;
+  const phoneRaw =
+    borrower?.phone ??
+    record.borrowerPhone ??
+    record.phone ??
+    null;
+  const emailRaw =
+    borrower?.email ??
+    record.borrowerEmail ??
+    record.email ??
+    null;
+  return {
+    name:
+      (typeof borrower?.name === "string" && borrower.name.trim()) || name,
+    phone: typeof phoneRaw === "string" ? phoneRaw.trim() || null : null,
+    email: typeof emailRaw === "string" ? emailRaw.trim() || null : null,
+  };
+}
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -122,6 +156,23 @@ export const getPortalByToken = query({
       pipeline.propertyAddress?.trim() ||
       "Loan file";
 
+    const clientTemplates: Array<{
+      fileName: string;
+      mimeType: string;
+      size: number;
+      url: string;
+    }> = [];
+    for (const att of task.clientTemplateAttachments ?? []) {
+      const url = await ctx.storage.getUrl(att.storageId);
+      if (!url) continue;
+      clientTemplates.push({
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        size: att.size,
+        url,
+      });
+    }
+
     return {
       status: "ok" as const,
       taskTitle: task.title,
@@ -130,6 +181,8 @@ export const getPortalByToken = query({
       workspaceName,
       pipelineFileId: task.pipelineFileId,
       fileTaskId: task._id,
+      clientTemplates:
+        clientTemplates.length > 0 ? clientTemplates : undefined,
     };
   },
 });
@@ -173,6 +226,8 @@ export const issueUploadToken = mutation({
       uploadCount: 0,
     });
 
+    const uploadUrl = `${portalOrigin()}/upload/${encodeURIComponent(plainToken)}`;
+
     await registerTaskUploadPortalLink(ctx, {
       pipelineFileId: task.pipelineFileId,
       organizationId: pipeline.organizationId,
@@ -183,9 +238,9 @@ export const issueUploadToken = mutation({
       expiresAt,
       createdByUserKey: key,
       createdAt: now,
+      issuedUrl: uploadUrl,
     });
 
-    const uploadUrl = `${portalOrigin()}/upload/${encodeURIComponent(plainToken)}`;
     return {
       ok: true as const,
       uploadUrl,
@@ -315,17 +370,63 @@ export const ingestUpload = mutation({
       documentId: docId,
     });
 
+    const vaultCtx = webhookVaultContext(
+      pipeline._id,
+      pipelineDealName(pipeline),
+    );
     await scheduleWebhookQueueEvent(ctx, {
       organizationId: pipeline.organizationId,
       event: "client_document_uploaded",
       data: {
-        ...webhookVaultContext(pipeline._id, pipelineDealName(pipeline)),
+        ...vaultCtx,
         folderName: "Root",
         fileName: safeName,
         fileTaskId: String(task._id),
         documentId: String(docId),
       },
     });
+
+    // Merchant companion webhooks (GHL / SMS / email) — async, non-blocking.
+    if (pipeline.organizationId) {
+      const contact = dealContactFromPipeline(pipeline);
+      const dealLabel = vaultCtx.dealName;
+      const smsMessage = `Hi${contact.name ? ` ${contact.name.split(/\s+/)[0]}` : ""}! We received your document "${safeName}" for ${dealLabel}. Thank you.`;
+      const subject = `Document received: ${safeName}`;
+      const html = `<html><body><p>Hi${contact.name ? ` ${contact.name}` : ""},</p><p>We received your document <strong>${safeName}</strong> for <strong>${dealLabel}</strong>.</p><p><a href="${vaultCtx.documentVaultUrl}">Open document vault</a></p></body></html>`;
+      await scheduleMerchantNotificationChannels(ctx, {
+        organizationId: pipeline.organizationId,
+        event: "document_notification_request",
+        context: "client.document.uploaded",
+        channels: ["SMS", "EMAIL", "INTERNAL"],
+        isTest: false,
+        message: `Document ${safeName} uploaded for ${dealLabel}`,
+        customer: {
+          id: String(pipeline._id),
+          name: contact.name,
+          phone: contact.phone,
+          email: contact.email,
+        },
+        smsMessage,
+        subject,
+        html,
+        plaintext: `We received your document ${safeName} for ${dealLabel}.`,
+        domain: {
+          document: {
+            id: String(docId),
+            fileName: safeName,
+            fileTaskId: String(task._id),
+          },
+          pipeline: {
+            id: String(pipeline._id),
+            dealName: dealLabel,
+          },
+          links: {
+            trackingUrl: vaultCtx.documentVaultUrl,
+            documentVaultUrl: vaultCtx.documentVaultUrl,
+          },
+        },
+      });
+    }
 
     return {
       ok: true as const,

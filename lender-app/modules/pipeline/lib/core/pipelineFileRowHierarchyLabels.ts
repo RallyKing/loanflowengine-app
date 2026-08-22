@@ -26,7 +26,7 @@ function parseProjectFromSourceLabel(
   return project || undefined;
 }
 
-/** Client label for pipeline file rows (table + hub list). */
+/** Client label for pipeline file rows (table + hub list). Live `clientDisplayName` from listTablePreview. */
 export function pipelineFileRowClientLabel(
   row: PipelineTablePreviewRow,
 ): string | undefined {

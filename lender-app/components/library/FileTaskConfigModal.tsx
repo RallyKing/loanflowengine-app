@@ -21,6 +21,11 @@ import { cn } from "@/lib/cn";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 import type { DocumentVaultFileTaskRow } from "@/components/library/FileTaskContainer";
 import type { Id } from "@/convex/_generated/dataModel";
+import { FileTaskClientTemplateAttach } from "@/components/library/FileTaskClientTemplateAttach";
+import {
+  taskTypeAllowsClientTemplates,
+  type FileTaskClientTemplateAttachment,
+} from "@/lib/fileTaskClientTemplates";
 
 export type FileTaskConfigPayload = {
   title: string;
@@ -29,6 +34,7 @@ export type FileTaskConfigPayload = {
   clientInstructionText?: string;
   instructionUrl?: string;
   assignedBlockEntries?: AssignedBlockEntry[];
+  clientTemplateAttachments?: FileTaskClientTemplateAttachment[];
   isRequired: boolean;
   isPortalVisible: boolean;
   dueDate?: number;
@@ -79,6 +85,12 @@ function buildInitialState(task?: DocumentVaultFileTaskRow) {
             sortOrder: (index + 1) * 1000,
           }))
       : ([] as AssignedBlockEntry[]),
+    templates: (task?.clientTemplateAttachments ?? []).map((a) => ({
+      storageId: String(a.storageId),
+      fileName: a.fileName,
+      mimeType: a.mimeType,
+      size: a.size,
+    })) as FileTaskClientTemplateAttachment[],
     isRequired: task?.isRequired ?? true,
     isPortalVisible:
       taskType === "internal_task"
@@ -104,6 +116,9 @@ export function FileTaskConfigModal({
   const [instruction, setInstruction] = useState("");
   const [instructionUrl, setInstructionUrl] = useState("");
   const [blocks, setBlocks] = useState<AssignedBlockEntry[]>([]);
+  const [templates, setTemplates] = useState<FileTaskClientTemplateAttachment[]>(
+    [],
+  );
   const [isRequired, setIsRequired] = useState(true);
   const [isPortalVisible, setIsPortalVisible] = useState(true);
   const [dueDateInput, setDueDateInput] = useState("");
@@ -119,10 +134,13 @@ export function FileTaskConfigModal({
     setInstruction(initial.instruction);
     setInstructionUrl(initial.instructionUrl);
     setBlocks(initial.blocks);
+    setTemplates(initial.templates);
     setIsRequired(initial.isRequired);
     setIsPortalVisible(initial.isPortalVisible);
     setDueDateInput(initial.dueDateInput);
     setPriority(initial.priority ?? "");
+    // reactivity-allow: hydrate form when the modal opens or the task id changes; do not clobber in-progress edits
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialTask fields copied above
   }, [open, initialTask?._id]);
 
   const handleTaskTypeChange = (next: FileTaskType) => {
@@ -131,6 +149,9 @@ export function FileTaskConfigModal({
       setIsPortalVisible(false);
     } else if (!isPortalVisible) {
       setIsPortalVisible(defaultPortalVisibleForTaskType(next));
+    }
+    if (!taskTypeAllowsClientTemplates(next)) {
+      setTemplates([]);
     }
   };
 
@@ -294,9 +315,20 @@ export function FileTaskConfigModal({
 
         <div className="mt-4 rounded-dlc-md border border-border/60 bg-dlc-surface p-3">
           {taskType === "document_upload" ? (
-            <p className="text-xs text-muted-foreground">
-              {FILE_TASK_TYPE_DESCRIPTIONS.document_upload}
-            </p>
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                {FILE_TASK_TYPE_DESCRIPTIONS.document_upload}
+              </p>
+              {pipelineFileId ? (
+                <FileTaskClientTemplateAttach
+                  pipelineFileId={pipelineFileId}
+                  memberUserKey={memberUserKey}
+                  value={templates}
+                  onChange={setTemplates}
+                  disabled={busy}
+                />
+              ) : null}
+            </div>
           ) : null}
           {taskType === "internal_task" ? (
             <p className="text-xs text-muted-foreground">
@@ -335,6 +367,15 @@ export function FileTaskConfigModal({
                   onChange={(e) => setInstruction(e.target.value)}
                 />
               </div>
+              {pipelineFileId ? (
+                <FileTaskClientTemplateAttach
+                  pipelineFileId={pipelineFileId}
+                  memberUserKey={memberUserKey}
+                  value={templates}
+                  onChange={setTemplates}
+                  disabled={busy}
+                />
+              ) : null}
             </div>
           ) : null}
           {taskType === "block_assignment" ? (
@@ -393,6 +434,11 @@ export function FileTaskConfigModal({
                       : undefined,
                   assignedBlockEntries:
                     taskType === "block_assignment" ? blocks : undefined,
+                  clientTemplateAttachments: taskTypeAllowsClientTemplates(
+                    taskType,
+                  )
+                    ? templates
+                    : undefined,
                   isRequired,
                   isPortalVisible:
                     taskType === "internal_task" ? false : isPortalVisible,

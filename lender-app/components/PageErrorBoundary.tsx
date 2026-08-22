@@ -2,6 +2,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
+import { APP_HOME_HREF } from "@/lib/brandIdentity";
 import { toDisplayError } from "@/lib/caughtError";
 
 type Props = {
@@ -75,10 +76,10 @@ export class PageErrorBoundary extends Component<Props, State> {
               type="button"
               variant="ghost"
               onClick={() => {
-                window.location.assign("/tasks");
+                window.location.assign(APP_HOME_HREF);
               }}
             >
-              Go to Tasks
+              Go to Pipeline
             </Button>
           </div>
         </div>

@@ -4,7 +4,8 @@
 
 - **Vaul** owns snap **motion**; content **scroll** stays on `[data-pipeline-workspace-scroll]`.
 - **Handle:** visible when reduced motion is off; with reduced motion, `handleOnly` is disabled — users rely on focus/scroll (avoid trapping pans on the handle-only path if behavior regresses).
-- **Safe area:** drawer content uses `max-sm:pt-[env(safe-area-inset-top)]`; workspace scroller retains bottom padding for bottom nav + home indicator.
+- **Safe area (top):** exactly one `env(safe-area-inset-top)` on Vaul `Drawer.Content` (`WORKSPACE_SHEET_SAFE_TOP_PAD_CLASS` / `[data-workspace-sheet-safe-top]`) — not on the snap header.
+- **Safe area (bottom):** single `MobileBottomNavScrollSpacer` (`variant="file"`, ~5rem + inset) inside `[data-pipeline-workspace-scroll]`; do not also pad the outer workspace body or scroll-lead with safe-area.
 
 ## Chrome
 

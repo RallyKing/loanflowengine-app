@@ -10,6 +10,7 @@ import {
 import { prefillValuesForPortalBlock } from "../lib/documentVaultClientBlocks";
 import { pickIntakeShapedPreviewPayload } from "../lib/pipeline/pickIntakeShapedPreviewPayload";
 import { embeddedDealPayloadIsSubstantive } from "../lib/file/embeddedDealPresence";
+import { vaultDocumentOutboundFileName } from "../lib/library/vaultOutboundFileName";
 
 /** Minimal pipeline summary for external portal users. */
 export function portalPublicFileSummary(row: Doc<"pipeline">) {
@@ -27,6 +28,12 @@ export function portalPublicTaskRow(
   assignedBlocks: string[],
   blockSettings: Record<string, unknown>,
   blockPrefill: Record<string, Record<string, string>>,
+  clientTemplates: Array<{
+    fileName: string;
+    mimeType: string;
+    size: number;
+    url: string;
+  }> = [],
 ) {
   return {
     fileTaskId: task._id,
@@ -37,10 +44,14 @@ export function portalPublicTaskRow(
     clientInstructionText: task.clientInstructionText?.trim() || undefined,
     instructionUrl: task.instructionUrl?.trim() || undefined,
     rejectionNote: task.rejectionNote?.trim() || undefined,
+    clientTemplates: clientTemplates.length > 0 ? clientTemplates : undefined,
     assignedBlockEntries,
     assignedBlocks,
     blockSettings,
     blockPrefill,
+    passwordProtected: Boolean(
+      task.accessPasswordHash?.trim() && task.accessPasswordSalt?.trim(),
+    ),
   };
 }
 
@@ -48,11 +59,18 @@ export function portalPublicTaskRow(
 export function portalBlockPrefillForTask(
   assignedBlockIds: string[],
   dealPayload: Record<string, unknown>,
+  fileTask?: {
+    _id?: string;
+    sourceKind?: string | null;
+    sourceInstanceId?: string | null;
+  },
 ): Record<string, Record<string, string>> {
   const out: Record<string, Record<string, string>> = {};
   for (const blockId of assignedBlockIds) {
     if (!isAtomicPortalBlockId(blockId)) continue;
-    out[blockId] = prefillValuesForPortalBlock(blockId, dealPayload);
+    out[blockId] = prefillValuesForPortalBlock(blockId, dealPayload, {
+      fileTask,
+    });
   }
   return out;
 }
@@ -112,6 +130,10 @@ export function portalDealSheetDto(args: {
           budgetAmount: line.budgetAmount,
           spentAmount: line.spentAmount,
           drawNumber: line.drawNumber,
+          templateKey: line.templateKey,
+          repairReplace: line.repairReplace,
+          quantity: line.quantity,
+          unitOfMeasure: line.unitOfMeasure,
           status: line.status,
         }))
       : [],
@@ -127,6 +149,7 @@ export function portalDealSheetDtoFromSources(args: {
   blockEditable: Record<string, boolean>;
   readOnlyPreview: boolean;
   brokerAgentCapable: boolean;
+  fileTask?: Doc<"documentVaultFileTasks"> | null;
 }) {
   const embedded = embeddedDealPayloadIsSubstantive(args.pipeline.dealData)
     ? (args.pipeline.dealData as Doc<"intakeSheets">)
@@ -144,7 +167,9 @@ export function portalDealSheetDtoFromSources(args: {
     if (!isAtomicPortalBlockId(blockId)) continue;
     Object.assign(
       sheet,
-      extractDealSnapshotSlice(dealRecord, blockId as AtomicPortalBlockId),
+      extractDealSnapshotSlice(dealRecord, blockId as AtomicPortalBlockId, {
+        fileTask: args.fileTask ?? undefined,
+      }),
     );
   }
   const needsConstruction = args.assignedBlockIds.includes("construction_budget");
@@ -164,6 +189,10 @@ export function portalDealSheetDtoFromSources(args: {
           budgetAmount: line.budgetAmount,
           spentAmount: line.spentAmount,
           drawNumber: line.drawNumber,
+          templateKey: line.templateKey,
+          repairReplace: line.repairReplace,
+          quantity: line.quantity,
+          unitOfMeasure: line.unitOfMeasure,
           status: line.status,
         }))
       : [],
@@ -179,7 +208,7 @@ export function portalSharedDocumentDto(
   return {
     linkId,
     title: doc.title,
-    fileName: doc.latestFileName,
+    fileName: vaultDocumentOutboundFileName(doc),
     contentType: doc.latestContentType,
     uploadedAt: doc.latestUploadedAt,
   };

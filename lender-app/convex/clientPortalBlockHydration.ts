@@ -10,6 +10,29 @@ import {
   normalizeToAtomicBlockIds,
   type AtomicPortalBlockId,
 } from "../lib/atomicPortalBlockRegistry";
+import { buildPfsDealPatchFromPortalSubmission } from "../lib/pfs/personalFinancialStatementModel";
+import {
+  CONSTRUCTION_BUDGET_CATALOG_BY_KEY,
+  isConstructionBudgetProjectType,
+  isConstructionBudgetRepairReplace,
+  isConstructionBudgetUnit,
+  isValidCompletionTimeframeMonths,
+} from "../lib/constructionBudget/constructionBudgetModel";
+import {
+  findPfsInstance,
+  findPfsInstanceByVaultTask,
+  normalizePfsInstances,
+  pfsDealPatchFromInstances,
+  replacePfsInstanceData,
+} from "../lib/pfs/pfsInstances";
+import { normalizeSimplePlStatement } from "../lib/simplePl/simplePlModel";
+import {
+  findSimplePlInstance,
+  findSimplePlInstanceByVaultTask,
+  normalizeSimplePlInstances,
+  replaceSimplePlInstanceData,
+  simplePlDealPatchFromInstances,
+} from "../lib/simplePl/simplePlInstances";
 import { SECTION_KEYS } from "./shareSections";
 
 type SubmissionValues = Record<string, unknown>;
@@ -52,6 +75,7 @@ export function validateClientPortalFormData(
   }
   if (blockId === "construction_budget") {
     allowed.add("lines");
+    allowed.add("header");
     allowed.add("notes");
     allowed.add("clientPortalNotes");
   }
@@ -61,8 +85,18 @@ export function validateClientPortalFormData(
     allowed.add("clientPortalNotes");
   }
   if (blockId === "pfs_statement") {
-    ["assets", "liabilities", "pfs", "notes", "clientPortalNotes"].forEach((k) =>
-      allowed.add(k),
+    ["assets", "liabilities", "pfs", "pfsInstances", "notes", "clientPortalNotes"].forEach(
+      (k) => allowed.add(k),
+    );
+  }
+  if (blockId === "track_record") {
+    ["trackRecord", "trackRecordMeta", "notes", "clientPortalNotes"].forEach(
+      (k) => allowed.add(k),
+    );
+  }
+  if (blockId === "simple_pl") {
+    ["simplePl", "simplePlInstances", "notes", "clientPortalNotes"].forEach(
+      (k) => allowed.add(k),
     );
   }
 
@@ -142,11 +176,52 @@ async function patchPipelineDealData(
 export function extractDealSnapshotSlice(
   dealData: Record<string, unknown> | null | undefined,
   blockId: AtomicPortalBlockId,
+  options?: {
+    fileTask?: Pick<
+      Doc<"documentVaultFileTasks">,
+      "_id" | "sourceKind" | "sourceInstanceId"
+    >;
+  },
 ): Record<string, unknown> {
   const def = getAtomicPortalBlock(blockId);
   const deal = dealData ?? {};
+  if (blockId === "pfs_statement" && options?.fileTask) {
+    const instances = normalizePfsInstances(deal);
+    const inst =
+      (options.fileTask.sourceKind === "pfs_instance"
+        ? findPfsInstance(instances, options.fileTask.sourceInstanceId)
+        : undefined) ??
+      findPfsInstanceByVaultTask(instances, String(options.fileTask._id));
+    if (inst) {
+      return { pfs: inst.data };
+    }
+    if (instances.length > 1) {
+      return {};
+    }
+    if (instances[0]) {
+      return { pfs: instances[0].data };
+    }
+  }
+  if (blockId === "simple_pl" && options?.fileTask) {
+    const instances = normalizeSimplePlInstances(deal);
+    const inst =
+      (options.fileTask.sourceKind === "simple_pl_instance"
+        ? findSimplePlInstance(instances, options.fileTask.sourceInstanceId)
+        : undefined) ??
+      findSimplePlInstanceByVaultTask(instances, String(options.fileTask._id));
+    if (inst) {
+      return { simplePl: inst.data };
+    }
+    if (instances.length > 1) {
+      return {};
+    }
+    if (instances[0]) {
+      return { simplePl: instances[0].data };
+    }
+  }
   const slice: Record<string, unknown> = {};
   for (const key of def.dealDataKeys) {
+    if (key === "pfsInstances" || key === "simplePlInstances") continue;
     if (deal[key] !== undefined) slice[key] = deal[key];
   }
   return slice;
@@ -175,14 +250,88 @@ async function hydrateConstructionBudgetBlock(
   file: Doc<"pipeline">,
   values: SubmissionValues,
 ): Promise<void> {
+  const header = asRecord(values.header);
+  if (Object.keys(header).length > 0) {
+    const now = Date.now();
+    const projectTypeRaw =
+      typeof header.projectType === "string" ? header.projectType.trim() : "";
+    const timeframe =
+      typeof header.completionTimeframeMonths === "string"
+        ? header.completionTimeframeMonths.trim()
+        : "";
+    const patch = {
+      applicantName:
+        typeof header.applicantName === "string"
+          ? header.applicantName.trim() || undefined
+          : undefined,
+      propertyAddress:
+        typeof header.propertyAddress === "string"
+          ? header.propertyAddress.trim() || undefined
+          : undefined,
+      contractor:
+        typeof header.contractor === "string"
+          ? header.contractor.trim() || undefined
+          : undefined,
+      projectType: isConstructionBudgetProjectType(projectTypeRaw)
+        ? projectTypeRaw
+        : undefined,
+      plannedSummary:
+        typeof header.plannedSummary === "string"
+          ? header.plannedSummary.trim() || undefined
+          : undefined,
+      qualityOfFinishes:
+        typeof header.qualityOfFinishes === "string"
+          ? header.qualityOfFinishes.trim() || undefined
+          : undefined,
+      completionTimeframeMonths:
+        timeframe && isValidCompletionTimeframeMonths(timeframe)
+          ? timeframe
+          : undefined,
+      updatedAt: now,
+    };
+    const existing = await ctx.db
+      .query("constructionBudgetSheets")
+      .withIndex("by_file", (q) => q.eq("fileId", file._id))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+    } else {
+      await ctx.db.insert("constructionBudgetSheets", {
+        organizationId: file.organizationId,
+        fileId: file._id,
+        ...patch,
+        createdAt: now,
+      });
+    }
+  }
+
   const lines = values.lines;
   if (Array.isArray(lines) && lines.length > 0) {
     const now = Date.now();
     for (const [index, raw] of lines.entries()) {
       const line = asRecord(raw);
+      const templateKey =
+        typeof line.templateKey === "string" &&
+        CONSTRUCTION_BUDGET_CATALOG_BY_KEY.has(line.templateKey)
+          ? line.templateKey
+          : undefined;
+      const catalog = templateKey
+        ? CONSTRUCTION_BUDGET_CATALOG_BY_KEY.get(templateKey)
+        : undefined;
       const category =
-        typeof line.category === "string" ? line.category.trim() : "";
+        catalog?.label ??
+        (typeof line.category === "string" ? line.category.trim() : "");
       if (!category) continue;
+      const repairReplace =
+        typeof line.repairReplace === "string" &&
+        isConstructionBudgetRepairReplace(line.repairReplace)
+          ? line.repairReplace
+          : undefined;
+      const unitOfMeasure =
+        typeof line.unitOfMeasure === "string" &&
+        isConstructionBudgetUnit(line.unitOfMeasure)
+          ? line.unitOfMeasure
+          : undefined;
       await ctx.db.insert("constructionBudgetLines", {
         organizationId: file.organizationId,
         fileId: file._id,
@@ -195,6 +344,11 @@ async function hydrateConstructionBudgetBlock(
           typeof line.spentAmount === "string" ? line.spentAmount : undefined,
         drawNumber:
           typeof line.drawNumber === "string" ? line.drawNumber : undefined,
+        templateKey,
+        repairReplace,
+        quantity:
+          typeof line.quantity === "string" ? line.quantity : undefined,
+        unitOfMeasure,
         status:
           line.status === "planned" ||
           line.status === "in_progress" ||
@@ -349,25 +503,90 @@ async function hydratePfsStatementBlock(
   ctx: MutationCtx,
   file: Doc<"pipeline">,
   values: SubmissionValues,
+  fileTask?: Doc<"documentVaultFileTasks"> | null,
 ): Promise<void> {
   const deal = await resolveDealBaseForPipelinePatch(ctx, file);
-  const prior = asRecord(deal.pfs);
-  const patch = pickKeys(values, [
-    "notes",
-    "clientPortalNotes",
-    "totalAssets",
-    "totalLiabilities",
-    "netWorth",
-    "liquidAssets",
-    "annualIncome",
-  ]);
-  const assetPatch = pickKeys(values, ["assets", "liabilities"]);
-  const merged: Record<string, unknown> = { ...prior, ...patch };
-  if (Object.keys(assetPatch).length > 0) {
-    Object.assign(merged, assetPatch);
+  const instances = normalizePfsInstances(deal);
+  const target =
+    (fileTask?.sourceKind === "pfs_instance"
+      ? findPfsInstance(instances, fileTask.sourceInstanceId)
+      : undefined) ??
+    (fileTask
+      ? findPfsInstanceByVaultTask(instances, String(fileTask._id))
+      : undefined) ??
+    (instances.length === 1 ? instances[0] : undefined);
+  // Merge structured `values.pfs` into the matching PFS instance (legacy
+  // `deal.pfs` when this is the first / only statement).
+  if (!target) {
+    if (instances.length > 1) return;
+    const dealPatch = buildPfsDealPatchFromPortalSubmission(deal.pfs, values);
+    if (!dealPatch) return;
+    await patchPipelineDealData(ctx, file, dealPatch);
+    return;
   }
-  if (Object.keys(merged).length === 0) return;
-  await patchPipelineDealData(ctx, file, { pfs: merged });
+  const dealPatch = buildPfsDealPatchFromPortalSubmission(target.data, values);
+  if (!dealPatch) return;
+  const nextInstances = replacePfsInstanceData(
+    instances,
+    target.id,
+    dealPatch.pfs as never,
+  );
+  const mirrored = pfsDealPatchFromInstances(nextInstances);
+  const isPrimary = mirrored.pfsInstances[0]?.id === target.id;
+  await patchPipelineDealData(ctx, file, {
+    pfsInstances: mirrored.pfsInstances,
+    pfs: mirrored.pfs,
+    ...(isPrimary && dealPatch.assets !== undefined
+      ? { assets: dealPatch.assets }
+      : {}),
+    ...(isPrimary && dealPatch.liabilities !== undefined
+      ? { liabilities: dealPatch.liabilities }
+      : {}),
+  });
+}
+
+async function hydrateSimplePlBlock(
+  ctx: MutationCtx,
+  file: Doc<"pipeline">,
+  values: SubmissionValues,
+  fileTask?: Doc<"documentVaultFileTasks"> | null,
+): Promise<void> {
+  const deal = await resolveDealBaseForPipelinePatch(ctx, file);
+  const instances = normalizeSimplePlInstances(deal);
+  const target =
+    (fileTask?.sourceKind === "simple_pl_instance"
+      ? findSimplePlInstance(instances, fileTask.sourceInstanceId)
+      : undefined) ??
+    (fileTask
+      ? findSimplePlInstanceByVaultTask(instances, String(fileTask._id))
+      : undefined) ??
+    (instances.length === 1 ? instances[0] : undefined);
+  const incoming =
+    values.simplePl != null
+      ? normalizeSimplePlStatement(values.simplePl)
+      : values.pfs != null
+        ? normalizeSimplePlStatement(values.pfs)
+        : normalizeSimplePlStatement(values);
+  if (!target) {
+    await patchPipelineDealData(ctx, file, { simplePl: incoming });
+    return;
+  }
+  const nextInstances = replaceSimplePlInstanceData(instances, target.id, {
+    ...incoming,
+    notes:
+      typeof values.notes === "string"
+        ? values.notes
+        : incoming.notes ?? target.data.notes,
+    clientPortalNotes:
+      typeof values.clientPortalNotes === "string"
+        ? values.clientPortalNotes
+        : incoming.clientPortalNotes ?? target.data.clientPortalNotes,
+  });
+  const mirrored = simplePlDealPatchFromInstances(nextInstances);
+  await patchPipelineDealData(ctx, file, {
+    simplePlInstances: mirrored.simplePlInstances,
+    simplePl: mirrored.simplePl,
+  });
 }
 
 /**
@@ -379,6 +598,7 @@ export async function hydrateLivePipelineBlockFromClientSubmission(
   file: Doc<"pipeline">,
   blockId: string,
   formData: unknown,
+  fileTask?: Doc<"documentVaultFileTasks"> | null,
 ): Promise<void> {
   const values = normalizeFormValues(formData);
   if (Object.keys(values).length === 0) return;
@@ -389,7 +609,7 @@ export async function hydrateLivePipelineBlockFromClientSubmission(
   if (atoms.length === 0) return;
 
   for (const atom of atoms) {
-    await hydrateSingleAtomicBlock(ctx, file, atom, values);
+    await hydrateSingleAtomicBlock(ctx, file, atom, values, fileTask);
   }
 }
 
@@ -398,6 +618,7 @@ async function hydrateSingleAtomicBlock(
   file: Doc<"pipeline">,
   blockId: AtomicPortalBlockId,
   values: SubmissionValues,
+  fileTask?: Doc<"documentVaultFileTasks"> | null,
 ): Promise<void> {
   switch (blockId) {
     case "construction_budget":
@@ -429,7 +650,18 @@ async function hydrateSingleAtomicBlock(
       }
       return;
     case "pfs_statement":
-      await hydratePfsStatementBlock(ctx, file, values);
+      await hydratePfsStatementBlock(ctx, file, values, fileTask);
+      return;
+    case "simple_pl":
+      await hydrateSimplePlBlock(ctx, file, values, fileTask);
+      return;
+    case "track_record":
+      {
+        const patch = pickKeys(values, ["trackRecord", "trackRecordMeta"]);
+        if (Object.keys(patch).length > 0) {
+          await patchPipelineDealData(ctx, file, patch);
+        }
+      }
       return;
     case "file_details":
     case "contacts":

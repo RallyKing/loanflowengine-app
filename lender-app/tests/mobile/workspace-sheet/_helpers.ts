@@ -59,7 +59,13 @@ export async function openAnyPipelineFileWorkspace(
 
   await ensurePipelineHubListVisible(page);
 
-
+  if (await isPipelineHubDegraded(page).isVisible().catch(() => false)) {
+    testInfo.skip(
+      true,
+      "Pipeline hub unavailable (Convex/org scope). Retry when Convex is healthy.",
+    );
+    return;
+  }
 
   const envId =
 

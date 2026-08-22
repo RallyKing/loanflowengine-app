@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
-import { Building2, Check, Plus, Search, User, X } from "lucide-react";
+import { Building2, Check, FileStack, Plus, Search, User, X } from "lucide-react";
+import Link from "next/link";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { pipelineDealEditorHref } from "@/lib/pipeline/routes";
@@ -14,12 +15,18 @@ import {
   getPipelineFileTemplate,
 } from "@/lib/pipelineFileTemplates";
 import type { PipelineBlockId } from "@/lib/pipelineBlockRegistry";
-import { ALL_PIPELINE_BLOCK_IDS } from "@/lib/pipelineBlockRegistry";
+import {
+  ALL_PIPELINE_BLOCK_IDS,
+  PIPELINE_BLOCK_IDS,
+} from "@/lib/pipelineBlockRegistry";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { Input, Label } from "@/components/ui/Input";
 import { OverlayShell } from "@/components/ui/OverlayShell";
 import { UniversalContactModal } from "@/components/contacts/UniversalContactModal";
+
+/** Sentinel: user has not picked a template card yet on step 3. */
+const TEMPLATE_UNSELECTED = null as string | null;
 
 const DEFAULT_STATUS = "confirm_interest";
 
@@ -126,8 +133,19 @@ export function NewPipelineHierarchyCreateDialog({
   const [wizardProjectId, setWizardProjectId] = useState<
     Id<"projects"> | ""
   >("");
-  /** "" = no template; catalog id; or `user:<id>` for a personal template. */
-  const [templateSel, setTemplateSel] = useState("");
+  /**
+   * Step 3 selection: `null` = not chosen yet; `""` = explicit “saved default”;
+   * catalog id; or `user:<id>` for a personal template.
+   */
+  const [templateSel, setTemplateSel] = useState<string | null>(
+    TEMPLATE_UNSELECTED,
+  );
+  /** Prevents Next→Create double-fire when the footer morphs on step 3. */
+  const [step3CreateArmed, setStep3CreateArmed] = useState(false);
+  const [showNewTemplateForm, setShowNewTemplateForm] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [newTemplateDesc, setNewTemplateDesc] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
 
   const isWizard = mode === "full";
 
@@ -230,6 +248,7 @@ export function NewPipelineHierarchyCreateDialog({
   const applyPlaybook = useMutation(
     api.taskTemplateLibrary.applyTemplateGroupToFile,
   );
+  const createUserTemplate = useMutation(api.pipelineFileUserTemplates.create);
 
   useEffect(() => {
     if (!open) return;
@@ -247,9 +266,23 @@ export function NewPipelineHierarchyCreateDialog({
     setSelectedParty(null);
     setProjectMode("new");
     setWizardProjectId("");
-    setTemplateSel("");
+    setTemplateSel(TEMPLATE_UNSELECTED);
+    setStep3CreateArmed(false);
+    setShowNewTemplateForm(false);
+    setNewTemplateName("");
+    setNewTemplateDesc("");
     setContactModalOpen(false);
   }, [open, mode, lockedClientId, lockedProjectId]);
+
+  useEffect(() => {
+    if (!isWizard || step !== 3) {
+      setStep3CreateArmed(false);
+      return;
+    }
+    setStep3CreateArmed(false);
+    const t = window.setTimeout(() => setStep3CreateArmed(true), 400);
+    return () => window.clearTimeout(t);
+  }, [isWizard, step]);
 
   useEffect(() => {
     if (!isWizard || step !== 2) return;
@@ -296,8 +329,8 @@ export function NewPipelineHierarchyCreateDialog({
     switch (mode) {
       case "full":
         if (step === 1) return "New file — who is it for?";
-        if (step === 2) return "New file — project routing";
-        return "New file — strategy";
+        if (step === 2) return "New file — deal & project";
+        return "New file — choose a template";
       case "project":
         return lockedClientId
           ? "New project under this client"
@@ -319,7 +352,7 @@ export function NewPipelineHierarchyCreateDialog({
     pendingPortalChecklist: ChecklistItemPayload[];
     taskTemplateGroupIds: Id<"taskTemplateGroups">[];
   } => {
-    if (!templateSel) {
+    if (templateSel === null || templateSel === "") {
       return {
         favoriteBlockIds: [],
         pendingPortalChecklist: [],
@@ -453,11 +486,19 @@ export function NewPipelineHierarchyCreateDialog({
         if (!selectedParty) {
           setError("Pick a contact or entity first.");
           setStep(1);
+          setSubmitting(false);
+          return;
+        }
+        if (templateSel === null) {
+          setError("Choose a template to continue.");
+          setStep(3);
+          setSubmitting(false);
           return;
         }
         if (projectMode === "new" && !projectTitle.trim()) {
           setError("Project title is required.");
           setStep(2);
+          setSubmitting(false);
           return;
         }
         if (
@@ -467,6 +508,7 @@ export function NewPipelineHierarchyCreateDialog({
         ) {
           setError("Select a project.");
           setStep(2);
+          setSubmitting(false);
           return;
         }
         const extras = resolveTemplateExtras();
@@ -793,81 +835,9 @@ export function NewPipelineHierarchyCreateDialog({
           ) : null}
         </div>
       )}
-    </div>
-  );
-
-  const wizardStepStrategy = (
-    <div className="space-y-4">
-      <div>
-        <p className="text-xs font-medium text-foreground">Loan strategy</p>
-        <div
-          className="mt-1.5 grid max-h-48 grid-cols-1 gap-1.5 overflow-y-auto sm:grid-cols-2"
-          data-testid="wizard-template-cards"
-        >
-          <button
-            type="button"
-            onClick={() => setTemplateSel("")}
-            aria-pressed={templateSel === ""}
-            className={cn(
-              "rounded-dlc-md border px-2.5 py-2 text-left transition-colors duration-dlc-standard",
-              templateSel === ""
-                ? "border-primary/60 bg-primary/10"
-                : "border-border/70 bg-background hover:border-primary/35",
-            )}
-          >
-            <span className="block text-sm font-medium text-foreground">
-              No template
-            </span>
-            <span className="block text-[11px] text-muted-foreground">
-              Your default drawer layout.
-            </span>
-          </button>
-          {builtInTemplates.map((t) => (
-            <button
-              key={t.templateId}
-              type="button"
-              onClick={() => setTemplateSel(t.templateId)}
-              aria-pressed={templateSel === t.templateId}
-              className={cn(
-                "rounded-dlc-md border px-2.5 py-2 text-left transition-colors duration-dlc-standard",
-                templateSel === t.templateId
-                  ? "border-primary/60 bg-primary/10"
-                  : "border-border/70 bg-background hover:border-primary/35",
-              )}
-            >
-              <span className="block text-sm font-medium text-foreground">
-                {t.name}
-              </span>
-              <span className="line-clamp-2 block text-[11px] text-muted-foreground">
-                {t.description}
-              </span>
-            </button>
-          ))}
-          {(userTemplates ?? []).map((t) => (
-            <button
-              key={t._id}
-              type="button"
-              onClick={() => setTemplateSel(`user:${t._id}`)}
-              aria-pressed={templateSel === `user:${t._id}`}
-              className={cn(
-                "rounded-dlc-md border px-2.5 py-2 text-left transition-colors duration-dlc-standard",
-                templateSel === `user:${t._id}`
-                  ? "border-primary/60 bg-primary/10"
-                  : "border-border/70 bg-background hover:border-primary/35",
-              )}
-            >
-              <span className="block text-sm font-medium text-foreground">
-                {t.name}
-              </span>
-              <span className="line-clamp-2 block text-[11px] text-muted-foreground">
-                {t.description || "Personal template"}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
 
       <div className="space-y-3 border-t border-border/60 pt-3">
+        <p className="text-xs font-medium text-foreground">Deal basics</p>
         <div>
           <Label htmlFor="wizard-file-name">Loan file name</Label>
           <Input
@@ -909,6 +879,215 @@ export function NewPipelineHierarchyCreateDialog({
     </div>
   );
 
+  async function handleCreateInlineTemplate() {
+    setError(null);
+    const name = newTemplateName.trim();
+    if (!name) {
+      setError("Template name is required.");
+      return;
+    }
+    if (!memberKey) {
+      setError("Account unavailable — cannot save a template.");
+      return;
+    }
+    setSavingTemplate(true);
+    try {
+      const id = await createUserTemplate({
+        accountId: memberKey,
+        name,
+        description: newTemplateDesc.trim() || undefined,
+        includedBlocks: [...PIPELINE_BLOCK_IDS],
+      });
+      setTemplateSel(`user:${id}`);
+      setShowNewTemplateForm(false);
+      setNewTemplateName("");
+      setNewTemplateDesc("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  const wizardStepStrategy = (
+    <div className="space-y-4" data-testid="wizard-step-template">
+      <div>
+        <p className="text-sm font-medium text-foreground">
+          Choose how this loan file should start
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Pick a catalog strategy, one of your saved templates, your default
+          drawer layout, or create a new template. You must select an option
+          before creating the file.
+        </p>
+      </div>
+
+      {/* Scroll ownership lives on the dialog body — no nested max-height here. */}
+      <div
+        className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+        data-testid="wizard-template-cards"
+      >
+        <button
+          type="button"
+          onClick={() => setTemplateSel("")}
+          aria-pressed={templateSel === ""}
+          data-testid="wizard-template-default"
+          className={cn(
+            "rounded-dlc-md border px-3 py-2.5 text-left transition-colors duration-dlc-standard",
+            templateSel === ""
+              ? "border-primary/60 bg-primary/10"
+              : "border-border/70 bg-background hover:border-primary/35",
+          )}
+        >
+          <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+            <FileStack className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            Use my saved default
+            {templateSel === "" ? (
+              <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+            ) : null}
+          </span>
+          <span className="mt-0.5 block text-[11px] text-muted-foreground">
+            Your account drawer layout — no catalog strategy applied.
+          </span>
+        </button>
+        {builtInTemplates.map((t) => (
+          <button
+            key={t.templateId}
+            type="button"
+            onClick={() => setTemplateSel(t.templateId)}
+            aria-pressed={templateSel === t.templateId}
+            className={cn(
+              "rounded-dlc-md border px-3 py-2.5 text-left transition-colors duration-dlc-standard",
+              templateSel === t.templateId
+                ? "border-primary/60 bg-primary/10"
+                : "border-border/70 bg-background hover:border-primary/35",
+            )}
+          >
+            <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+              {t.name}
+              {templateSel === t.templateId ? (
+                <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-primary" />
+              ) : null}
+            </span>
+            <span className="mt-0.5 line-clamp-2 block text-[11px] text-muted-foreground">
+              {t.description}
+            </span>
+          </button>
+        ))}
+        {(userTemplates ?? []).map((t) => (
+          <button
+            key={t._id}
+            type="button"
+            onClick={() => setTemplateSel(`user:${t._id}`)}
+            aria-pressed={templateSel === `user:${t._id}`}
+            className={cn(
+              "rounded-dlc-md border px-3 py-2.5 text-left transition-colors duration-dlc-standard",
+              templateSel === `user:${t._id}`
+                ? "border-primary/60 bg-primary/10"
+                : "border-border/70 bg-background hover:border-primary/35",
+            )}
+          >
+            <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+              {t.name}
+              {templateSel === `user:${t._id}` ? (
+                <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-primary" />
+              ) : null}
+            </span>
+            <span className="mt-0.5 line-clamp-2 block text-[11px] text-muted-foreground">
+              {t.description || "Personal template"}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-2 border-t border-border/60 pt-3">
+        {!showNewTemplateForm ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-10 justify-start gap-1.5"
+              onClick={() => {
+                setError(null);
+                setShowNewTemplateForm(true);
+              }}
+              data-testid="wizard-create-template-toggle"
+            >
+              <Plus className="h-4 w-4" />
+              Create new template
+            </Button>
+            <Link
+              href="/settings/loan-templates"
+              className="text-xs text-primary underline underline-offset-2"
+              onClick={onClose}
+            >
+              Manage templates in Settings
+            </Link>
+          </div>
+        ) : (
+          <div
+            className="space-y-3 rounded-dlc-md border border-border/70 bg-muted/10 p-3"
+            data-testid="wizard-new-template-form"
+          >
+            <p className="text-xs font-medium text-foreground">
+              New personal template
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              Starts with the full block set. Refine blocks, favorites, and
+              playbooks later in Settings.
+            </p>
+            <div>
+              <Label htmlFor="wizard-new-template-name">Template name</Label>
+              <Input
+                id="wizard-new-template-name"
+                value={newTemplateName}
+                onChange={(e) => setNewTemplateName(e.target.value)}
+                placeholder="e.g. My bridge layout"
+              />
+            </div>
+            <div>
+              <Label htmlFor="wizard-new-template-desc">Description</Label>
+              <Input
+                id="wizard-new-template-desc"
+                value={newTemplateDesc}
+                onChange={(e) => setNewTemplateDesc(e.target.value)}
+                placeholder="Optional"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                disabled={savingTemplate || !newTemplateName.trim()}
+                onClick={() => void handleCreateInlineTemplate()}
+                data-testid="wizard-save-new-template"
+              >
+                {savingTemplate ? "Saving…" : "Save & select"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={savingTemplate}
+                onClick={() => {
+                  setShowNewTemplateForm(false);
+                  setNewTemplateName("");
+                  setNewTemplateDesc("");
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {templateSel === null ? (
+        <p className="text-xs text-muted-foreground" role="status">
+          Select a template card above to enable Create.
+        </p>
+      ) : null}
+    </div>
+  );
+
   return (
     <>
       <OverlayShell
@@ -920,7 +1099,7 @@ export function NewPipelineHierarchyCreateDialog({
         data-testid="pipeline-hierarchy-create-dialog"
       >
         <form
-          className="relative w-full max-w-lg rounded-xl border border-border bg-dlc-surface-high p-5 shadow-dlc-3"
+          className="relative flex max-h-[min(90dvh,720px)] w-full min-h-0 max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-dlc-surface-high p-5 shadow-dlc-3"
           onSubmit={(e) => {
             if (isWizard && step !== 3) {
               e.preventDefault();
@@ -929,7 +1108,7 @@ export function NewPipelineHierarchyCreateDialog({
             void handleSubmit(e);
           }}
         >
-          <div className="mb-4 flex items-start justify-between gap-2">
+          <div className="mb-4 flex shrink-0 items-start justify-between gap-2">
             <div>
               <h2 className="text-lg font-semibold">{title}</h2>
               {isWizard ? (
@@ -943,151 +1122,153 @@ export function NewPipelineHierarchyCreateDialog({
             </button>
           </div>
 
-          {isWizard
-            ? step === 1
-              ? wizardStepOne
-              : step === 2
-                ? wizardStepProject
-                : wizardStepStrategy
-            : null}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-scroll-y">
+            {isWizard
+              ? step === 1
+                ? wizardStepOne
+                : step === 2
+                  ? wizardStepProject
+                  : wizardStepStrategy
+              : null}
 
-          {mode === "project" && !lockedClientId ? (
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="hier-pick-client">Client</Label>
-                <select
-                  id="hier-pick-client"
-                  className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
-                  value={clientId}
-                  onChange={(e) => {
-                    setClientId(e.target.value as Id<"clients"> | "");
-                    setProjectId("");
-                  }}
-                >
-                  <option value="">Select client…</option>
-                  {(clients ?? []).map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.displayName}
-                    </option>
-                  ))}
-                </select>
+            {mode === "project" && !lockedClientId ? (
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="hier-pick-client">Client</Label>
+                  <select
+                    id="hier-pick-client"
+                    className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
+                    value={clientId}
+                    onChange={(e) => {
+                      setClientId(e.target.value as Id<"clients"> | "");
+                      setProjectId("");
+                    }}
+                  >
+                    <option value="">Select client…</option>
+                    {(clients ?? []).map((c) => (
+                      <option key={c._id} value={c._id}>
+                        {c.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="hier-new-project">New project title</Label>
+                  <Input
+                    id="hier-new-project"
+                    value={projectTitle}
+                    onChange={(e) => setProjectTitle(e.target.value)}
+                  />
+                </div>
               </div>
+            ) : null}
+
+            {mode === "project" && lockedClientId ? (
               <div>
-                <Label htmlFor="hier-new-project">New project title</Label>
+                <Label htmlFor="hier-new-project-locked">New project title</Label>
                 <Input
-                  id="hier-new-project"
+                  id="hier-new-project-locked"
                   value={projectTitle}
                   onChange={(e) => setProjectTitle(e.target.value)}
+                  placeholder="Project title"
+                  autoFocus
                 />
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {mode === "project" && lockedClientId ? (
-            <div>
-              <Label htmlFor="hier-new-project-locked">New project title</Label>
-              <Input
-                id="hier-new-project-locked"
-                value={projectTitle}
-                onChange={(e) => setProjectTitle(e.target.value)}
-                placeholder="Project title"
-                autoFocus
-              />
-            </div>
-          ) : null}
-
-          {mode === "loan" && !lockedProjectId ? (
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="hier-pick-client-loan">Client</Label>
-                <select
-                  id="hier-pick-client-loan"
-                  className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
-                  value={clientId}
-                  onChange={(e) => {
-                    setClientId(e.target.value as Id<"clients"> | "");
-                    setProjectId("");
-                  }}
-                >
-                  <option value="">Select client…</option>
-                  {(clients ?? []).map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.displayName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <Label htmlFor="hier-pick-project">Project</Label>
-                <select
-                  id="hier-pick-project"
-                  className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
-                  value={projectId}
-                  disabled={!effectiveClientId}
-                  onChange={(e) =>
-                    setProjectId(e.target.value as Id<"projects"> | "")
-                  }
-                >
-                  <option value="">Select project…</option>
-                  {(projects ?? []).map((p) => (
-                    <option key={p._id} value={p._id}>
-                      {p.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ) : null}
-
-          {!isWizard ? (
-            <div className="mt-4 space-y-3 border-t border-border/60 pt-4">
-              <div>
-                <Label htmlFor="hier-file-name">Loan file name</Label>
-                <Input
-                  id="hier-file-name"
-                  value={fileName}
-                  onChange={(e) => setFileName(e.target.value)}
-                  placeholder="Optional — defaults to client – project"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+            {mode === "loan" && !lockedProjectId ? (
+              <div className="space-y-3">
                 <div>
-                  <Label htmlFor="hier-funding">Funding amount</Label>
-                  <Input
-                    id="hier-funding"
-                    inputMode="decimal"
-                    value={fundingAmount}
-                    onChange={(e) => setFundingAmount(e.target.value)}
-                  />
+                  <Label htmlFor="hier-pick-client-loan">Client</Label>
+                  <select
+                    id="hier-pick-client-loan"
+                    className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
+                    value={clientId}
+                    onChange={(e) => {
+                      setClientId(e.target.value as Id<"clients"> | "");
+                      setProjectId("");
+                    }}
+                  >
+                    <option value="">Select client…</option>
+                    {(clients ?? []).map((c) => (
+                      <option key={c._id} value={c._id}>
+                        {c.displayName}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
-                  <Label htmlFor="hier-rate">Rate %</Label>
+                  <Label htmlFor="hier-pick-project">Project</Label>
+                  <select
+                    id="hier-pick-project"
+                    className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
+                    value={projectId}
+                    disabled={!effectiveClientId}
+                    onChange={(e) =>
+                      setProjectId(e.target.value as Id<"projects"> | "")
+                    }
+                  >
+                    <option value="">Select project…</option>
+                    {(projects ?? []).map((p) => (
+                      <option key={p._id} value={p._id}>
+                        {p.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ) : null}
+
+            {!isWizard ? (
+              <div className="mt-4 space-y-3 border-t border-border/60 pt-4">
+                <div>
+                  <Label htmlFor="hier-file-name">Loan file name</Label>
                   <Input
-                    id="hier-rate"
-                    inputMode="decimal"
-                    value={rate}
-                    onChange={(e) => setRate(e.target.value)}
+                    id="hier-file-name"
+                    value={fileName}
+                    onChange={(e) => setFileName(e.target.value)}
+                    placeholder="Optional — defaults to client – project"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="hier-funding">Funding amount</Label>
+                    <Input
+                      id="hier-funding"
+                      inputMode="decimal"
+                      value={fundingAmount}
+                      onChange={(e) => setFundingAmount(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="hier-rate">Rate %</Label>
+                    <Input
+                      id="hier-rate"
+                      inputMode="decimal"
+                      value={rate}
+                      onChange={(e) => setRate(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="hier-term">Term</Label>
+                  <Input
+                    id="hier-term"
+                    value={term}
+                    onChange={(e) => setTerm(e.target.value)}
                   />
                 </div>
               </div>
-              <div>
-                <Label htmlFor="hier-term">Term</Label>
-                <Input
-                  id="hier-term"
-                  value={term}
-                  onChange={(e) => setTerm(e.target.value)}
-                />
-              </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {error ? (
-            <p className="mt-3 text-sm text-destructive" role="alert">
-              {error}
-            </p>
-          ) : null}
+            {error ? (
+              <p className="mt-3 text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            ) : null}
+          </div>
 
-          <div className="mt-5 flex justify-end gap-2">
+          <div className="mt-5 flex shrink-0 justify-end gap-2">
             {isWizard && step > 1 ? (
               <Button
                 type="button"
@@ -1133,6 +1314,18 @@ export function NewPipelineHierarchyCreateDialog({
                     setError("Project title is required.");
                     return;
                   }
+                  const loan = parseNum(fundingAmount);
+                  if (Number.isNaN(loan) || loan < 0) {
+                    setError("Enter a valid funding amount (0 or more).");
+                    return;
+                  }
+                  const r = rate.trim() === "" ? 0 : parseNum(rate);
+                  if (Number.isNaN(r) || r < 0) {
+                    setError("Enter a valid rate (0 or more).");
+                    return;
+                  }
+                  setTemplateSel(TEMPLATE_UNSELECTED);
+                  setShowNewTemplateForm(false);
                   setStep(3);
                 }}
                 data-testid="wizard-next-step"
@@ -1140,8 +1333,16 @@ export function NewPipelineHierarchyCreateDialog({
                 Next
               </Button>
             ) : (
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Creating…" : "Create"}
+              <Button
+                type="submit"
+                disabled={
+                  submitting ||
+                  (isWizard &&
+                    (templateSel === null || !step3CreateArmed))
+                }
+                data-testid="wizard-create-file"
+              >
+                {submitting ? "Creating…" : "Create file"}
               </Button>
             )}
           </div>

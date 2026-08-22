@@ -424,6 +424,10 @@ export function FileWorkspaceContainer({
 
         density="compact"
 
+        detachable={false}
+
+        clientAssignBlockId={false}
+
         contentClassName="p-0"
 
       >

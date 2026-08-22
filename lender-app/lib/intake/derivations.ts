@@ -83,12 +83,19 @@ export function deriveIntake(sheet: Sheet) {
 
   // --- REO ---
   const reo = sheet.reo ?? [];
+  const usageNorm = (u?: string) => (u ?? "").trim().toLowerCase();
   const reoCounts = {
     total: reo.length,
-    primary: reo.filter((r) => r.usage === "Primary").length,
-    secondHome: reo.filter((r) => r.usage === "2nd Home").length,
-    rental: reo.filter((r) => r.usage === "Rental").length,
-    commercial: reo.filter((r) => r.usage === "Commercial").length,
+    primary: reo.filter((r) => usageNorm(r.usage) === "primary").length,
+    secondHome: reo.filter((r) => {
+      const u = usageNorm(r.usage);
+      return u === "2nd home" || u === "second home";
+    }).length,
+    rental: reo.filter((r) => usageNorm(r.usage) === "rental").length,
+    commercial: reo.filter((r) => {
+      const u = usageNorm(r.usage);
+      return u === "commercial" || u === "com";
+    }).length,
   };
 
   function reoMatchesAddress(addr: string): boolean {

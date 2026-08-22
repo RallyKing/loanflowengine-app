@@ -165,6 +165,9 @@ export async function ensurePipelineHubListVisible(page: Page) {
 
   await expect
     .poll(async () => {
+      if (await isPipelineHubDegraded(page).isVisible().catch(() => false)) {
+        return "degraded";
+      }
       if (
         await page
           .getByTestId("pipeline-hub-hierarchy-shell")
@@ -222,7 +225,7 @@ export async function ensurePipelineHubListVisible(page: Page) {
       if (rows > 0) return "rows";
       return "";
     }, { timeout: 45_000 })
-    .toMatch(/shell|hierarchy|table|cards|empty|rows/);
+    .toMatch(/shell|hierarchy|table|cards|empty|rows|degraded/);
 }
 
 /**

@@ -45,6 +45,12 @@ import type { InlineSelectOption } from "@/components/inline";
 import { hubHierarchySectionVisible } from "@/lib/debug/phase24-4I-hub-stabilization";
 import { HubExpandChevron } from "@/components/pipeline/HubExpandChevron";
 import { HubProjectDetailSubsections } from "@/components/pipeline/HubProjectDetailSubsections";
+import {
+  hubEntitySectionClass,
+  hubIconQuietClass,
+  hubLoanCardClass,
+  hubSurfaceMotionClass,
+} from "@/lib/ui/pipelineHubSurfaces";
 
 function fileRowParentPath(row: PipelineTablePreviewRow): string | undefined {
   const client = row.clientDisplayName?.trim();
@@ -132,11 +138,11 @@ function EntitySection({
 
   return (
     <section
-      className="rounded-lg border-2 border-border/70 bg-dlc-surface/80 shadow-dlc-1"
+      className={hubEntitySectionClass}
       data-testid={testId}
       data-pipeline-hub-component="EntitySection"
     >
-      <div className="flex w-full items-start gap-2 px-3 py-3 hover:bg-muted/30">
+      <div className="flex w-full items-start gap-2 px-3 py-3 hover:bg-dlc-surface-low/40">
         <HubExpandChevron
           expanded={expanded}
           onToggle={onToggle}
@@ -149,7 +155,7 @@ function EntitySection({
           onClick={onToggle}
           aria-expanded={expanded}
         >
-          <Icon className="mt-0.5 h-4 w-4 shrink-0 text-foreground/70" />
+          <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", hubIconQuietClass)} />
           <div className="min-w-0 flex-1">
             <div className="text-base font-semibold text-foreground">{node.label}</div>
             <p className="text-xs text-muted-foreground">
@@ -221,11 +227,11 @@ function ProjectFocusSection({
   const canInlineCreate = !project.projectId.startsWith("legacy");
   return (
     <section
-      className="rounded-lg border-2 border-border/70 bg-dlc-surface/80 shadow-dlc-1"
+      className={hubEntitySectionClass}
       data-testid="pipeline-hub-project-focus"
       data-pipeline-hub-component="ProjectFocusSection"
     >
-      <div className="flex w-full items-start gap-2 px-3 py-3 hover:bg-muted/30">
+      <div className="flex w-full items-start gap-2 px-3 py-3 hover:bg-dlc-surface-low/40">
         <HubExpandChevron
           expanded={expanded}
           onToggle={onToggle}
@@ -238,7 +244,7 @@ function ProjectFocusSection({
           onClick={onToggle}
           aria-expanded={expanded}
         >
-          <FolderKanban className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+          <FolderKanban className={cn("mt-0.5 h-4 w-4 shrink-0", hubIconQuietClass)} />
           <div className="min-w-0 flex-1">
             <div className="text-base font-semibold text-foreground">
               {project.title}
@@ -339,12 +345,17 @@ function TaskFocusRow({
   return (
     <button
       type="button"
-      className="flex w-full flex-col rounded-md border-2 border-border/60 bg-background px-3 py-2 text-left shadow-sm transition-colors hover:bg-muted/30"
+      className={cn(
+        "flex w-full flex-col px-3 py-2 text-left",
+        hubLoanCardClass,
+        hubSurfaceMotionClass,
+        "hover:bg-dlc-surface-low/35",
+      )}
       onClick={() => onOpenFile(node.row._id)}
       data-testid={`pipeline-hub-task-row-${node.taskId}`}
     >
       <div className="flex items-start gap-2">
-        <CheckSquare className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+        <CheckSquare className="mt-0.5 h-4 w-4 shrink-0 text-primary/75" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-foreground">
             {node.label}

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { Drawer } from "vaul";
 import { cn } from "@/lib/cn";
+import { WORKSPACE_SHEET_SAFE_TOP_PAD_CLASS } from "@/lib/ui/safeArea";
 
 export type WorkspaceSheetSnap = "compact" | "comfort" | "expanded";
 
@@ -142,18 +143,21 @@ export function PipelineWorkspaceMobileVaulFrame({
             <Drawer.Portal container={host}>
               <Drawer.Content
                 className={cn(
-                  "flex max-h-full max-w-full flex-col bg-background outline-none max-sm:pt-[env(safe-area-inset-top)]",
+                  /* Single top safe-area for file route (no master header). Match Vaul max-md. */
+                  "flex max-h-full max-w-full flex-col bg-background outline-none",
+                  WORKSPACE_SHEET_SAFE_TOP_PAD_CLASS,
                   "shadow-[0_12px_40px_-18px_rgba(0,0,0,0.35)] dark:shadow-[0_12px_48px_-12px_rgba(0,0,0,0.65)]",
                   reduceMotion && "max-md:!transition-none",
                 )}
                 aria-label="Pipeline file workspace sheet"
                 data-workspace-snap={snapFromIndex(snapIdx)}
+                data-workspace-sheet-safe-top
               >
                 {!reduceMotion ? (
-                  <div className="flex shrink-0 justify-center border-b border-border/50 bg-background py-2">
+                  <div className="flex shrink-0 justify-center border-b border-border/40 bg-background py-1">
                     <Drawer.Handle
                       aria-label="Drag to resize workspace (snap)"
-                      className="!bg-muted-foreground/35"
+                      className="!bg-muted-foreground/35 !h-1 !w-10"
                     />
                   </div>
                 ) : null}

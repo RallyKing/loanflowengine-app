@@ -183,7 +183,9 @@ export function resolvePipelineStageStyle(
   value: PipelineStatusValue,
   custom?: PipelineStageStyleMap
 ): PipelineStageStyle {
-  const base = DEFAULT_PIPELINE_STAGE_STYLES[value];
+  const base =
+    DEFAULT_PIPELINE_STAGE_STYLES[value] ??
+    DEFAULT_PIPELINE_STAGE_STYLES.confirm_interest;
   const override = custom?.[value] ?? {};
   const backgroundColor = normalizeStyleColor(override.backgroundColor, base.backgroundColor);
   const borderColor = normalizeStyleColor(override.borderColor, base.borderColor);
@@ -362,8 +364,8 @@ export function getPipelineStatusInfo(raw: string): PipelineStatusInfo {
   if (direct) return direct;
   const legacyTarget = LEGACY_STATUS_MAP[key];
   if (legacyTarget) {
-    const mapped = PIPELINE_STATUSES.find((s) => s.value === legacyTarget)!;
-    return mapped;
+    const mapped = PIPELINE_STATUSES.find((s) => s.value === legacyTarget);
+    if (mapped) return mapped;
   }
   return {
     value: key as PipelineStatusValue,

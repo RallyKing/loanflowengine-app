@@ -123,6 +123,41 @@ assert(
   "Workspace must import downloadVaultDocumentAsPdf",
 );
 
+// 4b. Explorer ZIP / per-file download wiring
+assert(
+  fs.existsSync(path.join(ROOT, "lib/library/downloadVaultDocumentsZip.ts")),
+  "lib/library/downloadVaultDocumentsZip.ts must exist",
+);
+assert(
+  workspace.includes("downloadVaultDocumentsZip"),
+  "Workspace must reuse downloadVaultDocumentsZip",
+);
+assert(
+  workspace.includes("downloadRemoteFile"),
+  "Workspace must reuse downloadRemoteFile for per-file download",
+);
+assert(
+  workspace.includes("handleDownloadAll") ||
+    workspace.includes("onDownloadAll"),
+  "Workspace must wire Download all",
+);
+assert(
+  tree.includes("document-vault-download-all") ||
+    tree.includes("onDownloadAll"),
+  "Explorer toolbar must expose Download all",
+);
+assert(
+  tree.includes("document-vault-download-selected") ||
+    tree.includes("onDownloadSelected"),
+  "Explorer toolbar must expose Download selected",
+);
+assert(
+  read("components/library/DocumentVaultExplorerFileRow.tsx").includes(
+    "onDownload",
+  ),
+  "Explorer file row must expose per-file Download",
+);
+
 // 5. Recall drawer
 const recall = read("components/library/RecallFromClientVaultDrawer.tsx");
 assert(

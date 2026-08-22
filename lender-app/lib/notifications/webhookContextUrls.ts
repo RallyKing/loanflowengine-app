@@ -14,7 +14,13 @@ export function brokerAppOrigin(): string {
 }
 
 /** Direct link to the broker Document Vault tab for a pipeline file. */
-export function brokerDocumentVaultUrl(pipelineFileId: Id<"pipeline"> | string): string {
+export function brokerDocumentVaultUrl(
+  pipelineFileId: Id<"pipeline"> | string,
+  documentId?: Id<"libraryDocuments"> | string,
+): string {
   const id = String(pipelineFileId);
-  return `${brokerAppOrigin()}/pipeline/${encodeURIComponent(id)}#pipeline-documents-vault`;
+  const q = new URLSearchParams();
+  q.set("tab", "documents");
+  if (documentId) q.set("document", String(documentId));
+  return `${brokerAppOrigin()}/pipeline/${encodeURIComponent(id)}?${q.toString()}`;
 }

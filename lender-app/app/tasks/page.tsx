@@ -620,13 +620,21 @@ function TaskRow({
     ReadonlySet<string>
   >(() => new Set());
 
+  // Only re-seed expand/collapse when identity or type changes — never on
+  // errandLocations patches (Convex reactive refetch). Depending on `t`
+  // collapsed the grocery list after every checkbox on large runs.
   useEffect(() => {
-    if (t.type !== "errands_groceries") return;
-    const o = defaultErrandListStartsExpanded(t);
-    setErrandRowOpen(o);
-    setErrandDetailExpanded(o);
+    if (t.type === "errands_groceries") {
+      const o = defaultErrandListStartsExpanded(t);
+      setErrandRowOpen(o);
+      setErrandDetailExpanded(o);
+    } else {
+      setErrandRowOpen(false);
+      setErrandDetailExpanded(false);
+    }
     setErrandCollapsedStores(new Set());
-  }, [t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: preserve UI across task field updates
+  }, [t._id, t.type]);
 
   const toggleErrandStoreCollapse = useCallback((storeId: string) => {
     setErrandCollapsedStores((prev) => {
@@ -764,7 +772,7 @@ function TaskRow({
           </span>
           <label
             className={cn(
-              "flex shrink-0 cursor-pointer items-center justify-center rounded-md border border-input p-1 transition-colors",
+              "flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md border border-input transition-colors",
               isDone
                 ? "bg-primary text-primary-foreground hover:bg-primary/90"
                 : "hover:bg-muted",
@@ -803,7 +811,7 @@ function TaskRow({
                 ? setErrandRowOpen((v) => !v)
                 : setExpanded((v) => !v)
             }
-            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
           >
             {t.type === "errands_groceries" ? (
               errandRowOpen ? (
@@ -840,7 +848,7 @@ function TaskRow({
           )}
           {errandItemCount > 0 && (
             <span
-              className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-emerald-800/20 bg-emerald-950/[0.06] px-1.5 py-0.5 text-xs font-medium text-emerald-950/80 dark:border-emerald-500/30 dark:bg-emerald-950/25 dark:text-emerald-100/90"
               title={`${errandDone}/${errandItemCount} grocery/errand items checked`}
             >
               <ShoppingCart className="h-3 w-3" />
@@ -1004,7 +1012,7 @@ function TaskRow({
 
         <label
           className={cn(
-            "flex shrink-0 cursor-pointer items-center justify-center rounded-md border border-input p-1 transition-colors",
+            "flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-input transition-colors",
             isDone
               ? "bg-primary text-primary-foreground hover:bg-primary/90"
               : "hover:bg-muted"
@@ -1044,7 +1052,7 @@ function TaskRow({
               ? setErrandRowOpen((v) => !v)
               : setExpanded((v) => !v)
           }
-          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
         >
           {t.type === "errands_groceries" ? (
             errandRowOpen ? (
@@ -1105,7 +1113,7 @@ function TaskRow({
               )}
               {errandItemCount > 0 && (
                 <span
-                  className="inline-flex items-center gap-1 whitespace-nowrap"
+                  className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-emerald-800/20 bg-emerald-950/[0.06] px-1.5 py-0.5 font-medium text-emerald-950/80 dark:border-emerald-500/30 dark:bg-emerald-950/25 dark:text-emerald-100/90"
                   title={`${errandDone}/${errandItemCount} grocery/errand items checked`}
                 >
                   <ShoppingCart className="h-3 w-3" />
@@ -1926,7 +1934,13 @@ function TasksPageInner() {
   const updateTask: TaskUpdater = useCallback(
     async (t, patch) => {
       if (!canUseHub || !orgConvexArgs) return;
-      setUpdatingId(t._id);
+      // Errand/checklist toggles are high-frequency; locking the row disables
+      // every checkbox and flashes busy state on mobile mid-run.
+      const patchKeys = Object.keys(patch);
+      const lightweightRowPatch =
+        patchKeys.length === 1 &&
+        (patchKeys[0] === "errandLocations" || patchKeys[0] === "checklist");
+      if (!lightweightRowPatch) setUpdatingId(t._id);
       try {
         await update({
           id: t._id,
@@ -1961,7 +1975,7 @@ function TasksPageInner() {
           ...(actorUserKey ? { actorUserKey } : {}),
         });
       } finally {
-        setUpdatingId(null);
+        if (!lightweightRowPatch) setUpdatingId(null);
       }
     },
     [canUseHub, update, actorUserKey, orgConvexArgs]

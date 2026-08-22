@@ -166,6 +166,21 @@ export function fileTypeBadgeLabel(
   if (kind.includes("html") || name.endsWith(".html") || name.endsWith(".htm")) {
     return "HTML";
   }
+  if (
+    kind.includes("spreadsheet") ||
+    kind.includes("excel") ||
+    kind === "text/csv" ||
+    /\.(xlsx|xls|csv)$/i.test(name)
+  ) {
+    return name.endsWith(".csv") ? "CSV" : "XLS";
+  }
+  if (
+    kind.includes("wordprocessingml") ||
+    kind.includes("msword") ||
+    /\.(docx|doc)$/i.test(name)
+  ) {
+    return "DOC";
+  }
   if (kind.startsWith("text/") || name.endsWith(".txt")) return "TXT";
   if (/scan/i.test(fileName)) return "SCAN";
   return "FILE";

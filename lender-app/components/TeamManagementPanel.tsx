@@ -1,21 +1,45 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useActorUserKey } from "@/lib/useActorUserKey";
+import {
+  MIN_PLAINTEXT_PASSWORD_LENGTH,
+  plaintextPasswordRequirementSummary,
+  validatePlaintextPasswordPolicy,
+} from "@/lib/auth/passwordPolicy";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { UserCog } from "lucide-react";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
+
+type DirectoryRow = {
+  userKey: string;
+  tenantRole: "owner" | "admin" | "member";
+  productRoleLabel?: string;
+  assignedRoleId?: Id<"organizationRoles">;
+  isActive: boolean;
+  displayUsername?: string;
+  canonicalDisplayUsername?: string;
+};
+
+function memberLabel(row: DirectoryRow): string {
+  return (
+    row.canonicalDisplayUsername?.trim() ||
+    row.displayUsername?.trim() ||
+    row.userKey
+  );
+}
 
 export function TeamManagementPanel() {
   const { confirm } = useOperationalConfirm();
   const { activeOrganizationId, can } = useOrgPermissions();
   const memberUserKey = useActorUserKey();
   const orgId = activeOrganizationId;
+  const resetPasswordInputRef = useRef<HTMLInputElement>(null);
 
   const canManage = can("org.members.invite") || can("org.roles.manage");
 
@@ -43,7 +67,9 @@ export function TeamManagementPanel() {
   const [newRoleId, setNewRoleId] = useState<string>("");
   const [resetTarget, setResetTarget] = useState("");
   const [resetPassword, setResetPassword] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(
+    null,
+  );
   const [busy, setBusy] = useState(false);
 
   const roleOptions = useMemo(() => {
@@ -51,8 +77,36 @@ export function TeamManagementPanel() {
     return [...roles].sort((a, b) => a.label.localeCompare(b.label));
   }, [roles]);
 
+  /** Password reset targets: workspace members only (owner excluded, same as deactivate/remove). */
+  const resettableMembers = useMemo(() => {
+    if (!directory) return [];
+    return directory.filter((row) => row.tenantRole !== "owner");
+  }, [directory]);
+
+  const selectedResetMember = useMemo(
+    () => resettableMembers.find((row) => row.userKey === resetTarget) ?? null,
+    [resettableMembers, resetTarget],
+  );
+
+  const selectMemberForReset = useCallback((userKey: string) => {
+    setResetTarget(userKey);
+    setMsg(null);
+    window.requestAnimationFrame(() => {
+      resetPasswordInputRef.current?.focus();
+      resetPasswordInputRef.current?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    });
+  }, []);
+
   const onCreateUser = useCallback(async () => {
     if (!orgId || !memberUserKey || !newRoleId) return;
+    const pwErr = validatePlaintextPasswordPolicy(newPassword);
+    if (pwErr) {
+      setMsg({ kind: "err", text: pwErr });
+      return;
+    }
     setBusy(true);
     setMsg(null);
     try {
@@ -70,18 +124,39 @@ export function TeamManagementPanel() {
       if (!res.ok) {
         throw new Error(data.error ?? res.statusText);
       }
-      setMsg("User created and added to this workspace.");
+      setMsg({
+        kind: "ok",
+        text: "User created and added to this workspace.",
+      });
       setNewUsername("");
       setNewPassword("");
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg({
+        kind: "err",
+        text: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setBusy(false);
     }
   }, [orgId, memberUserKey, newUsername, newPassword, newRoleId]);
 
   const onResetPassword = useCallback(async () => {
-    if (!orgId || !resetTarget.trim() || !resetPassword) return;
+    if (!orgId || !resetTarget.trim()) {
+      setMsg({ kind: "err", text: "Select a team member first." });
+      return;
+    }
+    if (!resetPassword) {
+      setMsg({ kind: "err", text: "Enter a new password." });
+      return;
+    }
+    const pwErr = validatePlaintextPasswordPolicy(resetPassword);
+    if (pwErr) {
+      setMsg({ kind: "err", text: pwErr });
+      return;
+    }
+    const label = selectedResetMember
+      ? memberLabel(selectedResetMember)
+      : resetTarget.trim();
     setBusy(true);
     setMsg(null);
     try {
@@ -98,14 +173,20 @@ export function TeamManagementPanel() {
       if (!res.ok) {
         throw new Error(data.error ?? res.statusText);
       }
-      setMsg("Password updated; all sessions for that user were invalidated.");
+      setMsg({
+        kind: "ok",
+        text: `Password updated for ${label}; all of their sessions were signed out.`,
+      });
       setResetPassword("");
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg({
+        kind: "err",
+        text: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setBusy(false);
     }
-  }, [orgId, resetTarget, resetPassword]);
+  }, [orgId, resetTarget, resetPassword, selectedResetMember]);
 
   if (!orgId) {
     return (
@@ -128,11 +209,13 @@ export function TeamManagementPanel() {
     );
   }
 
+  const passwordHint = plaintextPasswordRequirementSummary();
+  const canSubmitReset =
+    Boolean(resetTarget.trim()) &&
+    resetPassword.length >= MIN_PLAINTEXT_PASSWORD_LENGTH;
+
   return (
-    <div
-      className="space-y-6"
-      data-testid="team-management-panel"
-    >
+    <div className="space-y-6" data-testid="team-management-panel">
       <div className="flex items-center gap-2 text-sm font-medium text-foreground">
         <UserCog className="h-4 w-4 shrink-0" aria-hidden />
         Team management
@@ -146,15 +229,19 @@ export function TeamManagementPanel() {
 
       {msg ? (
         <p
-          className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-foreground"
+          className={
+            msg.kind === "ok"
+              ? "rounded-dlc-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-foreground"
+              : "rounded-dlc-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-foreground"
+          }
           role="status"
         >
-          {msg}
+          {msg.text}
         </p>
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-3 rounded-lg border border-border/60 bg-muted/10 p-4">
+        <div className="space-y-3 rounded-dlc-md border border-border/60 bg-dlc-surface-low/40 p-4">
           <p className="text-sm font-medium text-foreground">Create user</p>
           <label className="block text-xs text-muted-foreground">
             Username (case-insensitive)
@@ -167,7 +254,7 @@ export function TeamManagementPanel() {
             />
           </label>
           <label className="block text-xs text-muted-foreground">
-            Initial password
+            Initial password ({passwordHint})
             <Input
               type="password"
               className="mt-1"
@@ -180,7 +267,7 @@ export function TeamManagementPanel() {
           <label className="block text-xs text-muted-foreground">
             Product role
             <Select
-              className="mt-1 h-9 w-full"
+              className="mt-1 h-10 w-full"
               value={newRoleId}
               onChange={(e) => setNewRoleId(e.target.value)}
               disabled={busy || !roleOptions.length}
@@ -195,7 +282,7 @@ export function TeamManagementPanel() {
           </label>
           <Button
             type="button"
-            size="sm"
+            className="min-h-10"
             disabled={busy || !newUsername.trim() || !newPassword || !newRoleId}
             onClick={() => void onCreateUser()}
           >
@@ -203,40 +290,69 @@ export function TeamManagementPanel() {
           </Button>
         </div>
 
-        <div className="space-y-3 rounded-lg border border-border/60 bg-muted/10 p-4">
+        <div
+          id="team-reset-password"
+          className="space-y-3 rounded-dlc-md border border-border/60 bg-dlc-surface-low/40 p-4"
+        >
           <p className="text-sm font-medium text-foreground">Reset password</p>
+          <p className="text-xs text-muted-foreground">
+            Choose a member (or use Reset password on a row), set a new
+            password, then apply. Their active sessions are signed out
+            immediately. Workspace owner accounts are not reset from this form.
+          </p>
           <label className="block text-xs text-muted-foreground">
-            Target user key (Convex auth id)
-            <Input
-              className="mt-1 font-mono text-xs"
+            Team member
+            <Select
+              className="mt-1 h-10 w-full"
               value={resetTarget}
-              onChange={(e) => setResetTarget(e.target.value)}
-              disabled={busy}
-            />
+              onChange={(e) => {
+                setResetTarget(e.target.value);
+                setMsg(null);
+              }}
+              disabled={busy || resettableMembers.length === 0}
+              data-testid="team-reset-member-select"
+            >
+              <option value="">
+                {resettableMembers.length === 0
+                  ? "No resettable members"
+                  : "Select member…"}
+              </option>
+              {resettableMembers.map((row) => (
+                <option key={row.userKey} value={row.userKey}>
+                  {memberLabel(row)}
+                  {!row.isActive ? " (deactivated)" : ""}
+                  {row.tenantRole === "admin" ? " · Admin" : ""}
+                </option>
+              ))}
+            </Select>
           </label>
           <label className="block text-xs text-muted-foreground">
-            New password
+            New password ({passwordHint})
             <Input
+              ref={resetPasswordInputRef}
               type="password"
               className="mt-1"
               value={resetPassword}
               onChange={(e) => setResetPassword(e.target.value)}
-              disabled={busy}
+              autoComplete="new-password"
+              disabled={busy || !resetTarget}
+              data-testid="team-reset-password-input"
             />
           </label>
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            disabled={busy || !resetTarget.trim() || !resetPassword}
+            className="min-h-10"
+            disabled={busy || !canSubmitReset}
             onClick={() => void onResetPassword()}
+            data-testid="team-reset-password-submit"
           >
             Reset password &amp; invalidate sessions
           </Button>
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border/60">
+      <div className="overflow-x-auto rounded-dlc-md border border-border/60">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="border-b border-border/60 bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
@@ -264,13 +380,15 @@ export function TeamManagementPanel() {
               directory.map((row) => (
                 <tr
                   key={row.userKey}
-                  className="border-b border-border/40 last:border-b-0"
+                  className={
+                    resetTarget === row.userKey
+                      ? "border-b border-border/40 bg-primary/5 last:border-b-0"
+                      : "border-b border-border/40 last:border-b-0"
+                  }
                 >
                   <td className="px-3 py-2 align-top">
                     <div className="font-medium text-foreground">
-                      {row.canonicalDisplayUsername ??
-                        row.displayUsername ??
-                        "—"}
+                      {memberLabel(row)}
                     </div>
                   </td>
                   <td className="px-3 py-2 align-top text-xs capitalize">
@@ -281,7 +399,7 @@ export function TeamManagementPanel() {
                       <span className="text-muted-foreground">—</span>
                     ) : (
                       <Select
-                        className="h-8 w-full max-w-[220px] text-xs"
+                        className="h-10 w-full max-w-[220px] text-xs"
                         key={`${row.userKey}-${row.assignedRoleId ?? ""}`}
                         defaultValue={row.assignedRoleId ?? ""}
                         disabled={busy || !roleOptions.length}
@@ -296,11 +414,18 @@ export function TeamManagementPanel() {
                                 assignedRoleId: v,
                                 actorUserKey: memberUserKey,
                               });
-                              setMsg("Role updated; user sessions refreshed.");
+                              setMsg({
+                                kind: "ok",
+                                text: "Role updated; user sessions refreshed.",
+                              });
                             } catch (err) {
-                              setMsg(
-                                err instanceof Error ? err.message : String(err),
-                              );
+                              setMsg({
+                                kind: "err",
+                                text:
+                                  err instanceof Error
+                                    ? err.message
+                                    : String(err),
+                              });
                             }
                           })();
                         }}
@@ -331,7 +456,17 @@ export function TeamManagementPanel() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-8 px-2"
+                            className="min-h-10 px-2.5"
+                            disabled={busy}
+                            onClick={() => selectMemberForReset(row.userKey)}
+                          >
+                            Reset password
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="min-h-10 px-2.5"
                             disabled={busy}
                             onClick={() => {
                               void (async () => {
@@ -342,11 +477,18 @@ export function TeamManagementPanel() {
                                     isActive: !row.isActive,
                                     actorUserKey: memberUserKey,
                                   });
-                                  setMsg("Membership updated.");
+                                  setMsg({
+                                    kind: "ok",
+                                    text: "Membership updated.",
+                                  });
                                 } catch (e) {
-                                  setMsg(
-                                    e instanceof Error ? e.message : String(e),
-                                  );
+                                  setMsg({
+                                    kind: "err",
+                                    text:
+                                      e instanceof Error
+                                        ? e.message
+                                        : String(e),
+                                  });
                                 }
                               })();
                             }}
@@ -357,7 +499,7 @@ export function TeamManagementPanel() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-8 px-2"
+                            className="min-h-10 px-2.5"
                             disabled={busy}
                             onClick={() => {
                               void (async () => {
@@ -367,11 +509,18 @@ export function TeamManagementPanel() {
                                     targetUserKey: row.userKey,
                                     actorUserKey: memberUserKey,
                                   });
-                                  setMsg("Sessions revoked.");
+                                  setMsg({
+                                    kind: "ok",
+                                    text: "Sessions revoked.",
+                                  });
                                 } catch (e) {
-                                  setMsg(
-                                    e instanceof Error ? e.message : String(e),
-                                  );
+                                  setMsg({
+                                    kind: "err",
+                                    text:
+                                      e instanceof Error
+                                        ? e.message
+                                        : String(e),
+                                  });
                                 }
                               })();
                             }}
@@ -382,17 +531,14 @@ export function TeamManagementPanel() {
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="h-8 px-2 text-destructive"
+                            className="min-h-10 px-2.5 text-destructive"
                             disabled={busy}
                             onClick={() => {
                               void (async () => {
                                 const ok = await confirm({
                                   variant: "remove_collaborator",
                                   title: "Remove collaborator",
-                                  entityName:
-                                    row.canonicalDisplayUsername?.trim() ||
-                                    row.displayUsername?.trim() ||
-                                    row.userKey,
+                                  entityName: memberLabel(row),
                                   impact:
                                     "They will lose access to this workspace.",
                                 });
@@ -403,11 +549,22 @@ export function TeamManagementPanel() {
                                     userKey: row.userKey,
                                     actorUserKey: memberUserKey,
                                   });
-                                  setMsg("Member removed.");
+                                  if (resetTarget === row.userKey) {
+                                    setResetTarget("");
+                                    setResetPassword("");
+                                  }
+                                  setMsg({
+                                    kind: "ok",
+                                    text: "Member removed.",
+                                  });
                                 } catch (e) {
-                                  setMsg(
-                                    e instanceof Error ? e.message : String(e),
-                                  );
+                                  setMsg({
+                                    kind: "err",
+                                    text:
+                                      e instanceof Error
+                                        ? e.message
+                                        : String(e),
+                                  });
                                 }
                               })();
                             }}

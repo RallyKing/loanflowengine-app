@@ -4,7 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { APP_DISPLAY_NAME, APP_MONOGRAM, APP_TAGLINE } from "@/lib/brandIdentity";
+import {
+  APP_DISPLAY_NAME,
+  APP_HOME_HREF,
+  APP_MONOGRAM,
+  APP_TAGLINE,
+} from "@/lib/brandIdentity";
 import { ChevronLeft } from "lucide-react";
 import { useColorScheme } from "@/lib/colorScheme";
 import { ColorSchemeToggle } from "@/components/ColorSchemeToggle";
@@ -34,6 +39,11 @@ import {
   mobileChromePaddingExpandedY,
   mobileContentBottomPadTransition,
 } from "@/lib/mobileCompactChrome";
+import {
+  MASTER_HEADER_SAFE_TOP_H_LOCKED_CLASS,
+  MASTER_HEADER_SAFE_TOP_MAX_H_UNLOCKED_CLASS,
+  MASTER_HEADER_SAFE_TOP_PAD_CLASS,
+} from "@/lib/ui/safeArea";
 import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { useAuth, UserButton } from "@/lib/sessionUiClient";
 import { UserOnboardingChecklist } from "@/components/UserOnboardingChecklist";
@@ -278,9 +288,10 @@ function AppChromeBody({
         {saasMenuOpen ? (
           <button
             type="button"
-            className="fixed inset-0 bg-black/50 md:hidden"
+            className="fixed inset-0 min-h-[100dvh] min-h-[100svh] bg-black/50 md:hidden"
             style={shellZIndexStyle("overlay")}
             aria-label="Close menu"
+            data-saas-menu-scrim
             onClick={() => setSaasMenuOpen(false)}
           />
         ) : null}
@@ -297,11 +308,18 @@ function AppChromeBody({
             data-pipeline-static-top-chrome={pipelineStaticChrome ? "visible" : undefined}
             data-pipeline-layout-locked={pipelineLayoutLocked ? "true" : undefined}
             className={cn(
-              "shrink-0 flex-shrink-0 border-b border-border/80 shadow-dlc-2 supports-[overflow-anchor:auto]:[overflow-anchor:none]",
+              "relative shrink-0 flex-shrink-0 border-b border-border/80 shadow-dlc-2 supports-[overflow-anchor:auto]:[overflow-anchor:none]",
               "bg-background",
+              MASTER_HEADER_SAFE_TOP_PAD_CLASS,
               pipelineLayoutLocked
-                ? "h-16 min-h-16 max-h-16 overflow-hidden max-md:h-16 max-md:min-h-16 max-md:max-h-16"
-                : "max-md:max-h-14 max-md:overflow-hidden",
+                ? cn(
+                    "h-16 min-h-16 max-h-16 overflow-hidden",
+                    MASTER_HEADER_SAFE_TOP_H_LOCKED_CLASS,
+                  )
+                : cn(
+                    "max-md:overflow-hidden",
+                    MASTER_HEADER_SAFE_TOP_MAX_H_UNLOCKED_CLASS,
+                  ),
               (pipelineStaticChrome || pipelineLayoutLocked) &&
                 "max-md:!transition-none",
               !pipelineLayoutLocked &&
@@ -335,10 +353,22 @@ function AppChromeBody({
                       "flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-1 overflow-x-hidden sm:gap-2 md:w-full md:max-w-none md:flex-initial md:gap-3 md:overflow-visible md:ps-2",
                       layout.shell === "mobile" && "max-md:gap-0.5",
                     )}
+                    data-testid="master-header-actions"
                   >
                     <GlobalSearchPalette />
-                    <HelpHubTrigger iconOnly className="inline-flex shrink-0" />
-                    <HardRefreshButton className="inline-flex shrink-0" />
+                    <HelpHubTrigger
+                      iconOnly
+                      className={cn(
+                        "inline-flex shrink-0",
+                        layout.shell === "mobile" && "hidden md:inline-flex",
+                      )}
+                    />
+                    <HardRefreshButton
+                      className={cn(
+                        "inline-flex shrink-0",
+                        layout.shell === "mobile" && "hidden md:inline-flex",
+                      )}
+                    />
                     <ColorSchemeToggle
                       className={cn(
                         layout.shell === "mobile" && "hidden md:inline-flex",
@@ -353,7 +383,13 @@ function AppChromeBody({
                       )}
                       ariaLabel="Open settings: appearance and theme"
                     />
-                    <LiveConnectionPill />
+                    <div
+                      className={cn(
+                        layout.shell === "mobile" && "hidden md:contents",
+                      )}
+                    >
+                      <LiveConnectionPill />
+                    </div>
                     {notifyUserKey ? (
                       <>
                         <ProductUpdatesBellSafe userKey={notifyUserKey} />
@@ -397,7 +433,9 @@ function AppChromeBody({
               ) : null}
             </div>
           </main>
-          {showGlobalBottomNav ? <MobileBottomNav /> : null}
+          {showGlobalBottomNav ? (
+            <MobileBottomNav forceHidden={saasMenuOpen} />
+          ) : null}
           <UserOnboardingChecklist layout="saas" />
         </div>
       </div>
@@ -438,7 +476,7 @@ function AppChromeBody({
     !layout.useBottomNavigation &&
       (pipelineSafeAreaFrozen
         ? "max-md:pb-[calc(4.25rem+24px)] md:pb-8"
-        : "pb-[max(5.5rem,calc(4.25rem+env(safe-area-inset-bottom)))] md:pb-8"),
+        : "pb-[max(4.75rem,calc(3.25rem+max(2px,calc(env(safe-area-inset-bottom,0px)-28px))))] md:pb-8"),
   );
 
   return (
@@ -453,9 +491,13 @@ function AppChromeBody({
         data-pipeline-static-top-chrome={pipelineStaticChrome ? "visible" : undefined}
         data-pipeline-layout-locked={pipelineLayoutLocked ? "true" : undefined}
         className={cn(
-          "shrink-0 flex-shrink-0 border-b border-border/80 shadow-dlc-2 supports-[overflow-anchor:auto]:[overflow-anchor:none]",
+          "relative shrink-0 flex-shrink-0 border-b border-border/80 shadow-dlc-2 supports-[overflow-anchor:auto]:[overflow-anchor:none]",
+          MASTER_HEADER_SAFE_TOP_PAD_CLASS,
           pipelineLayoutLocked
-            ? "h-16 min-h-16 max-h-16 overflow-hidden bg-background max-md:h-16 max-md:min-h-16 max-md:max-h-16"
+            ? cn(
+                "h-16 min-h-16 max-h-16 overflow-hidden bg-background",
+                MASTER_HEADER_SAFE_TOP_H_LOCKED_CLASS,
+              )
             : "bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/88",
           (pipelineStaticChrome || pipelineLayoutLocked) &&
             "max-md:!transition-none",
@@ -493,7 +535,7 @@ function AppChromeBody({
                 </Link>
               ) : null}
               <Link
-                href="/tasks"
+                href={APP_HOME_HREF}
                 className="group flex min-w-0 max-w-full items-center gap-2.5"
                 aria-label={`${APP_DISPLAY_NAME} home`}
               >
@@ -520,9 +562,24 @@ function AppChromeBody({
               data-testid="master-header-actions"
             >
               <GlobalSearchPalette />
-              <HelpHubTrigger iconOnly className="inline-flex shrink-0" />
-              <HardRefreshButton className="inline-flex shrink-0" />
-              <ColorSchemeToggle />
+              <HelpHubTrigger
+                iconOnly
+                className={cn(
+                  "inline-flex shrink-0",
+                  layout.shell === "mobile" && "hidden md:inline-flex",
+                )}
+              />
+              <HardRefreshButton
+                className={cn(
+                  "inline-flex shrink-0",
+                  layout.shell === "mobile" && "hidden md:inline-flex",
+                )}
+              />
+              <ColorSchemeToggle
+                className={cn(
+                  layout.shell === "mobile" && "hidden md:inline-flex",
+                )}
+              />
               {notifyUserKey ? (
                 <>
                   <ProductUpdatesBellSafe userKey={notifyUserKey} />
@@ -532,7 +589,13 @@ function AppChromeBody({
               <div className="hidden min-w-0 overflow-x-auto md:block">
                 <MainNav />
               </div>
-              <LiveConnectionPill />
+              <div
+                className={cn(
+                  layout.shell === "mobile" && "hidden md:contents",
+                )}
+              >
+                <LiveConnectionPill />
+              </div>
               <UserButton afterSignOutUrl="/sign-in" />
             </div>
           </div>

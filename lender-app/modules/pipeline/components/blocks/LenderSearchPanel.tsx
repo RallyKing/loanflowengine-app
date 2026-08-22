@@ -113,9 +113,9 @@ function LenderSearchPanelInner({
 
   return (
     <div className="flex min-w-0 flex-col" data-testid="lender-search-panel">
-      <p className="mb-2 text-xs text-muted-foreground">
-        Search uses the same logic as the browse page. Add lenders to your
-        shortlist — assign Primary or Secondary roles on the board below.
+      <p className="mb-1.5 text-xs leading-snug text-muted-foreground">
+        Same search as lenders browse. Add to shortlist, then set board role
+        below.
       </p>
       <SearchField
         placeholder="Search programs (e.g. DSCR, SBA 7a), company, contact, states…"
@@ -128,15 +128,15 @@ function LenderSearchPanelInner({
         data-testid="file-lenders-search"
       />
       {!searchQuery.trim() ? null : displaySearchHits === undefined ? (
-        <p className="mt-2 text-sm text-muted-foreground" role="status">
+        <p className="mt-1.5 text-xs text-muted-foreground" role="status">
           Searching…
         </p>
       ) : displaySearchHits.length === 0 ? (
-        <p className="mt-2 text-sm text-muted-foreground">No matches.</p>
+        <p className="mt-1.5 text-xs text-muted-foreground">No matches.</p>
       ) : (
         <ul
           data-nested-scroll
-          className="mt-2 max-h-[min(50dvh,22rem)] touch-scroll-y space-y-1.5 overflow-y-auto overscroll-contain rounded-md border border-border/60 bg-muted/10 p-1.5 md:max-h-none"
+          className="mt-1.5 max-h-[min(40dvh,18rem)] touch-scroll-y space-y-1 overflow-y-auto overscroll-contain rounded-dlc-sm border border-border/60 bg-muted/10 p-1 md:max-h-none"
           aria-label="Lender search results"
           data-testid="lender-search-results"
         >
@@ -153,7 +153,7 @@ function LenderSearchPanelInner({
         </ul>
       )}
       {attachError ? (
-        <p className="mt-2 text-sm text-destructive" role="alert">
+        <p className="mt-1.5 text-xs text-destructive" role="alert">
           {attachError}
         </p>
       ) : null}

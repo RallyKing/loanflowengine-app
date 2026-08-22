@@ -1,0 +1,360 @@
+[
+  {
+    "slug": "2026-08-22-inbound-file-linked-new-lead-task",
+    "title": "New pipeline files from Confirm Interest get a Make Contact task",
+    "summary": "When a GHL Confirm Interest webhook creates a new Loan Flow Engine file, that file now gets a NEW LEAD: Make Contact task (Central Time date) with the BFS follow-up label. Grok connectors can also create a file-linked task via webhook without a staff login.",
+    "deploymentId": "dpl_8YMXnjECY3Br927hcSUQWHztXK5v",
+    "body": [
+      "Confirm Interest ingest still upserts the pipeline file first. Only a newly created file gets the task; re-ingesting the same lead does not add another. If that file already has a task whose title starts with NEW LEAD: Make Contact, ingest skips creating a duplicate.",
+      "The task is attached with relatedFileId (not org-wide), category call, status todo. The title uses America’s Chicago calendar date as M/D/YYYY. The BFS: Follow-up w/ Client triage label is applied when it exists on the org; a missing label does not block the file.",
+      "Private connectors can POST action create_file_task to the existing inbound webhook URL with X-Integration-Token. The queue responds HTTP 202 with accepted and jobId. create_org_task org automations are unchanged. The bot API also accepts create_file_task as a synchronous 200."
+    ],
+    "changeType": "added"
+  },
+  {
+    "slug": "2026-08-17-convex-query-cache-fixes",
+    "title": "Lists and badges reuse cached Convex results instead of re-running every time",
+    "summary": "Unread counts, triage highlights, pipeline snooze, and related badges still show the same information. The backend no longer treats “what time is it?” as a reason to recompute those queries, so repeat calls drop without changing what you see.",
+    "body": [
+      "Several live lists were asking Convex for a fresh answer whenever the clock moved, even when the underlying files and tasks had not changed. Time-sensitive bits (overdue, snoozed, expired links, stale documents) now use a stable minute clock from the app, or are decided on screen from timestamps the query already returns.",
+      "Notification badges, pipeline triage colors, the pipeline table, presence dots, assignee suggestions, Operations snapshot, vault stale-document counts, and portal link status are unchanged for you. They just stop forcing extra backend work on every tick or re-render.",
+      "Public portal and token pages still check expiry on the server so a client cannot fake the clock. Operator-only audit queries were left as-is."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-17-convex-no-runaway-loops",
+    "title": "Background Convex jobs no longer loop when idle",
+    "summary": "Auto-archive and analytics only run when you ask. Email and SMS still send on their own, with a slow backup sweep. Borrower autosave no longer re-fires after every file save.",
+    "body": [
+      "Inactivity auto-archive is not on a timer. Use Run auto-archive on Pipeline when you want due files archived. Analytics stats load only from that page when you click Load stats or Refresh.",
+      "Queued email, SMS, webhooks, and integration jobs still send when they are due. A backup sweep every 15 minutes catches anything the scheduler missed — it does not keep calling itself when the queue is empty.",
+      "Editing borrower identity still dual-writes to the file and CRM, but a successful save no longer schedules another save just because the file timestamp changed."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-17-convex-usage-archive-analytics",
+    "title": "Auto-archive and analytics no longer burn Convex quota in the background",
+    "summary": "Auto-archive runs only when you click it on Pipeline. Analytics stats load only when you open that page and refresh. Background job backups moved from every minute to every 15 minutes.",
+    "body": [
+      "The inactivity auto-archive sweep is no longer on a schedule. Due files wait until you click Run auto-archive on Pipeline (Tune view & filters), or archive a file yourself. Setting the per-file inactivity timer is unchanged.",
+      "Analytics does not stay subscribed while you work other screens. Open Analytics, set filters, then Load stats / Refresh stats. That one query is the only dashboard hit.",
+      "Email, SMS, webhooks, and integration jobs still send on their own scheduler when you queue them. The backup sweep that catches missed jobs now runs every 15 minutes instead of every minute, so empty ticks cost far less."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-12-coming-soon-nav-tab",
+    "title": "Coming soon tab in the left nav",
+    "summary": "A new Coming soon destination in Workspace tools holds unfinished modules until they are ready for primary navigation.",
+    "deploymentId": "dpl_GKWcvuDr4HUFoPJdWu7R6KSr81Sg",
+    "body": [
+      "The left sidebar (and mobile hamburger menu) now includes Coming soon under Workspace tools — after Operations, Shared, and Activity. It is not on the crowded mobile bottom bar.",
+      "Open /coming-soon for a clean shell that explains unfinished modules will live here. The Modules in progress list is empty for now; future WIP tabs can be linked from this page without displacing Pipeline, Contacts, or Lenders.",
+      "Navigation still comes from the canonical catalog (navigationCatalog) — no second nav system."
+    ],
+    "changeType": "added"
+  },
+  {
+    "slug": "2026-08-12-vault-image-pdf-download",
+    "title": "Document Vault PDFs keep images and image files can download as PDF",
+    "summary": "Created vault documents with embedded images now export those images into the PDF. Standalone uploaded images keep original download and gain a clear Download PDF action.",
+    "deploymentId": "dpl_5qw7i7Ppfe7H63XButnaEZGwaQBZ",
+    "body": [
+      "Editor-created Document Vault files that include images were downloading as blank or text-only PDFs because the converter only read text and ignored <img> tags. PDF export now fetches each image (Convex storage HTTPS or data URL), embeds it into the same vault PDF pipeline, and lays images into the page flow with surrounding text.",
+      "Standalone uploaded images (PNG, JPEG, WebP, GIF) still download in their original format from Download. Use Download PDF (row toolbar, overflow menu, list/grid actions) for a single-page letter PDF that fits the image while preserving aspect ratio.",
+      "Failed or expired image URLs show a short placeholder in the PDF instead of wiping the whole export. Very large images, HEIC, and other unsupported formats are not converted."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-12-inbound-company-name-to-entity-dba",
+    "title": "GHL company name fills Entity COMPANY NAME, DBA, and missing first name",
+    "summary": "Inbound “company name” from GoHighLevel now populates Entity COMPANY NAME and DBA together, and fills primary borrower first name when the person first name is missing or the literal “null”.",
+    "deploymentId": "dpl_DQZDa6uqAwH8tubFNsPbmqz4XREK",
+    "body": [
+      "Your GHL Custom Webhook body with “company name”: “{{contact.company_name}}” is correct. That value now writes to Entity COMPANY NAME (dealData.business legalName / companyName) and DBA on the same inbound pass — previously DBA was skipped when it matched the legal name, or only DBA got the real company while COMPANY NAME kept the word “null”.",
+      "Literal “null” / “undefined” / unresolved {{merge}} tags are ignored. If first name is empty (or those placeholders), the company name is used as primary borrower first name. Entity create/link for the company is unchanged — same upsert_pipeline_lead path.",
+      "Re-send the GHL webhook (or edit the file once) for leads that already show “null” in COMPANY NAME or FIRST NAME; fill-empty merge now treats those placeholders as empty so a re-send can repair them."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-12-ghl-null-string-inbound-sanitize",
+    "title": "GHL inbound no longer stores the word “null” as company or first name",
+    "summary": "Unresolved GoHighLevel merge fields that arrive as the literal text “null” are ignored, so the real company name fills Company name instead of only DBA.",
+    "body": [
+      "Some GHL Custom Webhook merge fields resolve to the literal string “null” (or “undefined”, or an unresolved {{token}}) when the contact has no value. Loan Flow Engine was treating that as a real company/person name.",
+      "Inbound extraction now treats those placeholders as empty. When “business name” is empty/null and “company name” has the real business (for example from {{contact.company_name}}), that value becomes the legal Company name — not DBA alone — and first-name fallback uses the real company string.",
+      "Already-created files that show “null” in Company name / First name need a one-time edit or a re-send after GHL has real values. Prefer keeping separate “business name” and “company name” keys in the webhook body."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-12-inbound-business-entity-create",
+    "title": "GHL inbound creates the business entity contact",
+    "summary": "GoHighLevel webhooks now accept business/company name keys with spaces, still create files when the person name is missing, and find-or-create a linked entity CRM record for that company.",
+    "deploymentId": "dpl_B5vKqHBkXLMh5PzcABrUVz89mRTd",
+    "body": [
+      "Inbound mapping now reads businessName, “business name”, companyName, “company name”, company, and related aliases. When both business and company are sent, business wins for the entity display name and company is kept as the company/DBA field.",
+      "If first and last name are empty, the coalesced business/company name is still used as first name so the pipeline file creates. A real person first name is never overwritten.",
+      "When a company is present, Loan Flow Engine find-or-creates the entity (clients) record, links the individual as primary company contact, sets that entity as the hierarchy client with a TBD project, and fills dealData.business — same upsert_pipeline_lead path, no second CRM system.",
+      "Keep the GHL Custom Webhook body with separate spaced keys — “business name” from {{business.name}} and “company name” from {{contact.company_name}} — with no duplicate keys. CamelCase aliases (businessName / companyName) also work if you prefer them later."
+    ],
+    "changeType": "improved"
+  },
+  {
+    "slug": "2026-08-11-pipeline-client-title-live-sync",
+    "title": "Pipeline Client title stays in sync with the primary borrower",
+    "summary": "The pipeline table Client name now follows the primary borrower entity and primary individual, including renames and when you change who is primary.",
+    "deploymentId": "dpl_BhJst635nSwwfngp9KiLJnnVP4dF",
+    "body": [
+      "Client title used to copy the contact name when the file was created and then stay frozen. The hub table now shows the live primary borrower: entity name and individual name in the existing “Entity · Individual” format (either side is omitted if it is missing).",
+      "Changing which entity is bound, which person is the primary borrower, or renaming those records updates the Client title on the pipeline table. Inbound and GoHighLevel-created files use the same rule — there is not a second title field.",
+      "The editable file name on the row is still yours. Client title is the Client label next to it, not a one-shot snapshot."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-11-inbound-business-name-as-first-name",
+    "title": "GHL inbound leads without a person name still create files",
+    "summary": "If a GoHighLevel webhook has no first or last name, Loan Flow Engine now uses the business/company name as the first name so the pipeline file still creates.",
+    "body": [
+      "Inbound GHL contacts that are company-only (empty first and last name) were skipped and never became a pipeline file. The existing webhook still requires a usable name, but it now fills first name from business name, company, companyName, or a matching GHL custom field.",
+      "Last name can stay empty. A real first name is never overwritten by the company. If there is no person name and no business name, the lead is still rejected so files are not created as “undefined.”",
+      "The contact, client, and file title use the business name in that case — same upsert_pipeline_lead path, no second inbound pipeline."
+    ],
+    "changeType": "fixed"
+  },
+  {
+    "slug": "2026-08-11-vault-starred-and-search",
+    "title": "Document Vault: star files and search Explorer",
+    "summary": "Star files and folders in Document Vault Explorer, filter to starred items, and search tasks, files, and folders from the strip under the Explorer header.",
+    "body": [
+      "Each file and folder row in Explorer now has a star immediately after the checkbox (or after the expand control on folders). Stars are yours — they persist across reload and are not shared with the rest of the org.",
+      "Under the Explorer toolbar, a search field filters tasks, files, and folders as you type. Matching items stay in their parent folders so nothing looks orphaned. Clear the box to restore the full tree.",
+      "The Starred control sits to the right of search. Turn it on to see only starred files and folders (plus their parent path). Combine search and Starred to find matches inside your starred set — a starred folder still appears when a file inside it matches."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_3pizp75vSeuMFvyZrjUvdjmKspAz"
+  },
+  {
+    "slug": "2026-08-11-contact-fico-history",
+    "title": "Contact FICO history and trend",
+    "summary": "The contact FICO field now keeps dated prior scores, shows the current pull, and tracks how credit has moved over time.",
+    "body": [
+      "On a contact’s Financials tab, FICO is no longer a single overwrite. Record a new score with the pull date (and an optional note) and the previous score stays in history.",
+      "The current score stays front and center, with the as-of date and the change versus the prior pull so you can see whether credit is trending up or down.",
+      "Existing scores are kept as the starting history entry. Saving SSN or date of birth does not create a duplicate FICO pull."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_HEw99dmKF1HL5uP2YfsTGgct89Zq"
+  },
+  {
+    "slug": "2026-08-11-client-link-email-full-task-details",
+    "title": "Client link email copy includes full task details",
+    "summary": "Generate Client Link email-ready bullets now include each task’s description, instruction text, and links — not just the title.",
+    "body": [
+      "The Generate Client Link modal still lists outstanding portal-visible tasks, but the paste-ready email block now includes everything typed on the task: title, description, client-instruction wording, and any instruction URL.",
+      "Instruction tasks with a payment or form link appear as a clean bullet with the written instructions underneath and the link on its own line. Duplicate URLs already written into the instruction text are not repeated.",
+      "Copy email text still ends with the same secure upload line and portal URL."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_FpCxhqYaG4vidaS6SNHyHtW92qqt"
+  },
+  {
+    "slug": "2026-08-07-ai-providers-due-diligence",
+    "title": "AI API keys and Due Diligence from Document Vault",
+    "summary": "Connect your own OpenAI, Anthropic, Gemini, or custom AI key in Settings, save reusable due-diligence prompts, and run analysis on selected vault files — only the last four characters of each key are shown after save.",
+    "body": [
+      "Settings → Integrations → AI API keys lets the organization store encrypted provider credentials. After save, the UI shows only the last four characters of the key — never the full secret on reload.",
+      "Create, save, and deploy prompt templates (or use starters such as fraud/irregularities, LOI review, and deal analysis). Deployed prompts appear in the Due Diligence picker; drafts stay in Settings until you deploy them.",
+      "From Documents or a file Document Vault, select two or more files and run Due Diligence. Results stay in run history with copy and Markdown export. Live inference uses your org key; no second AI system."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_FPjx3rSBUbQFdbdGLBi7y5VfmM24"
+  },
+  {
+    "slug": "2026-08-07-simple-pl-pipeline-block",
+    "title": "Simple P&L: Financials block from the CSV template",
+    "summary": "Simple Profit and Loss is now a collapsible Financials block like PFS, Construction Budget, and Track Record — year-to-date and past-year timeframes, multi-contact assignment, copy into another file, and fillable PDF + Document Vault.",
+    "body": [
+      "The new Simple P&L block matches the Simple P&L template: company name, period ended, REVENUE (Sales, Other, Discounts, Returns/allowances), TOTAL REVENUE, COST OF GOODS SOLD (raw materials, parts, direct labor, overhead), TOTAL CoGS, GROSS PROFIT/LOSS, EXPENSES (Automobile through Utilities), TOTAL EXPENSES, NET OPERATING PROFIT/LOSS, OTHER EXPENSES (Vehicle, Miscellaneous), TOTAL OTHER EXPENSES, and NET PROFIT/LOSS — with the same signed-discount math.",
+      "Create more than one first-class P&L on a file (Year-to-date, past years, or a named period). Assign each statement to one or more contacts to complete; those statements stay sticky on the contacts for reuse on later files. Copy selected timeframes into another loan file without wiping what is already there.",
+      "Download a fillable Simple P&L PDF or save it to Document Vault using the same block PDF system as PFS and Construction Budget. Assigned contacts can complete their P&L through a vault / portal task, same pattern as Personal Financial Statement."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_7s3tX9QnJZdXjKwe4e3Bcb39kyy3"
+  },
+  {
+    "slug": "2026-08-07-reo-zillow-listing-url",
+    "title": "Schedule of REO: paste a Zillow link next to Market Value",
+    "summary": "Each property on the Schedule of Real Estate Owned can store a Zillow or listing URL next to Market Value so you can reopen it later to check value and listing changes.",
+    "body": [
+      "On every REO row, a compact link control sits immediately next to Market Value. Paste a Zillow (or other listing) URL, save it with that property, then open it in a new tab, edit, or clear it.",
+      "The URL stays with the row when you copy properties into another file, when REO dual-writes to the contact CRM schedule, and on the fillable Schedule of REO PDF.",
+      "Common short and full http(s) listing links are accepted. Invalid URLs are not saved."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_CtB2QMbiGp5o4B6R7xZufs99n7Qg"
+  },
+  {
+    "slug": "2026-08-07-track-record-pipeline-block",
+    "title": "Track Record: Excel workbook block on Financials",
+    "summary": "Investment Property Track Record is now a collapsible Financials block like PFS and Construction Budget — full workbook fields, rehab/new-construction counts, multi-contact assignment, copy into another file, and fillable PDF + Document Vault.",
+    "body": [
+      "The new Track Record block matches the lender Excel template: guarantor experience (rehab / new construction / total / qualifying MAX), property address through sale price or rent, owned-by-guarantor Yes/No flags, project type, and exit Sold/Leased.",
+      "Assign the entire schedule and each property row to one or more contacts. Rows stay sticky on those contacts so you can import them into another file, or copy selected properties / the full block into an existing loan file without replacing what is already there.",
+      "Download a fillable Track Record PDF or save it to Document Vault using the same block PDF system as PFS and Schedule of REO — contact and file associations are preserved."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_5fEhZh7sX7jvR8MGLYztScgRxhHw"
+  },
+  {
+    "slug": "2026-08-07-file-task-complete-delete-note-modal",
+    "title": "Optional note when completing or deleting a file task",
+    "summary": "On a pipeline file, completing or deleting a task now asks if you want to leave a note — and that note lands in the same file Notes block.",
+    "body": [
+      "In the file Tasks section, marking a task done or deleting it opens a confirmation with an optional note field. Cancel leaves the task unchanged.",
+      "If you add a note, it is saved to that file’s Notes history with a Completed task or Deleted task prefix (same author, timestamp, and storage as other file notes). Confirm without a note still completes or deletes.",
+      "Uncompleting a done task stays instant. The modal is file-scoped only and uses the existing Notes system — no second notes feed."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_5wGGSz4kj9emytZfgLjM2DwN48Ut"
+  },
+  {
+    "slug": "2026-08-07-pipeline-auto-archive-inactivity",
+    "title": "Auto-archive inactive pipeline files",
+    "summary": "Next to snooze on a file, you can auto-archive it after 15–60 days (or a custom period) with no new activity. The pipeline hub shows a small remaining-time marker.",
+    "body": [
+      "On the pipeline file header (same disclosure as snooze), enable Auto-archive if inactive. Choose 15, 30, 45, or 60 days, or enter a custom duration. This is separate from snooze: snooze only hides the file until a date; auto-archive actually archives it using the same archive action as today.",
+      "Inactivity uses the file’s existing last-updated timestamp (pipeline.updatedAt, falling back to createdAt) — any meaningful save on the file restarts the window. Configuring the timer or snoozing does not count as activity.",
+      "A scheduled sweep archives due files. On the pipeline hub loan table (and mobile/board cards), a small archive timer marker shows remaining time when this option is on."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_HQRhtszFjcAFfzeU4ejAGHxGzJv6"
+  },
+  {
+    "slug": "2026-08-07-reo-schedule-assignments-pdf",
+    "title": "Schedule of REO: full workbook, assignees, PDF",
+    "summary": "The Schedule of Real Estate Owned now matches the full workbook, supports multi-contact assignment at block and row level, copies into other files, and downloads as a fillable PDF to Document Vault.",
+    "body": [
+      "Assign the entire REO block to multiple contacts (client, spouse, company contact) and assign individual properties to specific contacts — same multi-select pattern as Document Vault.",
+      "Bring selected addresses/rows or the entire schedule into another pipeline file you can edit (same-project files first), or create a new file. Assignees travel with the data.",
+      "The grid now includes the full Schedule of REO workbook: Purchased, ST, Use, Address, Type, Market value, Pos, Balance, Mort pmt, Rate %, Taxes, Ins, HOA, Escrow, Gross/Net rent, Equity, LTV, APN, Invested, Lat/Long, Lot SF, Prop SF, and Most recent — with working totals.",
+      "Download a fillable PDF or save it into Document Vault using the same PFS PDF pipeline (no second PDF system)."
+    ],
+    "changeType": "redesigned",
+    "deploymentId": "dpl_5fEhZh7sX7jvR8MGLYztScgRxhHw"
+  },
+  {
+    "slug": "2026-08-07-reo-schedule-excel-parity",
+    "title": "Schedule of REO: Excel workbook parity",
+    "summary": "Schedule of Real Estate Owned now matches the Excel workbook (full columns and formulas), supports block- and row-level multi-contact assignment, copy into an existing or new file, and PFS-parity fillable PDF + Document Vault.",
+    "body": [
+      "The REO grid matches the lender Excel template: Purchased, ST, Use, Address, Type, Market value, Pos, Balance, Mort pmt, Rate %, Taxes, Ins, HOA, Escrow (taxes+ins+HOA), Gross/Net rent, Equity, LTV, APN, Invested, Lat/Long, Lot SF, Prop SF, and Most recent — with the same totals.",
+      "Assign the entire schedule and each property row to one or more contacts (client, spouse, company). Copy selected properties or the full block into another loan file, or create a new file — assignees travel with the data.",
+      "Download a fillable Schedule of REO PDF or save it to Document Vault using the same PFS block PDF pipeline."
+    ],
+    "changeType": "redesigned",
+    "deploymentId": "dpl_5fEhZh7sX7jvR8MGLYztScgRxhHw"
+  },
+  {
+    "slug": "2026-08-07-construction-budget-excel-rebuild",
+    "title": "Construction Budget rebuilt from the Excel template",
+    "summary": "The existing Construction Budget block now matches the lender Excel workbook (Rev 06.01.2025): all section titles, line items, dropdowns, and totals — plus fillable PDF download and Document Vault save like Personal Financial Statement.",
+    "body": [
+      "Construction Budget on the pipeline file Financials tab is the same block, rebuilt from the Construction Budget Template. Header fields include Applicant Name, Property Address, Contractor, Project Type (Rehab / New Construction), Summary of Planned Rehab or Construction, Description of Quality of Finishes, and Completion Timeframe (1–12 months).",
+      "All six Excel sections are in the form: Plans-Permits-Closing, Sitework, Building, Mechanical, Interior, and Contractor Fees (Builder/GC 15% max, Contingency 10% required), with Repair/Replace and Unit of Measure dropdowns and the same subtotal / project / total formulas. Existing budget lines are migrated into matching template rows when the label matches; unmatched lines stay as custom.",
+      "Download a fillable PDF or save it into Document Vault using the same PFS / REO PDF pipeline. Visual treatment (font, boldness, contrast, labels) follows Personal Financial Statement; layout rhythm is unchanged beyond fitting the Excel structure."
+    ],
+    "changeType": "redesigned",
+    "deploymentId": "dpl_DPTi2cECcu8NUxtCKWNsrC6gWir2"
+  },
+  {
+    "slug": "2026-08-07-schedule-of-business-debt",
+    "title": "Schedule of Business Debt: full fields, assignees, PDF",
+    "summary": "Corporate liabilities now capture a complete schedule, auto-total original / present / monthly amounts, assign to multiple contacts at block or row level, copy into other files, and download as a fillable PDF to Document Vault.",
+    "body": [
+      "Required schedule fields are creditor, debt type (MCA, Term Loan, Vendor, SBA, Line of Credit, Mortgage, Equipment Loan, Credit Card, or Other with a fill-in), original amount, origination date, present balance, interest or factor rate, maturity date, and monthly payment.",
+      "Original debt amount, present balance, and monthly payment totals update whenever debts are added, edited, or removed (inactive rows are excluded).",
+      "Assign the entire schedule to multiple contacts, or assign individual debts independently — same multi-select pattern as Document Vault. Copy the full block or selected complete rows into another file without wiping destination debts or duplicating CRM records.",
+      "Download a fillable PDF or save it into Document Vault using the same PFS PDF pipeline, including all debt fields and calculated totals."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_HQRhtszFjcAFfzeU4ejAGHxGzJv6"
+  },
+  {
+    "slug": "2026-08-07-pfs-multi-instance-vault-password",
+    "title": "Multiple Personal Financial Statements per file",
+    "summary": "Create a separate PFS for each borrower on one loan file, assign contacts, copy a statement into another file, and protect each Document Vault / portal task with its own password.",
+    "body": [
+      "A pipeline file can hold as many complete Personal Financial Statements as you need — for example one per borrower — instead of a single shared form. Each statement keeps applicant fields, assets and liabilities with schedule calculations, Section 1 income, contingent liabilities, draft/populated status, and fillable PDF download (including save to Document Vault).",
+      "Assign each PFS to one or more contacts (same multi-select pattern as Document Vault). The statement stays on those contacts so you can reuse it, and you can copy a specific PFS into another loan file without overwriting what is already there.",
+      "Each PFS gets its own portal-visible Document Vault task. Optionally set any password you choose (for example the borrower’s SSN). Share the same client portal / package link with all borrowers: only the matching password unlocks that borrower’s PFS. Passwords are stored hashed, never logged in plaintext."
+    ],
+    "changeType": "added",
+    "deploymentId": "dpl_J882cehFYpg5fB2TH4pQd4pyoQSq"
+  },
+  {
+    "slug": "2026-08-07-pfs-form-title-association",
+    "title": "Each PFS stays linked to its own form title",
+    "summary": "New Personal Financial Statements now create and stay matched to their own Forms & Applications title and Document Vault / portal form — not one shared PFS for the whole file.",
+    "body": [
+      "Creating PFS 2, 3, or more on a loan file also creates (or claims) a distinctly titled form and vault task for that borrower — for example PFS: Guarantor 2 — instead of pointing every statement at a generic Personal Financial Statement.",
+      "Renaming a PFS updates that linked form title. Forms & Applications lists each PFS form separately, and opening a portal or vault task only prefills and saves that instance.",
+      "Existing files with unmatched titles are repaired when you open Financials: one shared generic PFS form can be claimed by the first statement; additional statements get their own titled forms without overwriting calculations, fillable PDF, vault save, or contact assignment."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_D6WMWcpmStFfuu9QfzZeCiiJrCHn"
+  },
+  {
+    "slug": "2026-08-07-reo-business-debt-field-fixes",
+    "title": "Schedule of REO & Business Debt: field save fixes",
+    "summary": "Property and business-debt schedule fields now save reliably — dates, dropdowns, totals, and dual-write no longer drop or reject edits.",
+    "body": [
+      "Schedule of REO and Schedule of Business Debt fields were audited end-to-end. Dates accept common US formats and always feed HTML date inputs as YYYY-MM-DD so Purchased, Most recent, Origination, and Maturity stay editable.",
+      "Row saves strip unknown Excel/CRM keys and coerce numbers to strings so Convex validators stop rejecting patches as Couldn’t save. Use / Type / Pos / Debt type aliases normalize; Other debt type fill-in persists; totals still exclude inactive debts.",
+      "Dual-write no longer overwrites in-progress rows with a stale draft companion payload, and CRM sync failures no longer roll back a successful deal save. Stable row ids are assigned on persist only so typing does not remount inputs."
+    ],
+    "changeType": "fixed",
+    "deploymentId": "dpl_FrdZs27cRJxcoxRQ7VC42C7Kjwhe"
+  },
+  {
+    "slug": "2026-08-08-document-vault-assignment-categories",
+    "title": "Safer Document Vault assignments and custom categories",
+    "summary": "Document assignment now shows every existing contact or entity link, blocks duplicate assignments, and lets teams create reusable organization document categories.",
+    "body": [
+      "Before assigning a vault document, the modal now lists every contact and business entity already linked to it. Matching search results are marked Assigned and cannot be selected again, while the server safely treats repeated requests as the same assignment instead of creating another link or document.",
+      "Use Add category in the assignment modal to create a trimmed, organization-wide document category. Names are checked case-insensitively against built-in and custom categories, and a successful category is selected immediately.",
+      "Custom categories persist in the organization catalog and now appear in later assignment and Document Vault category selectors, including the category shown on vault document rows."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_83sTZkJrVThe1oijpojacn4BX4FQ"
+  },
+  {
+    "slug": "2026-08-11-vault-created-docs-download-pdf",
+    "title": "Created Document Vault files download as PDF",
+    "summary": "Downloading an editor-created vault document now saves a PDF by default. You can still download the original HTML from the row menu.",
+    "body": [
+      "Documents created in Document Vault (HTML editor docs) used to download as .html. Download now exports a PDF using the existing vault PDF converter, and the saved file name uses the renamed title with a .pdf extension.",
+      "Uploaded PDFs, images, and other native files still download in their original format. Download as PDF remains available for those files when conversion is supported.",
+      "Bulk, download-all, and folder ZIP packages convert created HTML docs to PDF inside the archive. Lender delivery and client-portal ZIP paths are unchanged."
+    ],
+    "changeType": "improved",
+    "deploymentId": "dpl_7QWgqVvTQGsrmxUNRTZdhBePdmAc"
+  },
+  {
+    "slug": "2026-08-12-automations-nav-tab",
+    "title": "Automations tab for email & SMS templates",
+    "summary": "A new Automations item sits under Lenders in the sidebar. It is the home for email and SMS templates, with placeholders for follow-up, reminder, and notification automation templates.",
+    "deploymentId": "dpl_E6KhC5jPmGqazHZ7uYgpoez1YSe4",
+    "body": [
+      "Open Automations from the left nav (directly under Lenders) or from mobile overflow / hamburger. The page reuses the existing org communicationTemplates library — the same templates you use when composing email or SMS — so Settings is only a thin link, not a second template store.",
+      "Email templates and SMS templates are fully editable on Automations. Automation templates for scheduled follow-ups, reminders, and notifications show as Coming soon until that CRUD ships.",
+      "Old Settings → Message templates URLs redirect to Automations so bookmarks and deep links keep working."
+    ],
+    "changeType": "added"
+  }
+]

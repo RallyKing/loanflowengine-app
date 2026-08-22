@@ -16,7 +16,9 @@ export type NavIconKey =
   | "fileText"
   | "panelTop"
   | "building"
-  | "share";
+  | "share"
+  | "sparkles"
+  | "zap";
 
 /** Allowlist for overrides / settings UI — never dynamic-import icon strings. */
 export const NAV_ICON_KEYS: readonly NavIconKey[] = [
@@ -31,6 +33,8 @@ export const NAV_ICON_KEYS: readonly NavIconKey[] = [
   "panelTop",
   "building",
   "share",
+  "sparkles",
+  "zap",
 ] as const;
 
 const NAV_ICON_KEY_SET = new Set<string>(NAV_ICON_KEYS);
@@ -117,10 +121,22 @@ export const NAV_CATALOG: NavCatalogEntry[] = [
     mobilePrimary: true,
   },
   {
+    id: "pipeline",
+    href: "/pipeline",
+    label: "Pipeline",
+    iconKey: "home",
+    group: "pipeline",
+    priority: "high",
+    order: 8,
+    mobilePrimary: true,
+    pipelineGroup: true,
+    productTourId: "pipeline",
+  },
+  {
     id: "tasks",
     href: "/tasks",
     label: "Tasks",
-    iconKey: "home",
+    iconKey: "layoutGrid",
     group: "workspace",
     priority: "high",
     order: 10,
@@ -190,18 +206,6 @@ export const NAV_CATALOG: NavCatalogEntry[] = [
     mobilePrimary: true,
   },
   {
-    id: "pipeline",
-    href: "/pipeline",
-    label: "Pipeline",
-    iconKey: "layoutGrid",
-    group: "pipeline",
-    priority: "high",
-    order: 50,
-    mobilePrimary: true,
-    pipelineGroup: true,
-    productTourId: "pipeline",
-  },
-  {
     id: "lenders",
     href: "/lenders",
     label: "Lenders",
@@ -209,6 +213,37 @@ export const NAV_CATALOG: NavCatalogEntry[] = [
     group: "crm",
     priority: "high",
     order: 60,
+    mobilePrimary: false,
+  },
+  /**
+   * Email / SMS / automation template hub — canonical UI for
+   * `communicationTemplates` (not a second template store).
+   * Directly under Lenders; mobile via overflow / hamburger (not bottom primary).
+   */
+  {
+    id: "automations",
+    href: "/automations",
+    label: "Automations",
+    iconKey: "zap",
+    group: "crm",
+    priority: "high",
+    order: 65,
+    mobilePrimary: false,
+    productTourId: "automations",
+  },
+  /**
+   * Secondary / WIP home — unfinished modules live here.
+   * Not a mobile bottom-nav primary (crowded dock); visible in desktop
+   * sidebar + mobile hamburger under Workspace tools.
+   */
+  {
+    id: "coming-soon",
+    href: "/coming-soon",
+    label: "Coming soon",
+    iconKey: "sparkles",
+    group: "system",
+    priority: "low",
+    order: 70,
     mobilePrimary: false,
   },
 ];

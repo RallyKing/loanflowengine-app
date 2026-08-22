@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useConvex, useMutation, useQuery } from "convex/react";
-import { ExternalLink, FileText, Loader2 } from "lucide-react";
+import { FileText, Loader2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
@@ -13,6 +13,7 @@ import type { LibraryDocumentsProof } from "@/components/LibraryDocumentsPanel";
 import {
   type AnnotationToolMode,
 } from "@/components/library/DocumentAnnotationLayer";
+import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
 import {
   DocumentManipulationToolbar,
   type MergeCandidate,
@@ -67,6 +68,7 @@ export type DocumentVaultPreviewCanvasProps = {
   onClosePreview?: () => void;
   onToggleFullscreen?: () => void;
   previewFullscreen?: boolean;
+  onOpenInWindow?: () => void;
   onOpenProperties?: () => void;
   canEnterEditMode?: boolean;
   onEnterEditMode?: () => void;
@@ -95,6 +97,7 @@ export function DocumentVaultPreviewCanvas({
   onClosePreview,
   onToggleFullscreen,
   previewFullscreen = false,
+  onOpenInWindow,
   onOpenProperties,
   canEnterEditMode = false,
   onEnterEditMode,
@@ -126,9 +129,6 @@ export function DocumentVaultPreviewCanvas({
   const [finalizeCategory, setFinalizeCategory] =
     useState<LibraryDocumentCategory>("id");
   const [renderEpoch, setRenderEpoch] = useState(0);
-  const [htmlContent, setHtmlContent] = useState<string | null>(null);
-  const [htmlLoading, setHtmlLoading] = useState(false);
-
   const kind = guessAttachmentKind(contentType, fileName);
   const isPdfEditor =
     kind === "pdf" &&
@@ -171,33 +171,6 @@ export function DocumentVaultPreviewCanvas({
       cancelled = true;
     };
   }, [kind, url, renderEpoch]);
-
-  useEffect(() => {
-    if (kind !== "html" || !url) {
-      setHtmlContent(null);
-      setHtmlLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setHtmlLoading(true);
-    void (async () => {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`Failed to load HTML (${res.status})`);
-        const text = await res.text();
-        if (!cancelled) setHtmlContent(text);
-      } catch {
-        if (!cancelled) setHtmlContent(null);
-      } finally {
-        if (!cancelled) setHtmlLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [kind, url, documentId, versionId]);
 
   const reportError = useCallback(
     (e: unknown) => {
@@ -497,6 +470,7 @@ export function DocumentVaultPreviewCanvas({
             onClosePreview={onClosePreview}
             onToggleFullscreen={onToggleFullscreen}
             previewFullscreen={previewFullscreen}
+            onOpenInWindow={onOpenInWindow}
             onOpenProperties={onOpenProperties}
             fileName={fileName}
             canEnterEditMode={canEnterEditMode}
@@ -523,6 +497,7 @@ export function DocumentVaultPreviewCanvas({
             onClosePreview={onClosePreview}
             onToggleFullscreen={onToggleFullscreen}
             previewFullscreen={previewFullscreen}
+            onOpenInWindow={onOpenInWindow}
             onOpenProperties={onOpenProperties}
             fileName={fileName}
             canEnterEditMode={canEnterEditMode}
@@ -531,68 +506,14 @@ export function DocumentVaultPreviewCanvas({
         )}
 
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          <div className="relative h-full min-h-[calc(100dvh-12rem)] w-full overflow-y-auto bg-muted/20">
-            {kind === "image" ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={url}
-                alt={fileName}
-                className="mx-auto max-h-full w-auto max-w-full object-contain p-3"
-              />
-            ) : kind === "pdf" ? (
-              <iframe
-                title={fileName}
-                src={url}
-                className="h-full min-h-[calc(100dvh-12rem)] w-full border-0 bg-white"
-                data-testid="document-vault-pdf-iframe"
-              />
-            ) : kind === "text" ? (
-              <iframe
-                title={fileName}
-                src={url}
-                className="h-full min-h-[calc(100dvh-12rem)] w-full border-0 bg-white"
-              />
-            ) : kind === "html" ? (
-              htmlLoading ? (
-                <div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-muted-foreground">
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" aria-hidden />
-                  Loading document…
-                </div>
-              ) : htmlContent ? (
-                <div
-                  className="prose prose-slate mx-auto max-w-none rounded-dlc-md border border-border/60 bg-white p-8 shadow-dlc-1"
-                  data-testid="document-preview-html-content"
-                  dangerouslySetInnerHTML={{ __html: htmlContent }}
-                />
-              ) : (
-                <div className="flex h-full min-h-[12rem] flex-col items-center justify-center space-y-3 p-4 text-sm text-muted-foreground">
-                  <p>Could not render this HTML document.</p>
-                  <a
-                    href={url}
-                    className="inline-flex items-center gap-2 text-primary hover:underline"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    Open in new tab
-                  </a>
-                </div>
-              )
-            ) : (
-              <div className="flex h-full min-h-[12rem] flex-col items-center justify-center space-y-3 p-4 text-sm text-muted-foreground">
-                <p>Inline preview is not available for this file type.</p>
-                <a
-                  href={url}
-                  className="inline-flex items-center gap-2 text-primary hover:underline"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Open in new tab
-                </a>
-              </div>
-            )}
-          </div>
+          <RichFilePreview
+            url={url}
+            fileName={fileName}
+            contentType={contentType}
+            className="h-full min-h-0 min-w-0"
+            viewportClassName="min-h-0"
+            onError={onError}
+          />
         </div>
       </div>
 
@@ -608,7 +529,7 @@ export function DocumentVaultPreviewCanvas({
           <span className="font-mono">1, 3, 5-7</span>
         </p>
         <input
-          className="mt-3 h-10 w-full rounded-dlc-sm border border-input bg-background px-2 text-sm"
+          className="mt-3 h-10 w-full rounded-dlc-sm border border-input bg-background px-2 text-base md:text-sm"
           value={extractInput}
           onChange={(e) => setExtractInput(e.target.value)}
           placeholder="1, 3, 5-7"
@@ -663,7 +584,7 @@ export function DocumentVaultPreviewCanvas({
                       : "",
                   )
                 }
-                className="h-10 rounded-dlc-sm border border-input bg-background px-2 text-sm"
+                className="h-10 rounded-dlc-sm border border-input bg-background px-2 text-base md:text-sm"
               >
                 <option value="">Select contact…</option>
                 {finalizeContactsQuery.map((c) => (
@@ -682,7 +603,7 @@ export function DocumentVaultPreviewCanvas({
                 onChange={(e) =>
                   setFinalizeCategory(e.target.value as LibraryDocumentCategory)
                 }
-                className="h-10 rounded-dlc-sm border border-input bg-background px-2 text-sm"
+                className="h-10 rounded-dlc-sm border border-input bg-background px-2 text-base md:text-sm"
               >
                 {PROFILE_ASSET_CATEGORIES.map((cat) => (
                   <option key={cat} value={cat}>

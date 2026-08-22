@@ -42,6 +42,10 @@ export type WorkspaceHierarchyNav = {
   hubBackHref: string;
   hubBackLabel: string;
   clientHubHref: string;
+  /** Canonical project workspace / hub href for the active file (empty when unassigned). */
+  projectHref: string;
+  projectLabel: string;
+  hasProject: boolean;
 };
 
 export function useWorkspaceHierarchyCrumbs(args: {
@@ -72,6 +76,9 @@ export function useWorkspaceHierarchyCrumbs(args: {
       hubBackHref: pipelineHubHref(focusFileId),
       hubBackLabel: "Pipeline hub",
       clientHubHref: pipelineHubHref(focusFileId),
+      projectHref: "",
+      projectLabel: "",
+      hasProject: false,
     };
     if (!fileId || !row) return empty;
 
@@ -187,6 +194,11 @@ export function useWorkspaceHierarchyCrumbs(args: {
       crumbs = hubFirstClientCrumbs;
     }
 
+    const hasPersistedProject = Boolean(
+      row.projectId ||
+        (!isSyntheticHubProjectKey(projectKey) && projectKey.trim()),
+    );
+
     return {
       crumbs,
       hubBackHref: mode === "client" ? clientHubHref : pipelineHubHref(focusFileId),
@@ -195,6 +207,9 @@ export function useWorkspaceHierarchyCrumbs(args: {
           ? contactHubBackLabel(clientDisplayName)
           : "Pipeline hub",
       clientHubHref,
+      projectHref: hasPersistedProject ? projectHref : "",
+      projectLabel: hasPersistedProject ? projectDisplayTitle : "",
+      hasProject: hasPersistedProject,
     };
   }, [
     clientHubDetail?.client?.primaryContactId,

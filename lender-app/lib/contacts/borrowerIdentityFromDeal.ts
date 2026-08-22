@@ -55,6 +55,14 @@ export function borrowerRowHasIdentity(row: unknown): boolean {
 }
 
 export function isPrimaryBorrowerFileLink(link: Doc<"contactFileLinks">): boolean {
+  if (link.registryRoleId === "primary_borrower") return true;
+  if (
+    link.registryRoleId === "coborrower" ||
+    link.registryRoleId === "guarantor" ||
+    link.registryRoleId === "key_principal"
+  ) {
+    return false;
+  }
   const role = link.role.toLowerCase();
   if (/co-sign|co-borrow|co_sign|cosign/.test(role)) return false;
   if (link.contactRoleId === DEFAULT_CONTACT_ROLE_IDS.client) return true;
@@ -63,6 +71,8 @@ export function isPrimaryBorrowerFileLink(link: Doc<"contactFileLinks">): boolea
 }
 
 export function isCoBorrowerFileLink(link: Doc<"contactFileLinks">): boolean {
+  if (link.registryRoleId === "coborrower") return true;
+  if (link.registryRoleId === "primary_borrower") return false;
   const role = link.role.toLowerCase();
   return /co-sign|co-borrow|co_sign|cosign/.test(role);
 }

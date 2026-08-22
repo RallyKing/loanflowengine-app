@@ -225,7 +225,7 @@ export function ShareManager({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-end justify-center bg-black/45 p-0 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm sm:items-center sm:p-4"
+      className="fixed inset-0 z-40 flex items-end justify-center bg-black/20 p-0 pb-[env(safe-area-inset-bottom)] sm:items-center sm:p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

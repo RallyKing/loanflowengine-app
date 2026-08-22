@@ -42,6 +42,11 @@ import { exportCSV, exportJSON, exportXLSX } from "@/lib/intake/export";
 import { exportFNMA34 } from "@/lib/intake/exportFnma";
 import { pipelineFileHref } from "@/lib/intake/routes";
 import { pipelineDealPrintHref } from "@/lib/pipeline/routes";
+import {
+  newInternalWorkflowStepId,
+  parseInternalWorkflowItems,
+  serializeInternalWorkflowItems,
+} from "@/lib/pipeline/internalWorkflow";
 import type { DealTabId } from "@/lib/file/dealTabGroups";
 import {
   type DealWorkspaceLayoutV1,
@@ -1659,13 +1664,27 @@ export function HouseholdSection({ draft, update }: SectionProps) {
 /* ------------------------------ Workflow ------------------------------ */
 
 export function WorkflowSection({ draft, update }: SectionProps) {
-  const items = draft.workflow ?? [];
+  const items = parseInternalWorkflowItems(draft.workflow);
 
-  function setItem(i: number, patch: Partial<(typeof items)[number]>) {
-    update("workflow", items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+  function setItem(
+    stepId: string,
+    patch: Partial<{ label: string; done: boolean; date?: string }>,
+  ) {
+    update(
+      "workflow",
+      serializeInternalWorkflowItems(
+        items.map((it) => (it.id === stepId ? { ...it, ...patch } : it)),
+      ),
+    );
   }
   function add() {
-    update("workflow", [...items, { label: "New step", done: false }]);
+    update(
+      "workflow",
+      serializeInternalWorkflowItems([
+        ...items,
+        { id: newInternalWorkflowStepId(), label: "New step", done: false },
+      ]),
+    );
   }
 
   return (
@@ -1674,41 +1693,52 @@ export function WorkflowSection({ draft, update }: SectionProps) {
       description="Mark each milestone complete and stamp the date."
     >
       <ul className="flex flex-col divide-y divide-border">
-        {items.map((it, i) => (
+        {items.map((it) => (
           <li
-            key={i}
-            className="flex flex-col gap-2 py-3 md:flex-row md:items-center md:gap-3 md:py-2"
+            key={it.id}
+            className="flex min-h-10 flex-col gap-2 py-2 md:flex-row md:items-center md:gap-3"
+            data-workflow-step-id={it.id}
           >
-            <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 items-center gap-2">
               <input
                 type="checkbox"
                 checked={Boolean(it.done)}
                 onChange={(e) =>
-                  setItem(i, {
+                  setItem(it.id, {
                     done: e.target.checked,
-                    date: e.target.checked && !it.date ? new Date().toISOString().slice(0, 10) : it.date,
+                    date:
+                      e.target.checked && !it.date
+                        ? new Date().toISOString().slice(0, 10)
+                        : it.date,
                   })
                 }
-                className="h-4 w-4 shrink-0 rounded border-border text-primary accent-primary"
+                className="h-5 w-5 shrink-0 rounded border-border text-primary accent-primary"
               />
               <input
                 type="text"
                 value={it.label}
-                onChange={(e) => setItem(i, { label: e.target.value })}
-                className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
+                onChange={(e) => setItem(it.id, { label: e.target.value })}
+                className="min-h-10 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
               />
             </div>
             <div className="flex shrink-0 items-center justify-end gap-2 pl-7 sm:pl-0">
               <input
                 type="date"
                 value={it.date ?? ""}
-                onChange={(e) => setItem(i, { date: e.target.value })}
-                className="min-w-0 max-w-full rounded-md border border-border/80 bg-background px-2 py-1 text-xs text-foreground"
+                onChange={(e) => setItem(it.id, { date: e.target.value })}
+                className="min-h-10 min-w-0 max-w-full rounded-md border border-border/80 bg-background px-2 py-1 text-xs text-foreground"
               />
               <Button
                 variant="ghost"
-                className="shrink-0"
-                onClick={() => update("workflow", items.filter((_, idx) => idx !== i))}
+                className="h-10 min-h-10 shrink-0"
+                onClick={() =>
+                  update(
+                    "workflow",
+                    serializeInternalWorkflowItems(
+                      items.filter((row) => row.id !== it.id),
+                    ),
+                  )
+                }
               >
                 ×
               </Button>

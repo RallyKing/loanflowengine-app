@@ -62,4 +62,28 @@ export const GLOBAL_COMMUNICATION_TEMPLATE_SEEDS: readonly SeedCommunicationTemp
       "Internal escalation for {{fileName}}: {{escalationReason}}\nOwner: {{senderName}}",
     description: "Internal or portal-visible escalation note.",
   },
+  {
+    slug: "sms-follow-up",
+    name: "SMS follow-up",
+    channel: "sms",
+    bodyTemplate:
+      "Hi {{contactName}} — quick check-in on {{dealName}} ({{stage}}). Reply here or call us. — {{senderName}} / {{organizationName}}",
+    description: "Short SMS follow-up for contacts.",
+  },
+  {
+    slug: "sms-document-nudge",
+    name: "SMS document nudge",
+    channel: "sms",
+    bodyTemplate:
+      "{{contactName}}, we still need docs for {{dealName}}. Upload in the portal when you can. — {{organizationName}}",
+    description: "SMS nudge for outstanding documents.",
+  },
+  {
+    slug: "sms-lender-intro",
+    name: "SMS lender intro",
+    channel: "sms",
+    bodyTemplate:
+      "Hi {{lenderName}} — {{senderName}} at {{organizationName}}. Sharing {{dealName}} for review. Happy to talk at {{contactPhone}}.",
+    description: "Brief SMS intro to a lender contact.",
+  },
 ] as const;

@@ -1,6 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { useRouter } from "next/navigation";
+import { Copy } from "lucide-react";
+import { api } from "@/convex/_generated/api";
+import { pipelineDealEditorHref } from "@/lib/pipeline/routes";
+import { BlockPdfExportButton } from "@/components/library/BlockPdfExportButton";
+import { ReoContactMultiAssign } from "@/components/intake/reo/ReoContactMultiAssign";
+import { ReoZillowUrlControl } from "@/components/intake/reo/ReoZillowUrlControl";
+import { ScheduleCopyToFileDialog } from "@/components/schedule/ScheduleCopyToFileDialog";
 import { IntelligentAlertsCallout } from "@/components/IntelligentAlertsCallout";
 import {
   buildCoverScenarioFundingAlerts,
@@ -11,6 +20,44 @@ import type {
   DealSectionProps,
   DealWorkspaceSheet,
 } from "@/lib/file/dealSectionTypes";
+import { useDealWorkspaceEditorOptional } from "@/lib/file/useDealWorkspaceEditor";
+import {
+  buildBlockPdfVaultFileName,
+  buildBusinessDebtBlockPdfSpec,
+  buildReoBlockPdfSpec,
+  resolveBlockPdfVaultFolder,
+  saveBlockFillablePdfToVault,
+} from "@/lib/blockPdfExport";
+import {
+  BUSINESS_DEBT_TYPE_OPTIONS,
+  computeBusinessDebtScheduleTotals,
+  createEmptyBusinessDebtRow,
+  formatBusinessDebtUsd,
+  isBusinessDebtType,
+  ensureDealBusinessDebtRowId,
+  sanitizeDealBusinessDebtRow,
+  sanitizeDealBusinessDebtRows,
+  type DealBusinessDebtRow,
+} from "@/lib/businessDebt/scheduleOfBusinessDebtModel";
+import type { VaultUploadMutations } from "@/lib/library/uploadFileToVault";
+import { showOperationalToast } from "@/lib/ui/operationalToast";
+import {
+  REO_POSITION_OPTIONS,
+  REO_PROPERTY_TYPE_OPTIONS,
+  REO_USAGE_OPTIONS,
+  computeReoRow,
+  computeReoScheduleTotals,
+  createEmptyReoRow,
+  formatReoLtv,
+  formatReoUsd,
+  normalizeContactIdList,
+  ensureDealReoRowId,
+  sanitizeDealReoRow,
+  sanitizeDealReoRows,
+  withComputedReoFields,
+  type DealReoRow,
+} from "@/lib/reo/scheduleOfReoModel";
+import { toHtmlDateInputValue } from "@/lib/schedule/dateInput";
 
 type Sheet = DealWorkspaceSheet;
 import {
@@ -28,7 +75,6 @@ import { deriveIntake } from "@/lib/intake/derivations";
 import { useNarrowViewport } from "@/lib/useNarrowViewport";
 import { cn } from "@/lib/cn";
 import { sumLiabilitiesMonthlyPayments } from "@/lib/intake/moneyAggregates";
-import { reoFingerprintFromLegacyRow } from "@/lib/contacts/reoFromDeal";
 import {
   computeWeightedAverageRateByBalance,
   sumWeightedInterestMonthlyPayments,
@@ -1136,18 +1182,122 @@ export function DtiSection(props: SectionProps) {
 
 /* ================================= REO ================================= */
 
-export function ReoSection({ draft, update }: SectionProps) {
-  const rows = useMemo(() => draft.reo ?? [], [draft.reo]);
-  const d = deriveIntake(draft);
+const REO_CELL =
+  "h-10 min-h-[40px] min-w-0 rounded-dlc-sm border border-border/80 bg-dlc-surface px-2 text-xs text-foreground";
 
-  function setRow(i: number, patch: Partial<(typeof rows)[number]>) {
-    update("reo", rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+export function ReoSection({ draft, update }: SectionProps) {
+  const editor = useDealWorkspaceEditorOptional();
+  const router = useRouter();
+  const rows = useMemo(
+    () => sanitizeDealReoRows(draft.reo),
+    [draft.reo],
+  );
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const blockAssignees = useMemo(
+    () => normalizeContactIdList(draft.reoMeta?.assignedContactIds),
+    [draft.reoMeta?.assignedContactIds],
+  );
+  const d = deriveIntake(draft);
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [copyOpen, setCopyOpen] = useState(false);
+
+  const fileId = editor?.fileId;
+  const memberUserKey = (editor?.preferencesAccountId ?? "").trim();
+  const organizationId = editor?.dealBundle?.pipeline?.organizationId;
+  const pipelineFileLabel =
+    editor?.dealBundle?.pipeline?.fileName?.trim() || "file";
+  const vaultEnabled = Boolean(fileId && memberUserKey);
+
+  const generateUploadUrl = useMutation(api.libraryDocuments.generateUploadUrl);
+  const createDocument = useMutation(api.libraryDocuments.createDocument);
+  const commitDocumentVersion = useMutation(
+    api.libraryDocuments.commitDocumentVersion,
+  );
+  const patchLinkMetadata = useMutation(
+    api.libraryDocuments.patchDocumentLinkMetadata,
+  );
+  const createFolder = useMutation(api.documentFolders.createFolder);
+  const copyReoToFile = useMutation(api.pipelineContacts.copyReoToFile);
+  const createFileFromReo = useMutation(api.pipelineContacts.createFileFromReo);
+  const folders = useQuery(
+    api.documentFolders.listFoldersByPipeline,
+    vaultEnabled && fileId
+      ? { pipelineFileId: fileId, memberUserKey }
+      : "skip",
+  );
+  const linkedContacts = useQuery(
+    api.contactFileLinks.listLinkedContactsForFile,
+    fileId
+      ? {
+          fileId,
+          ...(memberUserKey ? { memberUserKey } : {}),
+        }
+      : "skip",
+  );
+
+  const vaultMutations = useMemo((): VaultUploadMutations => {
+    return {
+      generateUploadUrl: (args) => generateUploadUrl(args),
+      createDocument: (args) => createDocument(args),
+      commitDocumentVersion: (args) => commitDocumentVersion(args),
+      patchLinkMetadata: (args) => patchLinkMetadata(args),
+    };
+  }, [
+    generateUploadUrl,
+    createDocument,
+    commitDocumentVersion,
+    patchLinkMetadata,
+  ]);
+
+  const contactNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of linkedContacts ?? []) {
+      map.set(String(c.contactId), c.name);
+    }
+    return map;
+  }, [linkedContacts]);
+
+  const namesForIds = useCallback(
+    (ids: readonly string[] | undefined) =>
+      normalizeContactIdList(ids).map(
+        (id) => contactNameById.get(id) || id,
+      ),
+    [contactNameById],
+  );
+
+  const totals = useMemo(() => computeReoScheduleTotals(rows), [rows]);
+
+  function persistRows(next: DealReoRow[]) {
+    update(
+      "reo",
+      next.map((row) => withComputedReoFields(ensureDealReoRowId(row))),
+    );
+  }
+
+  function persistMeta(assignedContactIds: string[]) {
+    update("reoMeta", { assignedContactIds });
+  }
+
+  function setRow(i: number, patch: Partial<DealReoRow>) {
+    persistRows(
+      rowsRef.current.map((r, idx) =>
+        idx === i ? sanitizeDealReoRow({ ...r, ...patch }) : r,
+      ),
+    );
   }
 
   function addFromSubject() {
-    update("reo", [
-      {
-        usage: (draft.occupancy === "Primary" ? "Primary" : draft.occupancy === "2nd Home" ? "2nd Home" : draft.occupancy === "Investment" ? "Rental" : "Primary"),
+    persistRows([
+      createEmptyReoRow({
+        usage:
+          draft.occupancy === "Primary"
+            ? "Primary"
+            : draft.occupancy === "2nd Home"
+              ? "2nd Home"
+              : draft.occupancy === "Investment"
+                ? "Rental"
+                : "Primary",
         address: d.subjectAddress,
         state: d.subject.state ?? "",
         propertyType: "SFR",
@@ -1159,14 +1309,14 @@ export function ReoSection({ draft, update }: SectionProps) {
         taxes: d.firstLoan?.taxes ?? "",
         insurance: d.firstLoan?.insurance ?? "",
         hoa: d.firstLoan?.hoa ?? "",
-      },
+      }),
       ...rows,
     ]);
   }
 
   function addFromPrimary() {
-    update("reo", [
-      {
+    persistRows([
+      createEmptyReoRow({
         usage: "Primary",
         address: d.primaryAddress,
         state: d.primary.state ?? "",
@@ -1174,34 +1324,72 @@ export function ReoSection({ draft, update }: SectionProps) {
         marketValue: d.primary.estimatedValue ?? "",
         position: "1st",
         balance: d.primary.estCurrentMortgageBalance ?? "",
-      },
+      }),
       ...rows,
     ]);
   }
 
-  const totals = useMemo(() => {
-    const sum = (k: keyof (typeof rows)[number]) =>
-      rows.reduce((s, r) => s + toNumber(r[k] as string | undefined), 0);
-    return {
-      marketValue: sum("marketValue"),
-      balance: sum("balance"),
-      mortgage: sum("mortgagePayment"),
-      taxes: sum("taxes"),
-      insurance: sum("insurance"),
-      hoa: sum("hoa"),
-      grossRent: sum("grossRent"),
-      netRent: sum("netRent"),
-      invested: sum("invested"),
-    };
-  }, [rows]);
+  const buildPdfSpec = useCallback(() => {
+    return buildReoBlockPdfSpec(rows, {
+      fileName: buildBlockPdfVaultFileName(
+        "Schedule-of-Real-Estate-Owned",
+        pipelineFileLabel,
+      ),
+      assignedContactNames: namesForIds(blockAssignees),
+      rowAssigneeNames: rows.map((r) => namesForIds(r.assignedContactIds)),
+    });
+  }, [rows, pipelineFileLabel, namesForIds, blockAssignees]);
+
+  const savePdfToVault = useCallback(async () => {
+    if (!memberUserKey || !fileId) {
+      throw new Error("Sign in to save to Document Vault.");
+    }
+    if (folders === undefined) {
+      throw new Error("Document Vault is still loading. Try again in a moment.");
+    }
+    const { folderId, folderName } = await resolveBlockPdfVaultFolder({
+      folders,
+      pipelineFileId: fileId,
+      memberUserKey,
+      createFolder: (args) => createFolder(args),
+      defaultFolderName: "REO",
+    });
+    const saved = await saveBlockFillablePdfToVault(buildPdfSpec(), {
+      proof: { kind: "pipeline", pipelineFileId: fileId },
+      memberUserKey,
+      mutations: vaultMutations,
+      folderId,
+      title: "Schedule of Real Estate Owned",
+    });
+    showOperationalToast({
+      title: "Saved to Document Vault",
+      description: `${saved.fileName} · ${folderName} folder · Open the Documents tab to view it.`,
+      variant: "success",
+      durationMs: 5200,
+    });
+  }, [
+    memberUserKey,
+    fileId,
+    folders,
+    createFolder,
+    vaultMutations,
+    buildPdfSpec,
+  ]);
 
   const showSubjectCta = Boolean(d.subjectAddress) && !d.subjectInReo;
-  const showPrimaryCta = Boolean(d.primaryAddress) && !d.subjectIsPrimary && !d.primaryInReo;
+  const showPrimaryCta =
+    Boolean(d.primaryAddress) && !d.subjectIsPrimary && !d.primaryInReo;
+  const selectedIndexes = useMemo(
+    () => [...selected].sort((a, b) => a - b),
+    [selected],
+  );
+
+  const inputClass = REO_CELL;
 
   return (
     <div className="flex flex-col gap-5">
       {showSubjectCta || showPrimaryCta ? (
-        <div className="rounded-xl border border-dashed border-border bg-muted/30 p-4 text-sm">
+        <div className="rounded-dlc-lg border border-dashed border-border bg-dlc-surface-high/40 p-4 text-sm">
           <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Linked properties from Intake
           </p>
@@ -1209,136 +1397,537 @@ export function ReoSection({ draft, update }: SectionProps) {
             {showSubjectCta ? (
               <li className="flex items-start justify-between gap-3">
                 <div className="flex-1">
-                  <div className="text-sm font-medium text-foreground">Subject property</div>
-                  <div className="text-xs text-muted-foreground">{d.subjectAddress}</div>
+                  <div className="text-sm font-medium text-foreground">
+                    Subject property
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {d.subjectAddress}
+                  </div>
                 </div>
-                <Button variant="secondary" onClick={addFromSubject}>+ Add to schedule</Button>
+                <Button variant="secondary" onClick={addFromSubject}>
+                  + Add to schedule
+                </Button>
               </li>
             ) : null}
             {showPrimaryCta ? (
               <li className="flex items-start justify-between gap-3">
                 <div className="flex-1">
-                  <div className="text-sm font-medium text-foreground">Primary residence</div>
-                  <div className="text-xs text-muted-foreground">{d.primaryAddress}</div>
+                  <div className="text-sm font-medium text-foreground">
+                    Primary residence
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {d.primaryAddress}
+                  </div>
                 </div>
-                <Button variant="secondary" onClick={addFromPrimary}>+ Add to schedule</Button>
+                <Button variant="secondary" onClick={addFromPrimary}>
+                  + Add to schedule
+                </Button>
               </li>
             ) : null}
           </ul>
         </div>
       ) : null}
 
-    <SectionCard
-      title="Schedule of Real Estate Owned"
-      description="Row-by-row summary of every property the borrower owns."
-      actions={
-        <Button variant="secondary" onClick={() => update("reo", [...rows, { usage: "Rental", position: "1st" }])}>
-          + Property
-        </Button>
-      }
-    >
-      <div className="max-w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-        <table className="w-full min-w-[1680px] border-separate border-spacing-y-2 text-xs">
-          <thead>
-            <tr className="text-left font-medium uppercase tracking-wide text-muted-foreground">
-              <th className="px-2">#</th>
-              <th className="px-2">Purchased</th>
-              <th className="px-2">ST</th>
-              <th className="px-2">Use</th>
-              <th className="px-2">Address</th>
-              <th className="px-2">Type</th>
-              <th className="px-2">Market value</th>
-              <th className="px-2">Pos</th>
-              <th className="px-2">Balance</th>
-              <th className="px-2">Mort pmt</th>
-              <th className="px-2">Rate %</th>
-              <th className="px-2">Taxes</th>
-              <th className="px-2">Ins</th>
-              <th className="px-2">HOA</th>
-              <th className="px-2">Escrow</th>
-              <th className="px-2">Gross rent</th>
-              <th className="px-2">Net rent</th>
-              <th className="px-2">APN</th>
-              <th className="px-2">Invested</th>
-              <th className="px-2">Lat/Long</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => {
-              const rowKey =
-                reoFingerprintFromLegacyRow(r) || `reo-row-${i}`;
-              return (
-              <tr
-                key={rowKey}
-                className={cn(
-                  i % 2 === 0
-                    ? "bg-white dark:bg-slate-800"
-                    : "bg-slate-50 dark:bg-slate-800/70",
-                )}
+      <SectionCard
+        title="Schedule of Real Estate Owned"
+        description="Full workbook schedule: escrow = taxes + insurance + HOA; net rent = gross rent − (taxes + insurance + HOA + mortgage payment)."
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {fileId ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="min-h-10"
+                data-testid="reo-copy-to-file"
+                onClick={() => setCopyOpen(true)}
               >
-                <td className="rounded-l-lg px-2 text-muted-foreground">{i + 1}</td>
-                <td className="px-1"><TextInput type="date" value={r.purchasedDate ?? ""} onChange={(e) => setRow(i, { purchasedDate: e.target.value })} /></td>
-                <td className="px-1 w-14"><TextInput value={r.state ?? ""} onChange={(e) => setRow(i, { state: e.target.value })} /></td>
-                <td className="px-1">
-                  <Select value={r.usage ?? ""} onChange={(e) => setRow(i, { usage: e.target.value })}>
-                    <option value="">—</option>
-                    <option>Primary</option>
-                    <option>2nd Home</option>
-                    <option>Rental</option>
-                    <option>Commercial</option>
-                  </Select>
-                </td>
-                <td className="px-1 min-w-[180px]"><TextInput value={r.address ?? ""} onChange={(e) => setRow(i, { address: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.propertyType ?? ""} onChange={(e) => setRow(i, { propertyType: e.target.value })} placeholder="SFR" /></td>
-                <td className="px-1 w-28"><TextInput value={r.marketValue ?? ""} onChange={(e) => setRow(i, { marketValue: e.target.value })} /></td>
-                <td className="px-1 w-16">
-                  <Select value={r.position ?? ""} onChange={(e) => setRow(i, { position: e.target.value })}>
-                    <option value="">—</option>
-                    <option>1st</option>
-                    <option>2nd</option>
-                  </Select>
-                </td>
-                <td className="px-1 w-28"><TextInput value={r.balance ?? ""} onChange={(e) => setRow(i, { balance: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.mortgagePayment ?? ""} onChange={(e) => setRow(i, { mortgagePayment: e.target.value })} /></td>
-                <td className="px-1 w-20"><TextInput value={r.rate ?? ""} onChange={(e) => setRow(i, { rate: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.taxes ?? ""} onChange={(e) => setRow(i, { taxes: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.insurance ?? ""} onChange={(e) => setRow(i, { insurance: e.target.value })} /></td>
-                <td className="px-1 w-20"><TextInput value={r.hoa ?? ""} onChange={(e) => setRow(i, { hoa: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.escrow ?? ""} onChange={(e) => setRow(i, { escrow: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.grossRent ?? ""} onChange={(e) => setRow(i, { grossRent: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.netRent ?? ""} onChange={(e) => setRow(i, { netRent: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.apn ?? ""} onChange={(e) => setRow(i, { apn: e.target.value })} /></td>
-                <td className="px-1 w-24"><TextInput value={r.invested ?? ""} onChange={(e) => setRow(i, { invested: e.target.value })} /></td>
-                <td className="px-1 min-w-[120px]"><TextInput value={r.latLong ?? ""} onChange={(e) => setRow(i, { latLong: e.target.value })} placeholder="lat, lng" /></td>
-                <td className="rounded-r-lg px-1 text-right">
-                  <Button variant="ghost" onClick={() => update("reo", rows.filter((_, idx) => idx !== i))}>×</Button>
-                </td>
+                <Copy className="h-4 w-4" aria-hidden />
+                Bring into file
+              </Button>
+            ) : null}
+            <BlockPdfExportButton
+              testId="reo-block-pdf-export"
+              label="Fillable Schedule of REO PDF"
+              buildSpec={buildPdfSpec}
+              onSaveToVault={vaultEnabled ? savePdfToVault : undefined}
+            />
+            <Button
+              variant="secondary"
+              className="min-h-10"
+              onClick={() =>
+                persistRows([...rows, createEmptyReoRow({ usage: "Rental" })])
+              }
+            >
+              + Property
+            </Button>
+          </div>
+        }
+      >
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Block assignees
+            </p>
+            <ReoContactMultiAssign
+              selectedIds={blockAssignees}
+              onChange={persistMeta}
+              organizationId={organizationId}
+              memberUserKey={memberUserKey || undefined}
+              fileId={fileId}
+              label="Assign schedule to contacts"
+            />
+          </div>
+        </div>
+
+        <div className="max-w-full overflow-x-auto overscroll-x-contain max-md:touch-pan-x [-webkit-overflow-scrolling:touch]">
+          <table className="w-full min-w-[2400px] border-separate border-spacing-y-2 text-xs">
+            <thead>
+              <tr className="text-left font-medium uppercase tracking-wide text-muted-foreground">
+                <th className="px-2"> </th>
+                <th className="px-2">#</th>
+                <th className="px-2">Purchased</th>
+                <th className="px-2">ST</th>
+                <th className="px-2">Use</th>
+                <th className="px-2">Address</th>
+                <th className="px-2">Type</th>
+                <th className="px-2">Market value / listing</th>
+                <th className="px-2">Pos</th>
+                <th className="px-2">Balance</th>
+                <th className="px-2">Mort pmt</th>
+                <th className="px-2">Rate %</th>
+                <th className="px-2">Taxes</th>
+                <th className="px-2">Ins</th>
+                <th className="px-2">HOA</th>
+                <th className="px-2">Escrow</th>
+                <th className="px-2">Gross rent</th>
+                <th className="px-2">Net rent</th>
+                <th className="px-2">Equity</th>
+                <th className="px-2">LTV</th>
+                <th className="px-2">APN</th>
+                <th className="px-2">Invested</th>
+                <th className="px-2">Lat/Long</th>
+                <th className="px-2">Lot SF</th>
+                <th className="px-2">Prop SF</th>
+                <th className="px-2">Most recent</th>
+                <th className="px-2">Assigned</th>
+                <th />
               </tr>
-            );
-            })}
-            <tr className="text-[11px] font-semibold text-foreground/90">
-              <td className="px-2" colSpan={6}>TOTALS</td>
-              <td className="px-2">{formatUSD(totals.marketValue)}</td>
-              <td />
-              <td className="px-2">{formatUSD(totals.balance)}</td>
-              <td className="px-2">{formatUSD(totals.mortgage)}</td>
-              <td />
-              <td className="px-2">{formatUSD(totals.taxes)}</td>
-              <td className="px-2">{formatUSD(totals.insurance)}</td>
-              <td className="px-2">{formatUSD(totals.hoa)}</td>
-              <td />
-              <td className="px-2">{formatUSD(totals.grossRent)}</td>
-              <td className="px-2">{formatUSD(totals.netRent)}</td>
-              <td />
-              <td className="px-2">{formatUSD(totals.invested)}</td>
-              <td />
-              <td />
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const computed = computeReoRow(r);
+                const rowKey = r.rowId || `reo-row-${i}`;
+                const checked = selected.has(i);
+                return (
+                  <tr
+                    key={rowKey}
+                    className={cn(
+                      i % 2 === 0
+                        ? "bg-dlc-surface"
+                        : "bg-dlc-surface-high/60",
+                    )}
+                  >
+                    <td className="rounded-l-lg px-1">
+                      <input
+                        type="checkbox"
+                        className="h-5 w-5 accent-primary"
+                        checked={checked}
+                        aria-label={`Select property ${i + 1}`}
+                        onChange={(e) => {
+                          setSelected((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(i);
+                            else next.delete(i);
+                            return next;
+                          });
+                        }}
+                      />
+                    </td>
+                    <td className="px-2 text-muted-foreground">{i + 1}</td>
+                    <td className="px-1">
+                      <TextInput
+                        type="date"
+                        className={inputClass}
+                        value={toHtmlDateInputValue(r.purchasedDate)}
+                        onChange={(e) =>
+                          setRow(i, { purchasedDate: e.target.value })
+                        }
+                      />
+                    </td>
+                    <td className="w-14 px-1">
+                      <TextInput
+                        className={inputClass}
+                        value={r.state ?? ""}
+                        onChange={(e) => setRow(i, { state: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-1">
+                      <Select
+                        className={inputClass}
+                        value={r.usage ?? ""}
+                        onChange={(e) => setRow(i, { usage: e.target.value })}
+                        aria-label={`Use ${i + 1}`}
+                      >
+                        <option value="">—</option>
+                        {r.usage &&
+                        !(REO_USAGE_OPTIONS as readonly string[]).includes(
+                          r.usage,
+                        ) ? (
+                          <option value={r.usage}>{r.usage}</option>
+                        ) : null}
+                        {REO_USAGE_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td className="min-w-[180px] px-1">
+                      <TextInput
+                        className={inputClass}
+                        value={r.address ?? ""}
+                        onChange={(e) => setRow(i, { address: e.target.value })}
+                      />
+                    </td>
+                    <td className="w-24 px-1">
+                      <Select
+                        className={inputClass}
+                        value={r.propertyType ?? ""}
+                        onChange={(e) =>
+                          setRow(i, { propertyType: e.target.value })
+                        }
+                        aria-label={`Property type ${i + 1}`}
+                      >
+                        <option value="">—</option>
+                        {r.propertyType &&
+                        !(REO_PROPERTY_TYPE_OPTIONS as readonly string[]).includes(
+                          r.propertyType,
+                        ) ? (
+                          <option value={r.propertyType}>{r.propertyType}</option>
+                        ) : null}
+                        {REO_PROPERTY_TYPE_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td className="w-40 px-1">
+                      <div className="flex min-w-0 items-center gap-1">
+                        <TextInput
+                          className={cn(inputClass, "min-w-0 flex-1")}
+                          inputMode="decimal"
+                          value={r.marketValue ?? ""}
+                          onChange={(e) =>
+                            setRow(i, { marketValue: e.target.value })
+                          }
+                          aria-label={`Market value ${i + 1}`}
+                        />
+                        <ReoZillowUrlControl
+                          value={r.zillowUrl}
+                          onChange={(next) =>
+                            setRow(i, { zillowUrl: next })
+                          }
+                          rowLabel={
+                            (r.address ?? "").trim() || `property ${i + 1}`
+                          }
+                        />
+                      </div>
+                    </td>
+                    <td className="w-20 px-1">
+                      <Select
+                        className={inputClass}
+                        value={r.position ?? ""}
+                        onChange={(e) =>
+                          setRow(i, { position: e.target.value })
+                        }
+                        aria-label={`Position ${i + 1}`}
+                      >
+                        <option value="">—</option>
+                        {r.position &&
+                        !(REO_POSITION_OPTIONS as readonly string[]).includes(
+                          r.position,
+                        ) ? (
+                          <option value={r.position}>{r.position}</option>
+                        ) : null}
+                        {REO_POSITION_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td className="w-28 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.balance ?? ""}
+                        onChange={(e) => setRow(i, { balance: e.target.value })}
+                      />
+                    </td>
+                    <td className="w-24 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.mortgagePayment ?? ""}
+                        onChange={(e) =>
+                          setRow(i, { mortgagePayment: e.target.value })
+                        }
+                      />
+                    </td>
+                    <td className="w-20 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.rate ?? ""}
+                        onChange={(e) => setRow(i, { rate: e.target.value })}
+                      />
+                    </td>
+                    <td className="w-24 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.taxes ?? ""}
+                        onChange={(e) => setRow(i, { taxes: e.target.value })}
+                      />
+                    </td>
+                    <td className="w-24 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.insurance ?? ""}
+                        onChange={(e) =>
+                          setRow(i, { insurance: e.target.value })
+                        }
+                      />
+                    </td>
+                    <td className="w-20 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.hoa ?? ""}
+                        onChange={(e) => setRow(i, { hoa: e.target.value })}
+                      />
+                    </td>
+                    <td className="w-24 px-1">
+                      <span
+                        className="flex h-10 min-h-[40px] items-center justify-end px-2 tabular-nums text-foreground"
+                        title="Taxes + insurance + HOA"
+                      >
+                        {formatReoUsd(computed.escrow)}
+                      </span>
+                    </td>
+                    <td className="w-24 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.grossRent ?? ""}
+                        onChange={(e) =>
+                          setRow(i, { grossRent: e.target.value })
+                        }
+                      />
+                    </td>
+                    <td className="w-24 px-1">
+                      <span
+                        className="flex h-10 min-h-[40px] items-center justify-end px-2 tabular-nums text-foreground"
+                        title="Gross rent − (taxes + insurance + HOA + mortgage payment)"
+                      >
+                        {formatReoUsd(computed.netRent)}
+                      </span>
+                    </td>
+                    <td className="w-24 px-1">
+                      <span className="flex h-10 min-h-[40px] items-center justify-end px-2 tabular-nums text-foreground">
+                        {formatReoUsd(computed.equity)}
+                      </span>
+                    </td>
+                    <td className="w-16 px-1">
+                      <span className="flex h-10 min-h-[40px] items-center justify-end px-2 tabular-nums text-foreground">
+                        {formatReoLtv(computed.ltv)}
+                      </span>
+                    </td>
+                    <td className="w-24 px-1">
+                      <TextInput
+                        className={inputClass}
+                        value={r.apn ?? ""}
+                        onChange={(e) => setRow(i, { apn: e.target.value })}
+                      />
+                    </td>
+                    <td className="w-24 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.invested ?? ""}
+                        onChange={(e) => setRow(i, { invested: e.target.value })}
+                      />
+                    </td>
+                    <td className="min-w-[120px] px-1">
+                      <TextInput
+                        className={inputClass}
+                        value={r.latLong ?? ""}
+                        onChange={(e) => setRow(i, { latLong: e.target.value })}
+                        placeholder="lat, lng"
+                      />
+                    </td>
+                    <td className="w-20 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.lotSf ?? ""}
+                        onChange={(e) => setRow(i, { lotSf: e.target.value })}
+                      />
+                    </td>
+                    <td className="w-20 px-1">
+                      <TextInput
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={r.propSf ?? ""}
+                        onChange={(e) => setRow(i, { propSf: e.target.value })}
+                      />
+                    </td>
+                    <td className="w-32 px-1">
+                      <TextInput
+                        type="date"
+                        className={inputClass}
+                        value={toHtmlDateInputValue(r.mostRecent)}
+                        onChange={(e) =>
+                          setRow(i, { mostRecent: e.target.value })
+                        }
+                      />
+                    </td>
+                    <td className="min-w-[160px] px-1">
+                      <ReoContactMultiAssign
+                        compact
+                        selectedIds={normalizeContactIdList(r.assignedContactIds)}
+                        onChange={(ids) =>
+                          setRow(i, { assignedContactIds: ids })
+                        }
+                        organizationId={organizationId}
+                        memberUserKey={memberUserKey || undefined}
+                        fileId={fileId}
+                        label={`Assign property ${i + 1}`}
+                      />
+                    </td>
+                    <td className="rounded-r-lg px-1 text-right">
+                      <Button
+                        variant="ghost"
+                        className="h-10 min-h-[40px] w-10 p-0"
+                        aria-label={`Remove property ${i + 1}`}
+                        onClick={() => {
+                          persistRows(rows.filter((_, idx) => idx !== i));
+                          setSelected((prev) => {
+                            const next = new Set<number>();
+                            for (const idx of prev) {
+                              if (idx === i) continue;
+                              next.add(idx > i ? idx - 1 : idx);
+                            }
+                            return next;
+                          });
+                        }}
+                      >
+                        ×
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr className="text-[11px] font-semibold text-foreground/90">
+                <td className="px-2" colSpan={7}>
+                  TOTALS
+                </td>
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.marketValue)}
+                </td>
+                <td />
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.balance)}
+                </td>
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.mortgagePayment)}
+                </td>
+                <td />
+                <td className="px-2 tabular-nums">{formatUSD(totals.taxes)}</td>
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.insurance)}
+                </td>
+                <td className="px-2 tabular-nums">{formatUSD(totals.hoa)}</td>
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.escrow)}
+                </td>
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.grossRent)}
+                </td>
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.netRent)}
+                </td>
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.equity)}
+                </td>
+                <td />
+                <td />
+                <td className="px-2 tabular-nums">
+                  {formatUSD(totals.invested)}
+                </td>
+                <td colSpan={5} />
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
+      {fileId ? (
+        <ScheduleCopyToFileDialog
+          open={copyOpen}
+          onClose={() => setCopyOpen(false)}
+          sourceFileId={fileId}
+          memberUserKey={memberUserKey || undefined}
+          selectedRowIndexes={selectedIndexes}
+          defaultMode={selectedIndexes.length > 0 ? "rows" : "block"}
+          title="Bring REO into another file"
+          description="Copy selected property rows or the entire Schedule of REO into another loan file — or create a new file. Assignees travel with the data."
+          rowNounSingular="property"
+          rowNounPlural="properties"
+          testId="reo-copy-to-file-dialog"
+          onCopy={async ({ targetFileId, mode, rowIndexes }) => {
+            const result = await copyReoToFile({
+              sourceFileId: fileId,
+              targetFileId,
+              mode,
+              ...(mode === "rows" ? { rowIndexes } : {}),
+              ...(memberUserKey
+                ? { preferencesAccountId: memberUserKey }
+                : {}),
+            });
+            if (!result.ok) return { ok: false as const };
+            return {
+              ok: true as const,
+              copiedRowCount: result.copiedRowCount,
+            };
+          }}
+          onCreateNewFile={
+            memberUserKey
+              ? async ({ mode, rowIndexes }) => {
+                  const result = await createFileFromReo({
+                    sourceFileId: fileId,
+                    mode,
+                    ...(mode === "rows" ? { rowIndexes } : {}),
+                    preferencesAccountId: memberUserKey,
+                  });
+                  router.push(
+                    pipelineDealEditorHref(result.targetFileId, {
+                      tab: "dealInfo",
+                    }),
+                  );
+                  return {
+                    ok: true as const,
+                    copiedRowCount: result.copiedRowCount,
+                    targetFileId: result.targetFileId,
+                    fileName: result.fileName,
+                  };
+                }
+              : undefined
+          }
+        />
+      ) : null}
     </div>
   );
 }
@@ -1505,52 +2094,238 @@ export function ComparisonSection(props: SectionProps) {
 
 /* =========================== Business debt schedule =========================== */
 
+const BD_CELL =
+  "h-10 min-h-[40px] min-w-0 rounded-dlc-sm border border-border/80 bg-dlc-surface px-2 text-xs text-foreground";
+
 /** Tab 2 Deal Info — flat `weightedInterest` schedule (dual-write to CRM). */
 export function BusinessDebtSection({ draft, update }: DealSectionProps) {
-  const rows = draft.weightedInterest ?? [];
+  const editor = useDealWorkspaceEditorOptional();
+  const rows = useMemo(
+    () => sanitizeDealBusinessDebtRows(draft.weightedInterest),
+    [draft.weightedInterest],
+  );
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const blockAssignees = useMemo(
+    () => normalizeContactIdList(draft.businessDebtMeta?.assignedContactIds),
+    [draft.businessDebtMeta?.assignedContactIds],
+  );
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [copyOpen, setCopyOpen] = useState(false);
 
-  function setRows(next: NonNullable<Sheet["weightedInterest"]>) {
-    update("weightedInterest", next);
+  const fileId = editor?.fileId;
+  const memberUserKey = (editor?.preferencesAccountId ?? "").trim();
+  const organizationId = editor?.dealBundle?.pipeline?.organizationId;
+  const pipelineFileLabel =
+    editor?.dealBundle?.pipeline?.fileName?.trim() || "file";
+  const vaultEnabled = Boolean(fileId && memberUserKey);
+
+  const generateUploadUrl = useMutation(api.libraryDocuments.generateUploadUrl);
+  const createDocument = useMutation(api.libraryDocuments.createDocument);
+  const commitDocumentVersion = useMutation(
+    api.libraryDocuments.commitDocumentVersion,
+  );
+  const patchLinkMetadata = useMutation(
+    api.libraryDocuments.patchDocumentLinkMetadata,
+  );
+  const createFolder = useMutation(api.documentFolders.createFolder);
+  const copyBusinessDebt = useMutation(api.pipelineContacts.copyBusinessDebtToFile);
+  const folders = useQuery(
+    api.documentFolders.listFoldersByPipeline,
+    vaultEnabled && fileId
+      ? { pipelineFileId: fileId, memberUserKey }
+      : "skip",
+  );
+  const linkedContacts = useQuery(
+    api.contactFileLinks.listLinkedContactsForFile,
+    fileId
+      ? {
+          fileId,
+          ...(memberUserKey ? { memberUserKey } : {}),
+        }
+      : "skip",
+  );
+
+  const vaultMutations = useMemo((): VaultUploadMutations => {
+    return {
+      generateUploadUrl: (args) => generateUploadUrl(args),
+      createDocument: (args) => createDocument(args),
+      commitDocumentVersion: (args) => commitDocumentVersion(args),
+      patchLinkMetadata: (args) => patchLinkMetadata(args),
+    };
+  }, [
+    generateUploadUrl,
+    createDocument,
+    commitDocumentVersion,
+    patchLinkMetadata,
+  ]);
+
+  const contactNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of linkedContacts ?? []) {
+      map.set(String(c.contactId), c.name);
+    }
+    return map;
+  }, [linkedContacts]);
+
+  const namesForIds = useCallback(
+    (ids: readonly string[] | undefined) =>
+      normalizeContactIdList(ids).map((id) => contactNameById.get(id) || id),
+    [contactNameById],
+  );
+
+  const totals = useMemo(
+    () => computeBusinessDebtScheduleTotals(rows),
+    [rows],
+  );
+
+  function persistRows(next: DealBusinessDebtRow[]) {
+    update(
+      "weightedInterest",
+      next.map((row) => ensureDealBusinessDebtRowId(row)),
+    );
   }
 
-  function setRow(i: number, patch: Partial<(typeof rows)[number]>) {
-    setRows(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  function persistMeta(assignedContactIds: string[]) {
+    update("businessDebtMeta", { assignedContactIds });
   }
 
-  const totalBalance = rows
-    .filter((r) => r.include !== false)
-    .reduce((s, r) => s + toNumber(r.balance), 0);
-  const totalMonthly = sumWeightedInterestMonthlyPayments(rows);
+  function setRow(i: number, patch: Partial<DealBusinessDebtRow>) {
+    persistRows(
+      rowsRef.current.map((r, idx) =>
+        idx === i ? sanitizeDealBusinessDebtRow({ ...r, ...patch }) : r,
+      ),
+    );
+  }
+
+  const buildPdfSpec = useCallback(() => {
+    return buildBusinessDebtBlockPdfSpec(rows, {
+      fileName: buildBlockPdfVaultFileName(
+        "Schedule-of-Business-Debt",
+        pipelineFileLabel,
+      ),
+      assignedContactNames: namesForIds(blockAssignees),
+      rowAssigneeNames: rows.map((r) => namesForIds(r.assignedContactIds)),
+    });
+  }, [rows, pipelineFileLabel, namesForIds, blockAssignees]);
+
+  const savePdfToVault = useCallback(async () => {
+    if (!memberUserKey || !fileId) {
+      throw new Error("Sign in to save to Document Vault.");
+    }
+    if (folders === undefined) {
+      throw new Error("Document Vault is still loading. Try again in a moment.");
+    }
+    const { folderId, folderName } = await resolveBlockPdfVaultFolder({
+      folders,
+      pipelineFileId: fileId,
+      memberUserKey,
+      createFolder: (args) => createFolder(args),
+      defaultFolderName: "Forms",
+    });
+    const saved = await saveBlockFillablePdfToVault(buildPdfSpec(), {
+      proof: { kind: "pipeline", pipelineFileId: fileId },
+      memberUserKey,
+      mutations: vaultMutations,
+      folderId,
+      title: "Schedule of Business Debt",
+    });
+    showOperationalToast({
+      title: "Saved to Document Vault",
+      description: `${saved.fileName} · ${folderName} folder · Open the Documents tab to view it.`,
+      variant: "success",
+      durationMs: 5200,
+    });
+  }, [
+    memberUserKey,
+    fileId,
+    folders,
+    createFolder,
+    vaultMutations,
+    buildPdfSpec,
+  ]);
+
+  const selectedIndexes = useMemo(
+    () => [...selected].sort((a, b) => a - b),
+    [selected],
+  );
 
   return (
     <SectionCard
       title="Schedule of business debt"
-      description="Corporate liabilities and MCAs for stacking analysis. Syncs to the borrowing entity on this file."
+      description="Corporate liabilities and MCAs for stacking. Required: creditor, type, original amount, origination date, present balance, rate/factor, maturity, and monthly payment."
       actions={
-        <span className="text-sm text-muted-foreground">
-          Total balance: <strong>{formatUSD(totalBalance)}</strong>
-          {" · "}
-          Payments / mo: <strong>{formatUSD(totalMonthly)}</strong>
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {fileId ? (
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-10 min-h-[40px]"
+              data-testid="business-debt-copy-to-file"
+              onClick={() => setCopyOpen(true)}
+            >
+              <Copy className="h-4 w-4" aria-hidden />
+              Copy to file
+            </Button>
+          ) : null}
+          <BlockPdfExportButton
+            testId="business-debt-pdf-export"
+            label="Fillable Schedule of Business Debt PDF"
+            buildSpec={buildPdfSpec}
+            onSaveToVault={vaultEnabled ? savePdfToVault : undefined}
+          />
+          <Button
+            variant="secondary"
+            className="h-10 min-h-[40px]"
+            onClick={() => persistRows([...rows, createEmptyBusinessDebtRow()])}
+          >
+            + Add liability
+          </Button>
+        </div>
       }
     >
-      <div className="max-w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-        <table className="w-full min-w-[760px] border-separate border-spacing-y-2 text-sm">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <ReoContactMultiAssign
+          selectedIds={blockAssignees}
+          onChange={persistMeta}
+          organizationId={organizationId}
+          memberUserKey={memberUserKey || undefined}
+          fileId={fileId}
+          label="Assign schedule to contacts"
+        />
+        <p className="text-sm text-muted-foreground">
+          Original: <strong>{formatBusinessDebtUsd(totals.originalAmount)}</strong>
+          {" · "}
+          Present: <strong>{formatBusinessDebtUsd(totals.presentBalance)}</strong>
+          {" · "}
+          Payments / mo:{" "}
+          <strong>{formatBusinessDebtUsd(totals.monthlyPayment)}</strong>
+        </p>
+      </div>
+      <div className="max-w-full overflow-x-auto overscroll-x-contain max-md:touch-pan-x [-webkit-overflow-scrolling:touch]">
+        <table className="w-full min-w-[1480px] border-separate border-spacing-y-2 text-sm">
           <thead>
             <tr className="text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              <th className="px-3 text-center">Active</th>
-              <th className="px-3">Creditor</th>
-              <th className="px-3">Balance</th>
-              <th className="px-3">Rate %</th>
-              <th className="px-3">Monthly payment</th>
-              <th className="px-3">Position / note</th>
+              <th className="w-10 px-2 text-center">Sel</th>
+              <th className="px-2 text-center">Active</th>
+              <th className="px-2">Creditor</th>
+              <th className="px-2">Debt type</th>
+              <th className="px-2">Other type</th>
+              <th className="px-2">Original amount</th>
+              <th className="px-2">Origination</th>
+              <th className="px-2">Present balance</th>
+              <th className="px-2">Rate / factor</th>
+              <th className="px-2">Maturity</th>
+              <th className="px-2">Monthly payment</th>
+              <th className="px-2">Note</th>
+              <th className="px-2">Contacts</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {rows.map((r, i) => (
               <tr
-                key={i}
+                key={r.rowId || `bd-row-${i}`}
                 className={cn(
                   i % 2 === 0
                     ? "bg-white dark:bg-slate-800"
@@ -1560,62 +2335,229 @@ export function BusinessDebtSection({ draft, update }: DealSectionProps) {
                 <td className="rounded-l-lg px-2 text-center">
                   <input
                     type="checkbox"
-                    className="h-4 w-4 rounded border-input accent-primary"
+                    className="h-5 w-5 accent-primary"
+                    checked={selected.has(i)}
+                    aria-label={`Select ${r.account || `debt ${i + 1}`}`}
+                    onChange={(e) => {
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(i);
+                        else next.delete(i);
+                        return next;
+                      });
+                    }}
+                  />
+                </td>
+                <td className="px-2 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-5 w-5 rounded border-input accent-primary"
                     checked={r.include !== false}
                     onChange={(e) => setRow(i, { include: e.target.checked })}
                     aria-label={`Include ${r.account || `debt ${i + 1}`}`}
                   />
                 </td>
-                <td className="px-2">
+                <td className="min-w-[140px] px-1">
                   <TextInput
+                    className={BD_CELL}
                     value={r.account ?? ""}
                     onChange={(e) => setRow(i, { account: e.target.value })}
+                    aria-label="Creditor"
                   />
                 </td>
-                <td className="px-2">
+                <td className="min-w-[140px] px-1">
+                  <Select
+                    className={BD_CELL}
+                    value={r.debtType ?? ""}
+                    onChange={(e) =>
+                      setRow(i, {
+                        debtType: e.target.value,
+                        ...(e.target.value !== "Other"
+                          ? { debtTypeOther: "" }
+                          : {}),
+                      })
+                    }
+                    aria-label="Debt type"
+                  >
+                    <option value="">—</option>
+                    {r.debtType && !isBusinessDebtType(r.debtType) ? (
+                      <option value={r.debtType}>{r.debtType}</option>
+                    ) : null}
+                    {BUSINESS_DEBT_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </Select>
+                </td>
+                <td className="min-w-[120px] px-1">
                   <TextInput
+                    className={BD_CELL}
+                    value={r.debtTypeOther ?? ""}
+                    onChange={(e) =>
+                      setRow(i, { debtTypeOther: e.target.value })
+                    }
+                    disabled={(r.debtType ?? "") !== "Other"}
+                    placeholder={
+                      (r.debtType ?? "") === "Other" ? "Specify…" : ""
+                    }
+                    aria-label="Other debt type"
+                  />
+                </td>
+                <td className="w-28 px-1">
+                  <TextInput
+                    className={BD_CELL}
+                    value={r.originalAmount ?? ""}
+                    onChange={(e) =>
+                      setRow(i, { originalAmount: e.target.value })
+                    }
+                    inputMode="decimal"
+                    aria-label="Original debt amount"
+                  />
+                </td>
+                <td className="w-32 px-1">
+                  <TextInput
+                    type="date"
+                    className={BD_CELL}
+                    value={toHtmlDateInputValue(r.originationDate)}
+                    onChange={(e) =>
+                      setRow(i, { originationDate: e.target.value })
+                    }
+                    aria-label="Origination date"
+                  />
+                </td>
+                <td className="w-28 px-1">
+                  <TextInput
+                    className={BD_CELL}
                     value={r.balance ?? ""}
                     onChange={(e) => setRow(i, { balance: e.target.value })}
+                    inputMode="decimal"
+                    aria-label="Present balance"
                   />
                 </td>
-                <td className="px-2">
+                <td className="w-24 px-1">
                   <TextInput
+                    className={BD_CELL}
                     value={r.ratePct ?? ""}
                     onChange={(e) => setRow(i, { ratePct: e.target.value })}
+                    aria-label="Current interest rate or factor rate"
                   />
                 </td>
-                <td className="px-2">
+                <td className="w-32 px-1">
                   <TextInput
+                    type="date"
+                    className={BD_CELL}
+                    value={toHtmlDateInputValue(r.maturityDate)}
+                    onChange={(e) =>
+                      setRow(i, { maturityDate: e.target.value })
+                    }
+                    aria-label="Maturity date"
+                  />
+                </td>
+                <td className="w-28 px-1">
+                  <TextInput
+                    className={BD_CELL}
                     value={r.monthlyPayment ?? ""}
-                    onChange={(e) => setRow(i, { monthlyPayment: e.target.value })}
+                    onChange={(e) =>
+                      setRow(i, { monthlyPayment: e.target.value })
+                    }
+                    inputMode="decimal"
+                    aria-label="Monthly payment"
                   />
                 </td>
-                <td className="px-2">
+                <td className="min-w-[120px] px-1">
                   <TextInput
+                    className={BD_CELL}
                     value={r.note ?? ""}
                     onChange={(e) => setRow(i, { note: e.target.value })}
+                    aria-label="Position or note"
                   />
                 </td>
-                <td className="rounded-r-lg px-2 text-right">
+                <td className="min-w-[160px] px-1">
+                  <ReoContactMultiAssign
+                    selectedIds={normalizeContactIdList(r.assignedContactIds)}
+                    onChange={(ids) => setRow(i, { assignedContactIds: ids })}
+                    organizationId={organizationId}
+                    memberUserKey={memberUserKey || undefined}
+                    fileId={fileId}
+                    compact
+                    label={`Assign ${r.account || `debt ${i + 1}`} to contacts`}
+                  />
+                </td>
+                <td className="rounded-r-lg px-1 text-right">
                   <Button
                     variant="ghost"
-                    onClick={() => setRows(rows.filter((_, idx) => idx !== i))}
+                    className="h-10 min-h-[40px] w-10 min-w-[40px] p-0"
+                    aria-label={`Remove ${r.account || `debt ${i + 1}`}`}
+                    onClick={() => {
+                      persistRows(rows.filter((_, idx) => idx !== i));
+                      setSelected((prev) => {
+                        const next = new Set<number>();
+                        for (const idx of prev) {
+                          if (idx === i) continue;
+                          next.add(idx > i ? idx - 1 : idx);
+                        }
+                        return next;
+                      });
+                    }}
                   >
                     ×
                   </Button>
                 </td>
               </tr>
             ))}
+            <tr className="text-xs font-semibold text-foreground/90">
+              <td className="px-2" colSpan={5}>
+                TOTALS (active)
+              </td>
+              <td className="px-2">
+                {formatBusinessDebtUsd(totals.originalAmount)}
+              </td>
+              <td />
+              <td className="px-2">
+                {formatBusinessDebtUsd(totals.presentBalance)}
+              </td>
+              <td />
+              <td />
+              <td className="px-2">
+                {formatBusinessDebtUsd(totals.monthlyPayment)}
+              </td>
+              <td />
+              <td />
+              <td />
+            </tr>
           </tbody>
         </table>
       </div>
-      <Button
-        variant="secondary"
-        className="mt-3"
-        onClick={() => setRows([...rows, { include: true }])}
-      >
-        + Add liability
-      </Button>
+      {fileId ? (
+        <ScheduleCopyToFileDialog
+          open={copyOpen}
+          onClose={() => setCopyOpen(false)}
+          sourceFileId={fileId}
+          memberUserKey={memberUserKey || undefined}
+          selectedRowIndexes={selectedIndexes}
+          defaultMode={selectedIndexes.length > 0 ? "rows" : "block"}
+          title="Bring business debt into another file"
+          description="Copy selected debts or the entire Schedule of Business Debt. Complete rows travel with assignees; destination debts stay in place."
+          rowNounSingular="debt"
+          rowNounPlural="debts"
+          testId="business-debt-copy-to-file-dialog"
+          onCopy={async ({ targetFileId, mode, rowIndexes }) => {
+            const result = await copyBusinessDebt({
+              sourceFileId: fileId,
+              targetFileId,
+              mode,
+              ...(mode === "rows" ? { rowIndexes } : {}),
+              ...(memberUserKey
+                ? { preferencesAccountId: memberUserKey }
+                : {}),
+            });
+            return result.ok
+              ? { ok: true as const, copiedRowCount: result.copiedRowCount }
+              : { ok: false as const };
+          }}
+        />
+      ) : null}
     </SectionCard>
   );
 }

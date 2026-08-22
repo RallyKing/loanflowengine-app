@@ -180,7 +180,7 @@ export function MobileChromeProvider({
     publishMobileFocusMode(false);
     document.documentElement.removeAttribute("data-dlc-mobile-compact");
     document.documentElement.removeAttribute("data-dlc-mobile-focus");
-  }, [suspendCompact]);
+  }, [suspendCompact, pipelineRouteFrozen]);
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");

@@ -83,8 +83,10 @@ class WriteStormGovernance {
 
     const windowMs = Math.max(1, Date.now() - this.startedAt);
     const perMin = (this.totalCount() / windowMs) * 60_000;
+    // Ignore short windows — a single write in the first few ms extrapolates to thousands/min.
     if (
       this.fileRouteActive &&
+      windowMs >= 5_000 &&
       perMin > FILE_IDLE_MAX_WRITES_PER_MIN &&
       Date.now() - this.lastWarnAt > 15_000
     ) {

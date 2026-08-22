@@ -24,6 +24,8 @@ export const PIPELINE_BLOCK_IDS = [
   "constructionBudget",
   "investorExperience",
   "pfs",
+  "trackRecord",
+  "simplePl",
 ] as const;
 
 export type PipelineBlockId = (typeof PIPELINE_BLOCK_IDS)[number];
@@ -190,7 +192,7 @@ export const PIPELINE_BLOCKS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        rows: { type: "integer", default: 4, minimum: 2, maximum: 24 },
+        rows: { type: "integer", default: 2, minimum: 2, maximum: 24 },
       },
     },
   },
@@ -379,7 +381,7 @@ export const PIPELINE_BLOCKS = [
     name: "Construction budget",
     label: "Construction budget",
     description:
-      "Line-item construction budget with draw tracking and spend roll-up (ground-up / rehab files).",
+      "Construction budget matching the Construction Lender Services template (plans, sitework, building, mechanical, interior, contractor fees).",
     category: "deal",
     parentTab: "financials",
     isDefault: false,
@@ -413,7 +415,7 @@ export const PIPELINE_BLOCKS = [
     name: "Personal financial statement",
     label: "Personal financial statement",
     description:
-      "Spreadsheet-style assets/liabilities grid over the borrower's sticky financial profile, with computed net worth.",
+      "SBA-style personal financial statement (assets, liabilities, schedules, net worth) matching the standard PFS spreadsheet.",
     category: "deal",
     parentTab: "financials",
     isDefault: false,
@@ -421,7 +423,59 @@ export const PIPELINE_BLOCKS = [
     componentReference: "components/pipeline/blocks/PfsBlock.tsx",
     component: null,
     uiSurface: "drawer",
-    discoveryTags: ["pfs", "net worth", "assets", "liabilities"],
+    discoveryTags: [
+      "pfs",
+      "personal financial statement",
+      "net worth",
+      "assets",
+      "liabilities",
+      "guarantor",
+    ],
+    settingsSchema: null,
+  },
+  {
+    blockId: "trackRecord",
+    name: "Track record",
+    label: "Track record",
+    description:
+      "Investment property track record — rehab and new-construction experience matching the Track Record workbook.",
+    category: "deal",
+    parentTab: "financials",
+    isDefault: false,
+    isMandatory: false,
+    componentReference: "components/pipeline/blocks/TrackRecordBlock.tsx",
+    component: null,
+    uiSurface: "drawer",
+    discoveryTags: [
+      "track record",
+      "investor",
+      "rehab",
+      "new construction",
+      "guarantor experience",
+    ],
+    settingsSchema: null,
+  },
+  {
+    blockId: "simplePl",
+    name: "Simple P&L",
+    label: "Simple P&L",
+    description:
+      "Simple profit and loss matching the Simple P&L template — year-to-date and past-year timeframes, revenue, CoGS, expenses, and net profit.",
+    category: "deal",
+    parentTab: "financials",
+    isDefault: false,
+    isMandatory: false,
+    componentReference: "components/pipeline/blocks/SimplePlBlock.tsx",
+    component: null,
+    uiSurface: "drawer",
+    discoveryTags: [
+      "p&l",
+      "pnl",
+      "profit and loss",
+      "income statement",
+      "financials",
+      "ytd",
+    ],
     settingsSchema: null,
   },
 ] as const satisfies readonly PipelineBlockDefinition[];

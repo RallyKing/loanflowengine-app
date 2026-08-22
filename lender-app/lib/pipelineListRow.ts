@@ -29,6 +29,10 @@ export type PipelineListRow = {
   snoozedUntil?: number | string;
   /** True when `snoozedUntil` parses to a future instant (see `isCurrentlySnoozed`). */
   isSnoozed?: boolean;
+  /** Auto-archive-on-inactivity period (whole days). Separate from snooze. */
+  autoArchiveInactivityDays?: number;
+  /** Denormalized inactivity deadline (Unix ms) for hub marker / sweep. */
+  autoArchiveAfterAt?: number;
   lenders: Array<Id<"lenders">>;
   assigneeId?: string;
   projectIntoLedger?: boolean;

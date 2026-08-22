@@ -19,10 +19,10 @@ export const OP_BATCH_BAR_SURFACE = cn(
   "border-border/40 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/90",
 );
 
-/** Mobile: clear bottom nav + safe area. Desktop: standard inset. */
+/** Mobile: clear shorter flush bottom nav + minimal home pad. Desktop: standard inset. */
 export const OP_BATCH_BAR_POSITION = cn(
   "fixed left-1/2 z-[var(--dlc-z-sheet,40)] w-[min(100%,42rem)] -translate-x-1/2 px-3",
-  "bottom-[max(5.75rem,calc(4.5rem+env(safe-area-inset-bottom)))]",
+  "bottom-[max(4.75rem,calc(3.25rem+max(2px,calc(env(safe-area-inset-bottom,0px)-28px))))]",
   "md:bottom-6",
 );
 

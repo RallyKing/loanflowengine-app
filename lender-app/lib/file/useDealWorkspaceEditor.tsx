@@ -33,6 +33,10 @@ import {
   type ClientPortalTabLayoutV1,
 } from "@/lib/file/clientPortalTabLayout";
 import {
+  parsePortalsProgressTabLayoutFromUnknown,
+  type PortalsProgressTabLayoutV1,
+} from "@/lib/file/portalsProgressTabLayout";
+import {
   parseOverviewTabLayoutFromUnknown,
   type OverviewTabLayoutV1,
 } from "@/lib/file/overviewTabLayout";
@@ -48,9 +52,12 @@ import {
   BACKEND_SYNC_LOCK_MS,
   createDebouncedFlush,
   dealSheetDeepEqual,
+  filterNoOpDealChanges,
   LAYOUT_PATCH_DEBOUNCE_MS,
   layoutPayloadJsonEqual,
   mergeServerSheetIntoDraft,
+  PATCH_DEAL_MAX_AUTO_RETRIES,
+  patchDealRetryDelayMs,
   type DebouncedFlushHandle,
 } from "@/lib/file/dealLayoutAutosave";
 import type {
@@ -130,6 +137,9 @@ export type DealWorkspaceEditorState = {
   patchClientPortalTabLayout: (
     action: SetStateAction<ClientPortalTabLayoutV1>,
   ) => void;
+  patchPortalsProgressTabLayout: (
+    action: SetStateAction<PortalsProgressTabLayoutV1>,
+  ) => void;
   flush: () => Promise<void>;
   /** Unpersisted local edits awaiting debounced flush. */
   isDirty: boolean;
@@ -197,6 +207,11 @@ export function useDealWorkspaceEditorState(
   const lastSyncedSheetRef = useRef<Sheet | null>(null);
   const debouncedFlushRef = useRef<DebouncedFlushHandle | null>(null);
   const flushImplRef = useRef<() => Promise<void>>(async () => {});
+  /** OCC override after CONFLICT — next flush must use serverUpdatedAt, not stale bundle. */
+  const expectedUpdatedAtOverrideRef = useRef<number | null>(null);
+  const flushFailCountRef = useRef(0);
+  /** When true, finally must not re-arm the 500ms hammer loop. */
+  const stopAutoRetryRef = useRef(false);
 
   function beginBackendSyncLock() {
     isSyncingFromBackend.current = true;
@@ -221,6 +236,8 @@ export function useDealWorkspaceEditorState(
   }
 
   function markDirty(delayMs: number) {
+    stopAutoRetryRef.current = false;
+    flushFailCountRef.current = 0;
     if (isSyncingFromBackend.current) {
       flushPendingRef.current = true;
       return;
@@ -269,10 +286,22 @@ export function useDealWorkspaceEditorState(
     collapseModeApplyRef.current = null;
     lastSyncedSheetRef.current = null;
     pendingPatchRef.current = {};
+    expectedUpdatedAtOverrideRef.current = null;
+    flushFailCountRef.current = 0;
+    stopAutoRetryRef.current = false;
     setDirtyState(false);
     debouncedFlushRef.current?.cancel();
     setDraft(null);
   }, [fileId]);
+
+  useEffect(() => {
+    const serverAt = dealBundle?.pipeline?.updatedAt;
+    if (serverAt === undefined) return;
+    const override = expectedUpdatedAtOverrideRef.current;
+    if (override != null && serverAt >= override) {
+      expectedUpdatedAtOverrideRef.current = null;
+    }
+  }, [dealBundle?.pipeline?.updatedAt]);
 
   const pipelineHasEmbeddedDealData = embeddedDealPayloadIsSubstantive(
     dealBundle?.pipeline?.dealData,
@@ -452,6 +481,16 @@ export function useDealWorkspaceEditorState(
     );
   }
 
+  function patchPortalsProgressTabLayout(
+    action: SetStateAction<PortalsProgressTabLayoutV1>,
+  ) {
+    patchLayoutField(
+      "portalsProgressTabLayout",
+      (raw) => parsePortalsProgressTabLayoutFromUnknown(raw),
+      action,
+    );
+  }
+
   async function flush() {
     if (!isDirtyRef.current) return;
     if (flushInFlightRef.current) {
@@ -463,20 +502,41 @@ export function useDealWorkspaceEditorState(
       return;
     }
 
-    const changes = pendingPatchRef.current;
-    if (!changes || Object.keys(changes).length === 0) {
+    const rawChanges = pendingPatchRef.current;
+    if (!rawChanges || Object.keys(rawChanges).length === 0) {
       setDirtyState(false);
       flushPendingRef.current = false;
       return;
     }
 
-    const snapshot = { ...changes };
+    const sheetBaseline =
+      (lastSyncedSheetRef.current as Sheet | null) ??
+      (sheet as Sheet | null | undefined) ??
+      null;
+    const filtered = filterNoOpDealChanges(
+      rawChanges as Record<string, unknown>,
+      sheetBaseline as Record<string, unknown> | null,
+    ) as Patch;
+    if (Object.keys(filtered).length === 0) {
+      pendingPatchRef.current = {};
+      setDirtyState(false);
+      flushPendingRef.current = false;
+      flushFailCountRef.current = 0;
+      stopAutoRetryRef.current = false;
+      return;
+    }
+    pendingPatchRef.current = filtered;
+
+    const snapshot = { ...filtered };
     flushingKeysRef.current = new Set(Object.keys(snapshot));
     pendingPatchRef.current = {};
     flushInFlightRef.current = true;
+    stopAutoRetryRef.current = false;
     setSaving(true);
     try {
-      const expectedUpdatedAt = dealBundle?.pipeline?.updatedAt;
+      const expectedUpdatedAt =
+        expectedUpdatedAtOverrideRef.current ??
+        dealBundle?.pipeline?.updatedAt;
       const res = await patchDealMut({
         fileId,
         changes: snapshot as Patch,
@@ -485,35 +545,80 @@ export function useDealWorkspaceEditorState(
       });
       traceConvexMutation("useDealWorkspaceEditor", "pipeline.patchDeal");
       if (isPatchDealConflictResult(res)) {
-        offline.surfaceSyncConflict(
-          "File changed elsewhere. Refreshing latest version.",
-        );
+        expectedUpdatedAtOverrideRef.current = res.serverUpdatedAt;
         pendingPatchRef.current = { ...snapshot, ...pendingPatchRef.current };
+        const stillPending = filterNoOpDealChanges(
+          pendingPatchRef.current as Record<string, unknown>,
+          sheetBaseline as Record<string, unknown> | null,
+        ) as Patch;
+        pendingPatchRef.current = stillPending;
+        if (Object.keys(stillPending).length === 0) {
+          setDirtyState(false);
+          flushPendingRef.current = false;
+          flushFailCountRef.current = 0;
+          offline.surfaceSyncConflict(
+            "File changed elsewhere. Refreshing latest version.",
+          );
+          return;
+        }
+        flushFailCountRef.current += 1;
         setDirtyState(true);
+        if (flushFailCountRef.current > PATCH_DEAL_MAX_AUTO_RETRIES) {
+          stopAutoRetryRef.current = true;
+          flushPendingRef.current = false;
+          offline.surfaceSyncConflict(
+            "File changed elsewhere. Autosave paused — edit again or refresh to resume.",
+          );
+          return;
+        }
         flushPendingRef.current = true;
+        offline.surfaceSyncConflict(
+          "File changed elsewhere. Retrying with the latest version…",
+        );
         return;
       }
+      expectedUpdatedAtOverrideRef.current = null;
+      flushFailCountRef.current = 0;
       setSavedAt(Date.now());
       if (Object.keys(pendingPatchRef.current).length === 0) {
         setDirtyState(false);
       }
     } catch {
       pendingPatchRef.current = { ...snapshot, ...pendingPatchRef.current };
+      flushFailCountRef.current += 1;
       setDirtyState(true);
-      flushPendingRef.current = true;
+      if (flushFailCountRef.current > PATCH_DEAL_MAX_AUTO_RETRIES) {
+        stopAutoRetryRef.current = true;
+        flushPendingRef.current = false;
+        offline.surfaceSyncConflict(
+          "Could not save deal changes. Autosave paused — try again shortly.",
+        );
+      } else {
+        flushPendingRef.current = true;
+      }
     } finally {
       flushInFlightRef.current = false;
       flushingKeysRef.current.clear();
       setSaving(false);
+      if (stopAutoRetryRef.current) {
+        return;
+      }
+      const retryDelay = patchDealRetryDelayMs(
+        Math.max(0, flushFailCountRef.current - 1),
+      );
       if (
         isDirtyRef.current &&
         !autosaveBlocked() &&
         Object.keys(pendingPatchRef.current).length > 0
       ) {
-        debouncedFlushRef.current?.schedule(LAYOUT_PATCH_DEBOUNCE_MS);
+        debouncedFlushRef.current?.schedule(
+          flushFailCountRef.current > 0 ? retryDelay : LAYOUT_PATCH_DEBOUNCE_MS,
+        );
       } else if (flushPendingRef.current && isDirtyRef.current) {
         flushPendingRef.current = false;
-        debouncedFlushRef.current?.schedule(LAYOUT_PATCH_DEBOUNCE_MS);
+        debouncedFlushRef.current?.schedule(
+          flushFailCountRef.current > 0 ? retryDelay : LAYOUT_PATCH_DEBOUNCE_MS,
+        );
       }
     }
   }
@@ -552,6 +657,7 @@ export function useDealWorkspaceEditorState(
     patchDealInfoCommandCenterLayout,
     patchOverviewTabLayout,
     patchClientPortalTabLayout,
+    patchPortalsProgressTabLayout,
     flush,
     isDirty,
     isUpdating: saving,
@@ -616,6 +722,7 @@ export function DealWorkspaceEditorStaticProvider({
       patchDealInfoCommandCenterLayout: () => {},
       patchOverviewTabLayout: () => {},
       patchClientPortalTabLayout: () => {},
+      patchPortalsProgressTabLayout: () => {},
       flush: noop,
       isDirty: false,
       isUpdating: false,
