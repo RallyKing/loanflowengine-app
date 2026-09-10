@@ -23,6 +23,15 @@ import {
   useConvexSubMountTrace,
   useConvexSubQueryArgsTrace,
 } from "@/lib/convexSubDiagnosticsHooks";
+import {
+  activityFeedContactHref,
+  activityFeedLenderHref,
+  activityFeedTaskHref,
+  dedupeActivityFeedRows,
+  formatFeedDetail,
+  humanizeFeedKind,
+  sanitizeFeedSummary,
+} from "@/lib/activity/feedPresentation";
 
 const CATEGORIES = ["file", "contact", "lender", "task"] as const;
 type FeedCategory = (typeof CATEGORIES)[number];
@@ -37,8 +46,11 @@ function categoryLabel(c: FeedCategory): string {
       return "Lenders";
     case "task":
       return "Tasks";
-    default:
-      return c;
+    default: {
+      const _exhaustive: never = c;
+      void _exhaustive;
+      return "Other";
+    }
   }
 }
 
@@ -52,8 +64,11 @@ function categoryBadgeClass(c: FeedCategory): string {
       return "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100";
     case "task":
       return "border-emerald-500/40 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100";
-    default:
+    default: {
+      const _exhaustive: never = c;
+      void _exhaustive;
       return "border-border bg-muted/40";
+    }
   }
 }
 
@@ -152,6 +167,11 @@ function ActivityPageInner() {
   const page = useQuery(api.activityFeed.list, listArgs);
   const actorKeys = useQuery(api.activityFeed.listActorKeys, actorKeysArgs);
   const pipelineFiles = useQuery(api.pipeline.listLight, pipelineLightArgs);
+
+  const feedRows = useMemo(() => {
+    if (!page?.rows) return [];
+    return dedupeActivityFeedRows(page.rows);
+  }, [page?.rows]);
 
   const resetFilters = useCallback(() => {
     setCategoryFilter("all");
@@ -270,94 +290,101 @@ function ActivityPageInner() {
       ) : (
         <>
           <ul className="space-y-2 pr-1" role="list">
-            {page.rows.length === 0 ? (
+            {feedRows.length === 0 ? (
               <li className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                 No events match these filters.
               </li>
             ) : (
-              page.rows.map((row: (typeof page.rows)[number]) => (
-                <li
-                  key={row._id}
-                  className="rounded-lg border border-border/80 bg-background px-3 py-2.5 shadow-sm"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <span
-                        className={cn(
-                          "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                          categoryBadgeClass(row.category),
-                        )}
+              feedRows.map((row) => {
+                const detailLine = formatFeedDetail(row.detail);
+                const actorLabel =
+                  "actorDisplayUsername" in row &&
+                  typeof row.actorDisplayUsername === "string" &&
+                  row.actorDisplayUsername.trim()
+                    ? row.actorDisplayUsername
+                    : row.actorKey;
+                return (
+                  <li
+                    key={row._id}
+                    className="rounded-lg border border-border/80 bg-background px-3 py-2.5 shadow-sm"
+                    data-testid="activity-feed-card"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                            categoryBadgeClass(row.category),
+                          )}
+                        >
+                          {categoryLabel(row.category)}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {humanizeFeedKind(row.kind)}
+                        </span>
+                      </div>
+                      <time
+                        className="shrink-0 text-xs text-muted-foreground tabular-nums"
+                        dateTime={new Date(row.at).toISOString()}
                       >
-                        {categoryLabel(row.category)}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {row.kind}
+                        {new Date(row.at).toLocaleString()}
+                      </time>
+                    </div>
+                    <p className="mt-1.5 text-sm font-medium leading-snug">
+                      {sanitizeFeedSummary(row.summary)}
+                    </p>
+                    {detailLine ? (
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {detailLine}
+                      </p>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      {row.fileId ? (
+                        <Link
+                          href={pipelineDealEditorHref(row.fileId)}
+                          className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                        >
+                          Open file
+                          <ExternalLink className="h-3 w-3" aria-hidden />
+                        </Link>
+                      ) : null}
+                      {row.contactId ? (
+                        <Link
+                          href={activityFeedContactHref(String(row.contactId))}
+                          className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                        >
+                          Open contact
+                          <ChevronRight className="h-3 w-3" aria-hidden />
+                        </Link>
+                      ) : null}
+                      {row.lenderId ? (
+                        <Link
+                          href={activityFeedLenderHref(String(row.lenderId))}
+                          className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                        >
+                          Open lender
+                          <ChevronRight className="h-3 w-3" aria-hidden />
+                        </Link>
+                      ) : null}
+                      {row.taskId ? (
+                        <Link
+                          href={activityFeedTaskHref(String(row.taskId))}
+                          className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                        >
+                          Open task
+                          <ChevronRight className="h-3 w-3" aria-hidden />
+                        </Link>
+                      ) : null}
+                      <span className="text-muted-foreground">
+                        Actor:{" "}
+                        <span className="font-medium text-foreground/90">
+                          {actorLabel}
+                        </span>
                       </span>
                     </div>
-                    <time
-                      className="shrink-0 text-xs text-muted-foreground tabular-nums"
-                      dateTime={new Date(row.at).toISOString()}
-                    >
-                      {new Date(row.at).toLocaleString()}
-                    </time>
-                  </div>
-                  <p className="mt-1.5 text-sm font-medium leading-snug">
-                    {row.summary}
-                  </p>
-                  {row.detail ? (
-                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                      {row.detail}
-                    </p>
-                  ) : null}
-                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                    {row.fileId ? (
-                      <Link
-                        href={pipelineDealEditorHref(row.fileId)}
-                        className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                      >
-                        Open file
-                        <ExternalLink className="h-3 w-3" aria-hidden />
-                      </Link>
-                    ) : null}
-                    {row.contactId ? (
-                      <Link
-                        href="/contacts"
-                        className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                      >
-                        Contacts
-                        <ChevronRight className="h-3 w-3" aria-hidden />
-                      </Link>
-                    ) : null}
-                    {row.lenderId ? (
-                      <Link
-                        href="/lenders"
-                        className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                      >
-                        Lenders
-                        <ChevronRight className="h-3 w-3" aria-hidden />
-                      </Link>
-                    ) : null}
-                    {row.taskId ? (
-                      <Link
-                        href="/tasks"
-                        className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                      >
-                        Tasks
-                        <ChevronRight className="h-3 w-3" aria-hidden />
-                      </Link>
-                    ) : null}
-                    <span className="text-muted-foreground">
-                      Actor:{" "}
-                      <span className="font-medium text-foreground/90">
-                        {"actorDisplayUsername" in row &&
-                        typeof row.actorDisplayUsername === "string"
-                          ? row.actorDisplayUsername
-                          : row.actorKey}
-                      </span>
-                    </span>
-                  </div>
-                </li>
-              ))
+                  </li>
+                );
+              })
             )}
           </ul>
           <div className="flex shrink-0 flex-wrap gap-2 border-t border-border pt-4">

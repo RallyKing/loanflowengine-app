@@ -13,6 +13,7 @@ import {
   scopeFromContact,
   scopeFromLender,
 } from "./activityFeed";
+import { formatCollaborationDelta } from "../lib/activity/feedPresentation";
 
 const eventTypeV = v.union(
   v.literal("file_created"),
@@ -96,7 +97,7 @@ async function mirrorCollaborationRowToActivityFeed(
   const detail =
     row.delta == null
       ? undefined
-      : JSON.stringify(row.delta).slice(0, 2000);
+      : formatCollaborationDelta(row.delta)?.slice(0, 500) || undefined;
 
   await ctx.db.insert("activityFeed", {
     at: row.at,
