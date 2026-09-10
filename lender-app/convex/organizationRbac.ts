@@ -17,7 +17,6 @@ import {
   orgPermissionTrace,
   safeUserKeyHint,
 } from "./orgPermissionTelemetry";
-import { platformUserKeyFallback } from "./viewerIdentity";
 import {
   authUserHasGlobalAdminElevation,
   tryGetAuthUserByPermissionKey,
@@ -26,6 +25,7 @@ import {
   callerIsPlatformGodMode,
   jwtIdentityIsPlatformGodMode,
 } from "./auth/platformGodMode";
+import { requireAuthenticatedCaller } from "./callerAuth";
 import {
   getActiveImpersonationForInitiatorKey,
   isMutationCtx,
@@ -34,14 +34,13 @@ import {
 import { appendSuperuserImpersonationAudit } from "./superuserImpersonation/auditLog";
 
 /**
- * Single-user deployment fallback userKey resolution MUST stay aligned with
- * `convex/organizationAccess.ts#resolveMemberUserKey` and
- * `convex/viewerIdentity.ts` (`APP_AUTH_USER_KEY`) plus `lib/sessionAuth.ts`.
+ * Public RBAC gates bind identity via `requireAuthenticatedCaller` (JWT subject
+ * when present; verified workspace member / platform-god escape hatches; optional
+ * `CONVEX_ALLOW_PLATFORM_KEY_FALLBACK=1` for secret-gated operator tooling).
  *
- * The Next.js cookie gate authenticates the caller before any Convex traffic
- * reaches us; this fallback covers org-scoped queries that forget to thread
- * `memberUserKey` from the client (e.g. notification + RBAC paths that
- * predated the cookie-only auth model).
+ * Empty-key `platformUserKeyFallback()` / `APP_AUTH_USER_KEY` is intentionally
+ * NOT used on these public paths — spoofed or omitted `userKey` must not become
+ * the platform operator.
  */
 const EVERYTHING: OrgPermission[] = [...ALL_ORG_PERMISSIONS];
 
@@ -300,13 +299,8 @@ export async function assertOrgPermission(
   organizationId: Id<"organizations">,
   userKey: string | undefined,
   permission: OrgPermission,
-): Promise<void> {
-  let key = userKey?.trim() ?? "";
-  if (!key) {
-    const identity = await ctx.auth.getUserIdentity();
-    key = identity?.subject?.trim() ?? "";
-  }
-  if (!key) key = platformUserKeyFallback();
+): Promise<string> {
+  const key = await requireAuthenticatedCaller(ctx, userKey);
 
   const activeImp = await getActiveImpersonationForInitiatorKey(ctx, key);
   if (activeImp) {
@@ -344,7 +338,7 @@ export async function assertOrgPermission(
           mutationPath: permission,
         });
       }
-      return;
+      return key;
     }
   }
 
@@ -353,7 +347,7 @@ export async function assertOrgPermission(
     (await callerIsPlatformGodMode(ctx, key)) ||
     (authUserHasGlobalAdminElevation(godUser) && !activeImp)
   ) {
-    return;
+    return key;
   }
 
   const perms = await resolveEffectivePermissionStrings(ctx, organizationId, key);
@@ -378,6 +372,7 @@ export async function assertOrgPermission(
     });
     throw new Error("You do not have permission to perform this action.");
   }
+  return key;
 }
 
 export async function assertAnyOrgPermission(
@@ -385,13 +380,8 @@ export async function assertAnyOrgPermission(
   organizationId: Id<"organizations">,
   userKey: string | undefined,
   anyOf: readonly OrgPermission[],
-): Promise<void> {
-  let key = userKey?.trim() ?? "";
-  if (!key) {
-    const identity = await ctx.auth.getUserIdentity();
-    key = identity?.subject?.trim() ?? "";
-  }
-  if (!key) key = platformUserKeyFallback();
+): Promise<string> {
+  const key = await requireAuthenticatedCaller(ctx, userKey);
 
   const activeImp = await getActiveImpersonationForInitiatorKey(ctx, key);
   if (activeImp) {
@@ -402,7 +392,7 @@ export async function assertAnyOrgPermission(
       throw new Error("IMPERSONATION_READ_ONLY");
     }
     if (isMutationCtx(ctx) && activeImp.mode === "operator") {
-      return;
+      return key;
     }
   }
 
@@ -411,7 +401,7 @@ export async function assertAnyOrgPermission(
     (await callerIsPlatformGodMode(ctx, key)) ||
     (authUserHasGlobalAdminElevation(godUser) && !activeImp)
   ) {
-    return;
+    return key;
   }
 
   const perms = await resolveEffectivePermissionStrings(ctx, organizationId, key);
@@ -424,7 +414,7 @@ export async function assertAnyOrgPermission(
     throw new Error("You are not a member of this organization.");
   }
   for (const p of anyOf) {
-    if (hasOrgPermission(perms, p)) return;
+    if (hasOrgPermission(perms, p)) return key;
   }
   throw new Error("You do not have permission to perform this action.");
 }

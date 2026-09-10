@@ -53,10 +53,9 @@ export async function sessionKeyIsGlobalAdmin(
 /**
  * Resolve the canonical member identity for a Convex call.
  *
- * Priority:
- *   1. Convex JWT subject (when an auth provider is mounted — none today).
- *   2. Explicit `memberUserKey` arg from the client (set by most components
- *      via `useOrgConvexQueryArgs`).
+ * Delegates to `requireAuthenticatedCaller`:
+ *   1. Convex JWT subject when present (rejects mismatched client `memberUserKey`).
+ *   2. Verified workspace member / platform-god escape hatches without JWT.
  *   3. `platformUserKeyFallback()` only when `CONVEX_ALLOW_PLATFORM_KEY_FALLBACK=1`.
  */
 export async function resolveMemberUserKey(
