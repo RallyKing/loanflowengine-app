@@ -8,6 +8,7 @@ import {
 } from "../lib/contact/contactMethods";
 import { normalizeEmailKey } from "../lib/crmRelationship";
 import { resolveContactRoleIdFromLegacyDoc } from "../lib/contact/contactRoles";
+import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 
 type Candidate = {
   name: string;
@@ -86,10 +87,12 @@ function pushCandidate(list: Candidate[], c: Candidate) {
 
 export const migratePipelineContactsToStandalone = mutation({
   args: {
+    adminSecret: v.string(),
     dryRun: v.optional(v.boolean()),
     limit: v.optional(v.number()),
   },
-  handler: async (ctx, { dryRun, limit }) => {
+  handler: async (ctx, { adminSecret, dryRun, limit }) => {
+    assertDataMigrationAdmin(adminSecret);
     const runDry = dryRun ?? false;
     const max = Math.max(1, Math.min(5000, Math.floor(limit ?? 1000)));
     const now = Date.now();

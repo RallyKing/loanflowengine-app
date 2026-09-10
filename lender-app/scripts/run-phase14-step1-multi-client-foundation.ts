@@ -55,13 +55,17 @@ function convexRun(fn: string, args: Record<string, unknown>) {
   return JSON.parse(text.slice(start)) as Record<string, unknown>;
 }
 
-async function rebuildSearch(cursor: string | null = null): Promise<void> {
+async function rebuildSearch(
+  adminSecret: string,
+  cursor: string | null = null,
+): Promise<void> {
   const page = convexRun("globalSearchSync:rebuildPipelineGlobalSearchPage", {
+    adminSecret,
     limit: 500,
     cursor,
   }) as { isDone: boolean; continueCursor: string | null };
   if (!page.isDone && page.continueCursor) {
-    await rebuildSearch(page.continueCursor);
+    await rebuildSearch(adminSecret, page.continueCursor);
   }
 }
 
@@ -86,7 +90,7 @@ async function main() {
     );
   }
 
-  await rebuildSearch();
+  await rebuildSearch(adminSecret);
 
   const proof = convexRun(
     "operator/pipelineMultiClientFoundationStep14_1:runMultiClientFoundationProof",
