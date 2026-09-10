@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AI-powered lender discovery.
  *
  * Flow:
@@ -371,7 +371,7 @@ export const _storeCandidates = internalMutation({
           const sameCompany = await ctx.db
             .query("lenderCandidates")
             .withIndex("by_company", (q) => q.eq("companyKey", key))
-            .collect();
+            .collect(); // bounded: same companyKey candidate rows only (dedupe), tiny per key
           const alreadyPending = sameCompany.some(
             (row) =>
               row.organizationId === organizationId &&
@@ -701,7 +701,7 @@ export const clearDismissed = mutation({
       .withIndex("by_org_status", (q) =>
         q.eq("organizationId", organizationId).eq("status", "dismissed"),
       )
-      .collect();
+      .collect(); // bounded: dismissed candidates for one org only; clearDismissed intentional full-org wipe
     for (const r of rows) await ctx.db.delete(r._id);
     return { deleted: rows.length };
   },
@@ -756,7 +756,7 @@ export const acceptCandidate = mutation({
       : "";
 
     const doc = {
-      source: `AI Discovery (${c.provider}) — "${c.query}"`,
+      source: `AI Discovery (${c.provider}) â€” "${c.query}"`,
       section: "Discovered Lender",
       company: c.company,
       contactName: c.contactName,
@@ -863,7 +863,7 @@ export const acceptMany = mutation({
         ? `Source: ${c.sourceUrl}`
         : "";
       const doc = {
-        source: `AI Discovery (${c.provider}) — "${c.query}"`,
+        source: `AI Discovery (${c.provider}) â€” "${c.query}"`,
         section: "Discovered Lender",
         company: c.company,
         contactName: c.contactName,

@@ -1,11 +1,11 @@
-/**
- * P0-05 — Attach legacy unscoped discovery rows to a target organization.
+﻿/**
+ * P0-05 â€” Attach legacy unscoped discovery rows to a target organization.
  *
  * Targets rows in `lenderCandidates` and `discoveryRuns` where
  * `organizationId` is missing (or points at a deleted org).
  *
  * Admin-gated via `DATA_MIGRATION_ADMIN_SECRET` / `ORG_INTEGRITY_ADMIN_SECRET`.
- * Additive only — does not delete or redesign discovery product tables.
+ * Additive only â€” does not delete or redesign discovery product tables.
  *
  * ## Dry-run (recommended first)
  *
@@ -41,7 +41,7 @@ export type DiscoveryOrgBackfillSummary = {
 };
 
 async function validOrganizationIds(ctx: MutationCtx): Promise<Set<string>> {
-  const rows = await ctx.db.query("organizations").collect();
+  const rows = await ctx.db.query("organizations").collect() /* bounded: organizations table is tenant registry, small */;
   return new Set(rows.map((r) => r._id as string));
 }
 
@@ -73,7 +73,7 @@ async function runDiscoveryOrgBackfill(
     discoveryRunsAlreadyScoped: 0,
   };
 
-  for (const row of await ctx.db.query("lenderCandidates").collect()) {
+  for (const row of await ctx.db.query("lenderCandidates").collect() /* bounded: admin one-shot backfill over lenderCandidates; gated by assertDataMigrationAdmin */) {
     if (!needsOrgBackfill(row.organizationId, valid)) {
       summary.lenderCandidatesAlreadyScoped += 1;
       continue;
@@ -84,7 +84,7 @@ async function runDiscoveryOrgBackfill(
     summary.lenderCandidatesPatched += 1;
   }
 
-  for (const row of await ctx.db.query("discoveryRuns").collect()) {
+  for (const row of await ctx.db.query("discoveryRuns").collect() /* bounded: admin one-shot backfill over discoveryRuns; gated by assertDataMigrationAdmin */) {
     if (!needsOrgBackfill(row.organizationId, valid)) {
       summary.discoveryRunsAlreadyScoped += 1;
       continue;
