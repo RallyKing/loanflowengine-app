@@ -54,6 +54,7 @@
     "test:resolve-pipeline-row-stage": "tsx scripts/resolve-pipeline-row-stage-tests.ts",
     "test:vault-explorer-filter": "tsx scripts/vault-explorer-filter-tests.ts",
     "test:regression:unit": "tsx scripts/regression-protection-tests.ts",
+    "test:rbac-caller-identity": "tsx scripts/rbac-caller-identity-tests.ts",
     "verify:regression": "npm run audit:no-clerk && tsx scripts/regression-protection-tests.ts",
     "test:regression:e2e": "npm run build && playwright test tests/regression/regression-protection.spec.ts tests/auth/auth-stress.spec.ts tests/regression/multi-session-isolation.spec.ts --project chromium",
     "test:perf": "tsx scripts/perf-scale-check.ts",
