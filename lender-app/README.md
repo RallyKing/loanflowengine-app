@@ -58,6 +58,9 @@ From this `lender-app/` directory:
 
 ```bash
 npm install
+# CI / agents (no interactive login): regenerate gitignored convex/_generated/
+npm run convex:codegen
+# Local product work still uses `npx convex dev` (may prompt to log in / pick a project):
 npx convex dev
 # Follow the prompts:
 #   - Log in to Convex if needed
@@ -65,6 +68,8 @@ npx convex dev
 #   - This generates convex/_generated/ AND writes NEXT_PUBLIC_CONVEX_URL into .env.local
 # Leave `npx convex dev` running in one terminal.
 ```
+
+`convex/_generated/` is gitignored. Do not commit it or `.env.local`. See **AGENTS.md** → “Clean clone / CI typecheck”.
 
 In a second terminal, seed the database from the existing CSV:
 

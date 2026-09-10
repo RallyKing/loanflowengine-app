@@ -1,0 +1,17 @@
+---
+description: Always-apply Convex reactivity and React correctness rules.
+alwaysApply: true
+---
+
+# Convex reactivity (always apply)
+
+Full policy: `docs/governance/convex-reactivity-policy.md`. Enforced by `npm run verify:convex-reactivity`.
+
+Convex `useQuery` is a WebSocket subscription. Polling, refetch, invalidate, cache-bust, and remount-`key` hacks are a misuse of the technology.
+
+- Live read → `useQuery` (`convex/react`); write → `useMutation`; 3rd-party side effect → `action`; external event → webhook mutation; expensive aggregate → user-triggered `convex.query`; SSR → `preloadQuery`.
+- Exhaustive `useEffect` deps. Do not `eslint-disable` `react-hooks/exhaustive-deps` without `// reactivity-allow: <reason>`.
+- Never mutate server state from an effect that depends on that same state.
+- Do not mirror `useQuery` into `useState` to render.
+- Mutations are retry-safe: value-equality skip before `patch`; stable create-if-missing keys; in-flight submit guards.
+- Convex owns server documents; React state is ephemeral UI; `localStorage` is for preferences, not an online cache of rows.

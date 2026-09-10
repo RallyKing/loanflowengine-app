@@ -13,6 +13,25 @@ After shipping user-facing work, **publish a Product Updates entry** in the same
 
 See `lib/product-knowledge/README.md`.
 
+## Clean clone / CI typecheck (no interactive Convex login)
+
+`convex/_generated/` is **gitignored** (project convention — do not commit generated types or `.env.local`). A fresh clone cannot `tsc` / `next build` until codegen runs.
+
+From `lender-app/`:
+
+```bash
+npm ci
+npm run convex:codegen
+```
+
+`npm run convex:codegen` wraps `convex codegen --typecheck disable` and is safe for CI/agents:
+
+- If `CONVEX_DEPLOY_KEY` or `CONVEX_DEPLOYMENT` is already set, the CLI uses that deployment.
+- Otherwise it sets `CONVEX_AGENT_MODE=anonymous` so codegen can use an isolated anonymous local backend **without interactive login**.
+- Never commit secrets. Prefer documenting this script over checking in `_generated/`.
+
+If codegen still fails in a locked-down environment (no network, no Convex CLI backend), typecheck/build cannot run until a human provides a deploy key or runs `npx convex dev` locally.
+
 ## Convex backend sync
 
 After you edit anything under `convex/` (new or renamed `tasks:*`, `lenders:*`, schema, etc.), the **running deployment** must include those functions or the client will error (e.g. “Could not find public function”).

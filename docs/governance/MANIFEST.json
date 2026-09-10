@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Required governance artifacts. Verified by lender-app/scripts/verify-repo-governance.mjs",
+  "description": "Required governance artifacts, including committed `.cursor/rules/*.mdc` always-apply files. Verified by lender-app/scripts/verify-repo-governance.mjs",
   "requiredPaths": [
     ".cursorrules",
     ".cursor/rules/project-rules.mdc",

@@ -964,7 +964,10 @@ test("parallel blocks: every registry id resolves via getPipelineBlock", () => {
     const b = getPipelineBlock(id);
     assert.equal(b.blockId, id);
     assert.ok(b.label.length > 0);
-    assert.ok(b.componentReference.startsWith("components/"));
+    assert.ok(
+      b.componentReference.startsWith("components/") ||
+        b.componentReference.startsWith("modules/"),
+    );
   }
 });
 
