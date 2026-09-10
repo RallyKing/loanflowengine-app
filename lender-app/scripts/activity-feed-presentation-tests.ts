@@ -40,6 +40,11 @@ test("formatFeedDetail hides raw JSON IDs and formats status deltas", () => {
   assert.equal(formatFeedDetail(raw), "In Review → Approved");
   assert.equal(formatFeedDetail('{"previousStageId":"k17abcdefghijklmnopqrstuv"}'), null);
   assert.equal(formatFeedDetail("lender notes look fine"), "lender notes look fine");
+  assert.equal(
+    formatFeedDetail("portal_collecting_docs → initial_review"),
+    "Portal Collecting Docs → Initial Review",
+  );
+  assert.equal(formatFeedDetail("approved,"), "Approved");
 });
 
 test("formatCollaborationDelta prefers approval labels", () => {
@@ -54,6 +59,13 @@ test("formatCollaborationDelta prefers approval labels", () => {
     }),
     "Submitted → Approved",
   );
+  assert.equal(
+    formatCollaborationDelta({
+      previousStatus: "portal_collecting_docs",
+      nextStatus: "initial_review",
+    }),
+    "Portal Collecting Docs → Initial Review",
+  );
 });
 
 test("sanitizeFeedSummary strips internal ids", () => {
@@ -61,6 +73,10 @@ test("sanitizeFeedSummary strips internal ids", () => {
   assert.equal(
     sanitizeFeedSummary(`Review completed ${id} on file`),
     "Review completed on file",
+  );
+  assert.equal(
+    sanitizeFeedSummary("Deal: overviewTabLayout"),
+    "Deal: Overview Tab Layout",
   );
 });
 
