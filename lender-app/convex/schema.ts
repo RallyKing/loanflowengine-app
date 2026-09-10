@@ -938,6 +938,8 @@ export default defineSchema({
    * or dismiss each candidate.
    */
   lenderCandidates: defineTable({
+    /** Tenant scope. Optional only for legacy rows pending admin backfill. */
+    organizationId: v.optional(v.id("organizations")),
     query: v.string(),
     provider: v.string(),
     company: v.string(),
@@ -968,20 +970,26 @@ export default defineSchema({
   })
     .index("by_status", ["status"])
     .index("by_query", ["query"])
-    .index("by_company", ["companyKey"]),
+    .index("by_company", ["companyKey"])
+    .index("by_org_status", ["organizationId", "status"])
+    .index("by_org_created", ["organizationId", "createdAt"]),
 
   /**
    * Cache of prior discovery runs so the UI can show history and avoid
    * re-running recent queries.
    */
   discoveryRuns: defineTable({
+    /** Tenant scope. Optional only for legacy rows pending admin backfill. */
+    organizationId: v.optional(v.id("organizations")),
     query: v.string(),
     provider: v.string(),
     candidatesFound: v.number(),
     duplicatesSkipped: v.number(),
     warnings: v.array(v.string()),
     createdAt: v.number(),
-  }).index("by_created", ["createdAt"]),
+  })
+    .index("by_created", ["createdAt"])
+    .index("by_org_created", ["organizationId", "createdAt"]),
 
   /**
    * User-uploaded files (PDF, guidelines, term sheets) linked to a lender
