@@ -1,6 +1,6 @@
 /**
  * Native workspace JWT bridge for Convex (replaces client-supplied memberUserKey).
- * NOT Clerk — this repo migrated off Clerk; see `scripts/audit-no-clerk.mjs`.
+ * Native auth only — this repo uses workspace JWT (not a third-party auth SDK).
  */
 import { importPKCS8, importSPKI, exportJWK, SignJWT, type JWK } from "jose";
 import type { ViewerSession } from "@/lib/session/types";

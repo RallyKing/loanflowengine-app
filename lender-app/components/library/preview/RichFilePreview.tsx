@@ -12,6 +12,7 @@ import {
   loadTextPreview,
   type SpreadsheetPreviewTable,
 } from "@/lib/library/richFilePreviewLoaders";
+import { sanitizePreviewHtml } from "@/lib/library/sanitizePreviewHtml";
 
 export type RichFilePreviewProps = {
   url: string;
@@ -366,7 +367,7 @@ export function RichFilePreview({
       <div className={cn(className, viewport)} data-testid="rich-file-preview-html">
         <div
           className="prose prose-slate mx-auto max-w-none rounded-dlc-md border border-border/60 bg-white p-6 shadow-dlc-1"
-          dangerouslySetInnerHTML={{ __html: htmlBody }}
+          dangerouslySetInnerHTML={{ __html: sanitizePreviewHtml(htmlBody) }}
         />
       </div>
     );
