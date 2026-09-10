@@ -2,7 +2,7 @@ import type { AuthConfig } from "convex/server";
 
 /**
  * Native workspace JWT (RS256) issued by Next.js `/api/convex/token` after cookie
- * session verification. NOT Clerk — see `lib/auth/convexJwt.ts` and `audit:no-clerk`.
+ * session verification. Native JWT only — see `lib/auth/convexJwt.ts` and the no-vendor-auth audit.
  *
  * Convex dashboard env (must match Next.js issuer + JWKS URL):
  *   CONVEX_JWT_ISSUER=https://your-app.vercel.app

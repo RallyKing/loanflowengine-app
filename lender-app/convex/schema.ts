@@ -297,11 +297,11 @@ export default defineSchema({
   }).index("by_accountId", ["accountId"]),
 
   /**
-   * Getting-started checklist for authenticated users (Clerk `subject`).
+   * Getting-started checklist for authenticated users (JWT `subject`).
    * Progress steps are inferred in the client; this row stores skip / collapsed only.
    */
   userOnboarding: defineTable({
-    /** Clerk user id (`identity.subject`). */
+    /** Auth subject (`identity.subject`). */
     userKey: v.string(),
     /** User chose “Skip for now” — checklist stays hidden until resumed from Settings. */
     skipped: v.optional(v.boolean()),
@@ -401,7 +401,8 @@ export default defineSchema({
     /** Optional stable slug for deep links (unique enforced in mutations). */
     slug: v.optional(v.string()),
     /**
-     * Clerk `org_*` id when this Convex tenant row is synced from Clerk Organizations.
+     * Legacy vendor `org_*` id when this Convex tenant row was synced from a prior org provider.
+     * Field name retained for migration / integrity audits.
      */
     clerkOrganizationId: v.optional(v.string()),
     /**

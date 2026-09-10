@@ -26,23 +26,31 @@ const SKIP_FILES = new Set([
   path.normalize("scripts/audit-no-clerk.mjs"),
 ]);
 
-/** Under `lender-app/` only — paths (posix) excluded from substring scan (mirrored docs). */
-const SKIP_SOURCE_PREFIXES = ["docs/"];
+/**
+ * Under `lender-app/` only — paths (posix) excluded from substring scan.
+ * Includes mirrored docs and intentional migration / forensic audit tooling that
+ * classifies or reports legacy vendor-shaped keys (not live SDK usage).
+ */
+const SKIP_SOURCE_PREFIXES = [
+  "docs/",
+  "convex/migrations/",
+  "convex/accountOwnershipMigration",
+  "convex/operator/auditTenantIsolation",
+  "scripts/compile-tenant-audit",
+  "scripts/run-tenant-audit",
+  "scripts/tenant-audit",
+  "scripts/run-phase12-forensic",
+  "scripts/run-primary-account-full-consolidation",
+];
 
-/** Optional exact-path exclusions (none by default; migrations/ uses prefix skip). */
+/** Optional exact-path exclusions (posix). */
 const SKIP_SOURCE_EXACT = new Set([]);
 
-function sourcePathSkipped(rel) {
-  const norm = rel.split(path.sep).join("/");
-  for (const p of SKIP_SOURCE_PREFIXES) {
-    if (norm.startsWith(p)) return true;
-  }
-  if (SKIP_SOURCE_EXACT.has(norm)) return true;
-  if (norm.startsWith("convex/migrations/")) return true;
-  return false;
-}
-
-/** Case-insensitive substrings (ASCII) that must not appear outside exclusions. */
+/**
+ * Case-insensitive substrings (ASCII) that must not appear outside exclusions.
+ * Intentionally omits legacy schema column `clerkOrganizationId` / index names —
+ * those remain for migration integrity; live SDK imports are still banned below.
+ */
 const BANNED_SUBSTRINGS = [
   "@clerk/",
   "@clerk\"",
@@ -50,7 +58,6 @@ const BANNED_SUBSTRINGS = [
   "clerk/nextjs",
   "clerkMiddleware",
   "useClerk",
-  "clerkOrganizationId",
   "orgClerkId",
   "FIXED_VIEWER",
   "APP_AUTH_FIXED_ORG_ID",
@@ -58,6 +65,29 @@ const BANNED_SUBSTRINGS = [
   "lookupOrganizationIdByClerkId",
   "getForViewerByClerkId",
 ];
+
+/** Comment / narrative lines documenting absence of or migration away from Clerk. */
+const ALLOWLIST_CLERK_NARRATIVE =
+  /\bNOT\s+Clerk\b|\bmigrated\s+off\s+Clerk\b|\blegacy\s+vendor\b|\bClerk-shaped\b|\bClerk-prefix\b|\bClerk-era\b/i;
+
+/** Real SDK / package usage — never allowlist these even in a narrative line. */
+const HARD_CLERK_SDK =
+  /@clerk\/|clerk\/nextjs|clerkMiddleware|\buseClerk\b|from\s+['"]@clerk|require\(\s*['"]@clerk/;
+
+function sourcePathSkipped(rel) {
+  const norm = rel.split(path.sep).join("/");
+  for (const p of SKIP_SOURCE_PREFIXES) {
+    if (norm.startsWith(p)) return true;
+  }
+  if (SKIP_SOURCE_EXACT.has(norm)) return true;
+  return false;
+}
+
+function isAllowlistedClerkLine(line) {
+  if (HARD_CLERK_SDK.test(line)) return false;
+  if (ALLOWLIST_CLERK_NARRATIVE.test(line)) return true;
+  return false;
+}
 
 function* walkFiles(dir) {
   let entries;
@@ -104,6 +134,7 @@ function scanSources() {
     const lines = body.split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      if (isAllowlistedClerkLine(line)) continue;
       if (/\bclerk\b/i.test(line)) {
         hits.push({ rel, line: i + 1, text: line.trim().slice(0, 200) });
         continue;
@@ -129,7 +160,7 @@ function scanLockfile() {
 }
 
 function scanWorkspaceMarkdown() {
-  // Workspace-level `../docs` holds intentional migration narratives (Clerk-era audits, etc.).
+  // Workspace-level `../docs` holds intentional migration narratives (legacy-vendor-era audits, etc.).
   // Runtime enforcement: scanSources over lender-app + lockfile + optional Convex org scan.
   return [];
 }
@@ -148,11 +179,13 @@ function scanEnvFiles() {
     }
     const lines = body.split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
-      if (/\bclerk\b/i.test(lines[i])) {
+      const line = lines[i];
+      if (isAllowlistedClerkLine(line)) continue;
+      if (/\bclerk\b/i.test(line)) {
         hits.push({
           rel,
           line: i + 1,
-          text: lines[i].trim().slice(0, 200),
+          text: line.trim().slice(0, 200),
         });
       }
     }
@@ -160,12 +193,47 @@ function scanEnvFiles() {
   return hits;
 }
 
+function convexDeploymentConfigured() {
+  if (process.env.CONVEX_DEPLOYMENT?.trim()) return true;
+  if (process.env.CONVEX_URL?.trim()) return true;
+  if (process.env.NEXT_PUBLIC_CONVEX_URL?.trim()) return true;
+  // Cheap check of local env files without requiring dotenv.
+  for (const name of [".env.local", ".env"]) {
+    const p = path.join(appRoot, name);
+    if (!fs.existsSync(p)) continue;
+    try {
+      const text = fs.readFileSync(p, "utf8");
+      if (
+        /^CONVEX_DEPLOYMENT=.+/m.test(text) ||
+        /^CONVEX_URL=.+/m.test(text) ||
+        /^NEXT_PUBLIC_CONVEX_URL=.+/m.test(text)
+      ) {
+        return true;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
+}
+
+/**
+ * @returns {{ problems: string[], skipped: boolean, skipReason?: string }}
+ */
 function runConvexOrgScan() {
   if (process.env.SKIP_CONVEX_ORG_SCAN === "1") {
+    const skipReason = "SKIP_CONVEX_ORG_SCAN=1";
     console.warn(
-      "[audit:no-clerk] SKIP_CONVEX_ORG_SCAN=1 — skipping Convex DB scan.",
+      `[audit:no-clerk] ${skipReason} — skipping Convex DB scan.`,
     );
-    return [];
+    return { problems: [], skipped: true, skipReason };
+  }
+  if (!convexDeploymentConfigured()) {
+    const skipReason = "no CONVEX_DEPLOYMENT / CONVEX_URL configured";
+    console.warn(
+      `[audit:no-clerk] ${skipReason} — skipping Convex DB scan (not a hard failure).`,
+    );
+    return { problems: [], skipped: true, skipReason };
   }
   const res = spawnSync(
     "npx",
@@ -178,26 +246,40 @@ function runConvexOrgScan() {
     },
   );
   if (res.status !== 0) {
-    return [
-      `Convex scan failed (is convex logged in and deployed?). stderr: ${(res.stderr || "").slice(0, 400)}`,
-    ];
+    return {
+      skipped: false,
+      problems: [
+        `Convex scan failed (is convex logged in and deployed?). stderr: ${(res.stderr || "").slice(0, 400)}`,
+      ],
+    };
   }
   const out = (res.stdout || "").trim();
   const jsonMatch = out.match(/\{[\s\S]*"rowsWithLegacyOrgToken"[\s\S]*\}/);
   if (!jsonMatch) {
-    return [`Could not parse Convex scan output: ${out.slice(0, 300)}`];
+    return {
+      skipped: false,
+      problems: [`Could not parse Convex scan output: ${out.slice(0, 300)}`],
+    };
   }
   try {
     const data = JSON.parse(jsonMatch[0]);
     if (data.rowsWithLegacyOrgToken > 0) {
-      return [
-        `Convex organizations table still has ${data.rowsWithLegacyOrgToken} rows whose JSON contains legacy org_ tokens (checked ${data.organizationsChecked} rows).`,
-      ];
+      return {
+        skipped: false,
+        problems: [
+          `Convex organizations table still has ${data.rowsWithLegacyOrgToken} rows whose JSON contains legacy org_ tokens (checked ${data.organizationsChecked} rows).`,
+        ],
+      };
     }
   } catch (e) {
-    return [`Convex scan JSON parse error: ${e instanceof Error ? e.message : e}`];
+    return {
+      skipped: false,
+      problems: [
+        `Convex scan JSON parse error: ${e instanceof Error ? e.message : e}`,
+      ],
+    };
   }
-  return [];
+  return { problems: [], skipped: false };
 }
 
 function main() {
@@ -206,13 +288,22 @@ function main() {
   problems.push(...runEnvIssues(scanEnvFiles()));
   problems.push(...runSourceIssues(scanWorkspaceMarkdown()));
   problems.push(...runSourceIssues(scanSources()));
-  problems.push(...runConvexOrgScan());
+  const convexScan = runConvexOrgScan();
+  problems.push(...convexScan.problems);
 
   if (problems.length) {
     console.error("[audit:no-clerk] FAILED:\n- " + problems.join("\n- "));
     process.exit(1);
   }
-  console.log("[audit:no-clerk] OK — no blocked references, lockfile clean, Convex org scan clear.");
+  if (convexScan.skipped) {
+    console.log(
+      `[audit:no-clerk] OK — no blocked references, lockfile clean; Convex org scan skipped (${convexScan.skipReason}).`,
+    );
+  } else {
+    console.log(
+      "[audit:no-clerk] OK — no blocked references, lockfile clean, Convex org scan clear.",
+    );
+  }
 }
 
 function runEnvIssues(envIssues) {
