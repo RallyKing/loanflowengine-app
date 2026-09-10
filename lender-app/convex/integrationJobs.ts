@@ -65,6 +65,11 @@ export const completeJob = internalMutation({
     resultSummary: v.optional(v.string()),
   },
   handler: async (ctx, { jobId, resultSummary }) => {
+    const j = await ctx.db.get(jobId);
+    // Status CAS: only the worker that holds `running` may complete.
+    if (!j || j.status !== "running") {
+      return { completed: false as const };
+    }
     const now = Date.now();
     await ctx.db.patch(jobId, {
       status: "completed",
@@ -72,6 +77,7 @@ export const completeJob = internalMutation({
       updatedAt: now,
       resultSummary: resultSummary ?? "ok",
     });
+    return { completed: true as const };
   },
 });
 
@@ -82,7 +88,10 @@ export const failJob = internalMutation({
   },
   handler: async (ctx, { jobId, errorMessage }) => {
     const j = await ctx.db.get(jobId);
-    if (!j) return { scheduled: false as const };
+    // Status CAS: ignore stale fail after complete/recover already moved status.
+    if (!j || j.status !== "running") {
+      return { scheduled: false as const, dead: false as const };
+    }
     const now = Date.now();
 
     if (j.attemptCount >= j.maxAttempts) {
@@ -358,7 +367,9 @@ export const enqueueInboundFromWebhook = internalMutation({
       }
     }
 
-    const out = await insertJobAndSchedule(ctx, {
+    // Single schedule path: worker claims the job, then runs inbound automation.
+    // Do not dual-schedule processInboundIntegrationJob (OCC + duplicate effects).
+    return insertJobAndSchedule(ctx, {
       organizationId: conn.organizationId,
       connectorId: conn._id,
       category: conn.category as IntegrationCategory,
@@ -371,14 +382,6 @@ export const enqueueInboundFromWebhook = internalMutation({
         body: args.parsedPayload,
       },
     });
-    if (!out.deduped) {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.integrationAutomationBridge.processInboundIntegrationJob,
-        { jobId: out.jobId },
-      );
-    }
-    return out;
   },
 });
 
@@ -436,8 +439,9 @@ export const sweepDueJobs = internalMutation({
     const now = Date.now();
     const due = await ctx.db
       .query("integrationJobs")
-      .withIndex("by_status_next", (q) => q.eq("status", "pending"))
-      .filter((q) => q.lte(q.field("nextAttemptAt"), now))
+      .withIndex("by_status_next", (q) =>
+        q.eq("status", "pending").lte("nextAttemptAt", now),
+      )
       .take(40);
 
     for (const j of due) {
