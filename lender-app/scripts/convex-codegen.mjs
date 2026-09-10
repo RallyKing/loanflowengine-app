@@ -37,15 +37,66 @@ if (!env.CI) {
 }
 
 const cmd = existsSync(convexBin) ? convexBin : "npx";
-const args = existsSync(convexBin)
-  ? ["codegen", "--typecheck", "disable"]
-  : ["--yes", "convex", "codegen", "--typecheck", "disable"];
+function convexArgs(subcommand) {
+  return existsSync(convexBin)
+    ? subcommand
+    : ["--yes", "convex", ...subcommand];
+}
 
-const result = spawnSync(cmd, args, {
-  cwd: appRoot,
-  env,
-  stdio: "inherit",
-});
+function runConvex(subcommand) {
+  return spawnSync(cmd, convexArgs(subcommand), {
+    cwd: appRoot,
+    env,
+    stdio: "inherit",
+  });
+}
+
+if (!hasDeployKey && !hasDeployment) {
+  console.log(
+    "[convex-codegen] No CONVEX_DEPLOY_KEY / CONVEX_DEPLOYMENT — running `convex init` (CONVEX_AGENT_MODE=anonymous).",
+  );
+  const init = runConvex(["init"]);
+  if (init.error) {
+    console.error("[convex-codegen] failed to spawn convex init:", init.error.message);
+    process.exit(1);
+  }
+  if (init.status !== 0) {
+    console.error(
+      [
+        "[convex-codegen] `convex init` failed.",
+        "A clean clone cannot typecheck or `next build` without `convex/_generated/`.",
+        "Retry with CONVEX_AGENT_MODE=anonymous, or set CONVEX_DEPLOYMENT / CONVEX_DEPLOY_KEY.",
+        "Do not commit `.env.local` or deploy keys.",
+      ].join("\n"),
+    );
+    process.exit(init.status ?? 1);
+  }
+
+  // auth.config.ts references these process.env keys; the CLI refuses codegen
+  // until they exist on the (anonymous) deployment. Values are public placeholders,
+  // not secrets — never write them into git.
+  const jwtPlaceholders = [
+    ["CONVEX_JWT_APPLICATION_ID", "dlc-workspace"],
+    ["CONVEX_JWT_ISSUER", "http://127.0.0.1:3004"],
+    ["CONVEX_JWT_JWKS_URL", "http://127.0.0.1:3004/.well-known/jwks.json"],
+    ["CONVEX_JWT_LOCAL_ISSUER", "http://127.0.0.1:3004"],
+    [
+      "CONVEX_JWT_LOCAL_JWKS_URL",
+      "http://127.0.0.1:3004/.well-known/jwks.json",
+    ],
+  ];
+  for (const [key, value] of jwtPlaceholders) {
+    const setEnv = runConvex(["env", "set", key, value]);
+    if (setEnv.error || setEnv.status !== 0) {
+      console.error(
+        `[convex-codegen] failed to set anonymous placeholder ${key} (not a secret).`,
+      );
+      process.exit(setEnv.status ?? 1);
+    }
+  }
+}
+
+const result = runConvex(["codegen", "--typecheck", "disable"]);
 
 if (result.error) {
   console.error("[convex-codegen] failed to spawn:", result.error.message);

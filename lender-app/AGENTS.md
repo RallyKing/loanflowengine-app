@@ -27,8 +27,8 @@ npm run convex:codegen
 `npm run convex:codegen` wraps `convex codegen --typecheck disable` and is safe for CI/agents:
 
 - If `CONVEX_DEPLOY_KEY` or `CONVEX_DEPLOYMENT` is already set, the CLI uses that deployment.
-- Otherwise it sets `CONVEX_AGENT_MODE=anonymous` so codegen can use an isolated anonymous local backend **without interactive login**.
-- Never commit secrets. Prefer documenting this script over checking in `_generated/`.
+- Otherwise it sets `CONVEX_AGENT_MODE=anonymous`, runs `convex init`, and sets **non-secret** JWT placeholders (`CONVEX_JWT_APPLICATION_ID` / issuer / JWKS URL) on that anonymous backend so `auth.config.ts` can codegen.
+- Never commit secrets or `.env.local`. Prefer this script over checking in `_generated/`.
 
 If codegen still fails in a locked-down environment (no network, no Convex CLI backend), typecheck/build cannot run until a human provides a deploy key or runs `npx convex dev` locally.
 
