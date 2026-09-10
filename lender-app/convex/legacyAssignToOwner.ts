@@ -4,7 +4,7 @@
  *
  * Usage:
  *   npx convex run legacyAssignToOwner:run \
- *     '{"organizationId":"<optional Convex organizations id>","ownerUserKey":"user_...","orgName":"..."}'
+ *     '{"adminSecret":"<DATA_MIGRATION_ADMIN_SECRET>","organizationId":"<optional Convex organizations id>","ownerUserKey":"user_...","orgName":"..."}'
  *
  * When `organizationId` is omitted, finds by name or creates the organization.
  */
@@ -16,6 +16,7 @@ import {
   seedSystemRolesForOrganization,
   syncSystemRolePermissions,
 } from "./organizationRbac";
+import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 
 const STAMP_TABLES = [
   "lenders",
@@ -30,11 +31,13 @@ type StampTable = (typeof STAMP_TABLES)[number];
 
 export const run = mutation({
   args: {
+    adminSecret: v.string(),
     organizationId: v.optional(v.id("organizations")),
     ownerUserKey: v.string(),
     orgName: v.string(),
   },
-  handler: async (ctx, { organizationId, ownerUserKey, orgName }) => {
+  handler: async (ctx, { adminSecret, organizationId, ownerUserKey, orgName }) => {
+    assertDataMigrationAdmin(adminSecret);
     const now = Date.now();
     const cleanOrgName = orgName.trim() || "Organization";
 

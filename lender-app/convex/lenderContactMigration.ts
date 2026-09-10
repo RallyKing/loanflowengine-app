@@ -22,6 +22,7 @@ import {
 import { normalizeEmailKey } from "../lib/crmRelationship";
 import { DEFAULT_CONTACT_ROLE_IDS } from "../lib/contact/contactRoles";
 import { refreshContactGlobalSearchText } from "./globalSearchSync";
+import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 
 const MIGRATION_LABEL = "lender contact";
 
@@ -168,13 +169,15 @@ function registerExtractedRowOnMaps(
  */
 export const migrateLenderContacts = mutation({
   args: {
+    adminSecret: v.string(),
     dryRun: v.optional(v.boolean()),
     /** Lenders to process in this call (default 200, max 500). */
     limit: v.optional(v.number()),
     /** Pass `continueCursor` from the previous run until `isDone` is true. */
     cursor: v.optional(v.union(v.string(), v.null())),
   },
-  handler: async (ctx, { dryRun, limit, cursor }) => {
+  handler: async (ctx, { adminSecret, dryRun, limit, cursor }) => {
+    assertDataMigrationAdmin(adminSecret);
     const runDry = dryRun ?? false;
     const batchSize = Math.max(1, Math.min(500, Math.floor(limit ?? 200)));
     const now = Date.now();
