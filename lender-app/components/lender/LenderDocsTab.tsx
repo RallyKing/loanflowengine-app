@@ -60,6 +60,8 @@ export function LenderDocsTab({
   actionTitle: (hint: string) => string;
 }) {
   const orgScope = useOrgConvexQueryArgs();
+  /** Uploads require org-scoped auth (server rejects unauthenticated mint). */
+  const canUpload = Boolean(canUseHub && orgScope);
   const { confirm } = useOperationalConfirm();
   const listArgs = orgScope
     ? {
@@ -174,13 +176,17 @@ export function LenderDocsTab({
   }
 
   async function processFiles(raw: File[]) {
-    if (!raw.length || !canUseHub) return;
+    if (!raw.length || !canUpload || !orgScope) return;
     setUploading(true);
     setErr(null);
     try {
       const { ok, failures, attempted } = await uploadLocalFilesViaConvexUrl({
         files: raw,
-        generateUploadUrl: () => generateUploadUrl({}),
+        generateUploadUrl: () =>
+          generateUploadUrl({
+            organizationId: orgScope.organizationId,
+            memberUserKey: orgScope.memberUserKey,
+          }),
         onProgress: (current, total) => setUploadProgress({ current, total }),
         commitEach: async ({ storageId, fileName, contentType, size }) => {
           await addFileM({
@@ -190,12 +196,8 @@ export function LenderDocsTab({
             contentType,
             size,
             groupName: uploadGroup.trim() || undefined,
-            ...(orgScope
-              ? {
-                  organizationId: orgScope.organizationId,
-                  memberUserKey: orgScope.memberUserKey,
-                }
-              : {}),
+            organizationId: orgScope.organizationId,
+            memberUserKey: orgScope.memberUserKey,
           });
         },
       });
@@ -316,7 +318,7 @@ export function LenderDocsTab({
             placeholder="e.g. Rate sheets"
             value={uploadGroup}
             onChange={(e) => setUploadGroup(e.target.value)}
-            disabled={!canUseHub}
+            disabled={!canUpload}
             list="lender-doc-groups"
           />
           <datalist id="lender-doc-groups">
@@ -346,19 +348,19 @@ export function LenderDocsTab({
 
       <div
         className={`rounded-md border border-dashed p-3 transition-colors ${
-          dragActive && canUseHub && !uploading
+          dragActive && canUpload && !uploading
             ? "border-primary bg-primary/5"
             : "border-border/80 bg-muted/10"
         }`}
         onDragEnter={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (canUseHub && !uploading) setDragActive(true);
+          if (canUpload && !uploading) setDragActive(true);
         }}
         onDragOver={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (canUseHub && !uploading) setDragActive(true);
+          if (canUpload && !uploading) setDragActive(true);
         }}
         onDragLeave={(e) => {
           e.preventDefault();
@@ -370,7 +372,7 @@ export function LenderDocsTab({
           e.preventDefault();
           e.stopPropagation();
           setDragActive(false);
-          if (!canUseHub || uploading) return;
+          if (!canUpload || uploading) return;
           void processFiles(Array.from(e.dataTransfer.files));
         }}
       >
@@ -383,7 +385,7 @@ export function LenderDocsTab({
             <input
               type="file"
               multiple
-              disabled={!canUseHub || uploading}
+              disabled={!canUpload || uploading}
               onChange={(e) => {
                 const arr = e.target.files ? Array.from(e.target.files) : [];
                 void processFiles(arr);
@@ -400,7 +402,7 @@ export function LenderDocsTab({
               tabIndex={-1}
               aria-hidden
               className="pointer-events-none relative z-0 min-w-[6.5rem]"
-              disabled={!canUseHub || uploading}
+              disabled={!canUpload || uploading}
             >
               <Paperclip className="h-3.5 w-3.5" />
               {uploading
