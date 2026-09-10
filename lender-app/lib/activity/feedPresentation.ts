@@ -106,6 +106,24 @@ function isLikelyConvexId(value: unknown): boolean {
   return /^[a-z][a-z0-9]{20,}$/i.test(t);
 }
 
+function humanizeToken(value: string): string {
+  const t = value.trim().replace(/,+$/, "");
+  if (!t) return t;
+  if (/^[a-z0-9]+(_[a-z0-9]+)+$/i.test(t) || /^[a-z]+[A-Z]/.test(t)) {
+    return t
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .split(/[_\s-]+/)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ");
+  }
+  // Single lowercase / uppercase token → sentence case (e.g. "approved").
+  if (/^[a-z]+$/i.test(t) && t === t.toLowerCase()) {
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+  return t;
+}
+
 function formatScalar(value: unknown): string | null {
   if (value == null) return null;
   if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -115,7 +133,8 @@ function formatScalar(value: unknown): string | null {
   if (typeof value === "string") {
     const t = value.trim();
     if (!t || isLikelyConvexId(t)) return null;
-    return t.length > 120 ? `${t.slice(0, 118)}…` : t;
+    const human = humanizeToken(t);
+    return human.length > 120 ? `${human.slice(0, 118)}…` : human;
   }
   return null;
 }
@@ -190,7 +209,21 @@ export function formatFeedDetail(detail: string | undefined | null): string | nu
   const cleaned = stripInternalIds(raw).trim();
   if (!cleaned || cleaned === "—" || cleaned === "-") return null;
   if (looksLikeJsonBlob(cleaned)) return null;
-  return cleaned.length > 240 ? `${cleaned.slice(0, 238)}…` : cleaned;
+  // Humanize snake_case / camelCase key lists (e.g. stage slugs, field keys).
+  const humanized = cleaned
+    .split(/\s*,\s*/)
+    .map((part) => {
+      const arrow = part.split(/\s*(?:→|->)\s*/);
+      if (arrow.length === 2) {
+        return `${humanizeToken(arrow[0]!)} → ${humanizeToken(arrow[1]!)}`;
+      }
+      return humanizeToken(part);
+    })
+    .filter(Boolean)
+    .join(", ");
+  const out = humanized.replace(/,\s*$/, "").trim();
+  if (!out) return null;
+  return out.length > 240 ? `${out.slice(0, 238)}…` : out;
 }
 
 export function stripInternalIds(text: string): string {
@@ -205,7 +238,12 @@ export function stripInternalIds(text: string): string {
 
 export function sanitizeFeedSummary(summary: string): string {
   const cleaned = stripInternalIds(summary.trim());
-  return cleaned || "Activity update";
+  if (!cleaned) return "Activity update";
+  // Soften embedded camelCase field keys in summaries (e.g. "Deal: overviewTabLayout").
+  return cleaned.replace(
+    /\b([a-z]+[A-Z][a-zA-Z0-9]*)\b/g,
+    (m) => humanizeToken(m),
+  );
 }
 
 function normalizeSummaryKey(summary: string): string {
