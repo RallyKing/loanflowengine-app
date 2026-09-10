@@ -26,6 +26,11 @@ export const executeIntegrationJob = internalAction({
 
       switch (job.kind) {
         case "inbound_event":
+          // Single owner: automation only after tryClaimJob; claim flag before effects.
+          await ctx.runMutation(
+            internal.integrationAutomationBridge.processInboundIntegrationJob,
+            { jobId },
+          );
           summary = `inbound:${job.providerKey}`;
           break;
         case "sync_pull":
@@ -48,8 +53,11 @@ export const executeIntegrationJob = internalAction({
         case "action":
           summary = `action:${job.providerKey}`;
           break;
-        default:
+        default: {
+          const _exhaustive: never = job.kind;
+          void _exhaustive;
           break;
+        }
       }
 
       await ctx.runMutation(internal.integrationJobs.completeJob, {

@@ -14,24 +14,35 @@ import { parseCreateFileTaskPayload } from "../lib/inboundFileTask";
 const MAX_ORG_INBOUND_AUTOMATION_EFFECTS = 16;
 
 /**
- * After an inbound integration job is queued, apply org-scoped automation rules
- * (tasks, chained integration jobs). Idempotent via `inboundAutomationDispatched`.
+ * Apply org-scoped automation for an inbound integration job (tasks, chained
+ * jobs). Called from the worker **after** `tryClaimJob` succeeds.
+ *
+ * Atomically claims `inboundAutomationDispatched` **before** side effects so
+ * concurrent/retry paths cannot double-apply. Idempotency keys on chained jobs
+ * (`org-inbound-chain:${jobId}:${ruleId}`) remain unchanged.
  */
 export const processInboundIntegrationJob = internalMutation({
   args: { jobId: v.id("integrationJobs") },
   handler: async (ctx, { jobId }) => {
     const job = await ctx.db.get(jobId);
-    if (!job || job.kind !== "inbound_event") return;
-    if (job.inboundAutomationDispatched) return;
+    if (!job || job.kind !== "inbound_event") {
+      return { claimed: false as const, applied: false as const };
+    }
+    if (job.inboundAutomationDispatched) {
+      return { claimed: false as const, applied: false as const };
+    }
 
     const now = Date.now();
+
+    // CAS claim before any side effects — single writer for automation apply.
+    await ctx.db.patch(jobId, {
+      inboundAutomationDispatched: true,
+      updatedAt: now,
+    });
+
     const plan = await resolveOrganizationPlanForCtx(ctx, job.organizationId);
     if (!planHasFeature(plan, "integrations")) {
-      await ctx.db.patch(jobId, {
-        inboundAutomationDispatched: true,
-        updatedAt: now,
-      });
-      return;
+      return { claimed: true as const, applied: false as const };
     }
 
     let connectorPublicId: string | undefined;
@@ -176,12 +187,17 @@ export const processInboundIntegrationJob = internalMutation({
       }
     }
 
-    await ctx.db.patch(jobId, {
-      inboundAutomationDispatched: true,
-      updatedAt: now,
-      ...(lastActionError
-        ? { lastError: lastActionError.slice(0, 500) }
-        : {}),
-    });
+    if (lastActionError) {
+      await ctx.db.patch(jobId, {
+        updatedAt: Date.now(),
+        lastError: lastActionError.slice(0, 500),
+      });
+    }
+
+    return {
+      claimed: true as const,
+      applied: effects > 0,
+      effects,
+    };
   },
 });

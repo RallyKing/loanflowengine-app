@@ -4246,7 +4246,7 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-    /** One-shot org automation bridge for `inbound_event` jobs (`integrationAutomationBridge`). */
+    /** Claim-before-effects flag for inbound automation (set atomically in bridge after worker claim). */
     inboundAutomationDispatched: v.optional(v.boolean()),
   })
     .index("by_status_next", ["status", "nextAttemptAt"])
