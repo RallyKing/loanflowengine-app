@@ -162,7 +162,11 @@ function TaskAttachmentsPanelInner({
       const { ok, failures, attempted } = await uploadLocalFilesViaConvexUrl({
         files: raw,
         validateFile: validateTaskAttachmentFile,
-        generateUploadUrl: () => generateUploadUrl({}),
+        generateUploadUrl: () =>
+          generateUploadUrl({
+            organizationId: orgArgs.organizationId,
+            memberUserKey: orgArgs.memberUserKey,
+          }),
         onProgress: (current, total) =>
           setUploadProgress({ current, total }),
         commitEach: async ({ storageId, fileName, contentType, size }) => {

@@ -1698,7 +1698,7 @@ export const addSubtask = mutation({
   },
 });
 
-// ---------- Task files (`_storage` + `taskAttachments`; upload URL: lenderFiles:generateUploadUrl) ----------
+// ---------- Task files (`_storage` + `taskAttachments`; upload URL: lenderFiles:generateUploadUrl — org-scoped auth) ----------
 
 const TASK_FILE_MAX_NAME_LEN = 255;
 const TASK_FILE_MAX_BYTES = 80 * 1024 * 1024;

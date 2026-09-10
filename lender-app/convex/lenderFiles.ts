@@ -62,12 +62,19 @@ async function assertCanMutateLenderFile(
 }
 
 /**
- * Public URL to upload a file; client POSTs the raw bytes, then calls `addFile`.
+ * Mint a short-lived storage upload URL. Requires an authenticated org member
+ * (same org-scope gate as vault/comms upload helpers). Client POSTs bytes, then
+ * calls `addFile` / `tasks.addTaskFile` (which remain permission-gated).
+ * Token-based portal uploads use separate portal mutations — not this path.
  */
 export const generateUploadUrl = mutation({
-  args: {},
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.optional(v.string()),
+  },
   returns: v.string(),
-  handler: async (ctx) => {
+  handler: async (ctx, { organizationId, memberUserKey }) => {
+    await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
     return await ctx.storage.generateUploadUrl();
   },
 });
