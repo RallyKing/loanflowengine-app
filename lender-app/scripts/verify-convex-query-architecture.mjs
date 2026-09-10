@@ -7,7 +7,7 @@
  * - No object-literal first argument: `useQuery({ ... })` / `useQuery({ query:`.
  * - No TanStack/other packages importing `useQuery` for data fetching.
  *
- * Scans: app/, components/, hooks/, lib/ (lender-app). Skips backend scripts/tests.
+ * Scans: app/, components/, hooks/, lib/, modules/ (lender-app). Skips backend scripts/tests.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
 
-const SCAN_TOP_DIRS = ["app", "components", "hooks", "lib"];
+const SCAN_TOP_DIRS = ["app", "components", "hooks", "lib", "modules"];
 
 const SKIP_DIR_NAMES = new Set([
   "node_modules",
