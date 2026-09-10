@@ -74,6 +74,8 @@ export async function logDocumentVaultAudit(
     lenderId: args.lenderId,
     libraryDocumentId: args.libraryDocumentId,
     delta: args.meta,
+    // File activity already mirrors into activityFeed — avoid duplicate cards.
+    mirrorToFeed: false,
   });
 }
 

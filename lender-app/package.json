@@ -52,6 +52,7 @@
     "test:sanitize-preview-html": "tsx scripts/sanitize-preview-html-tests.ts",
     "test:document-assignment": "tsx scripts/document-assignment-tests.ts",
     "test:inbound-lead-payload": "tsx scripts/inbound-lead-payload-tests.ts",
+    "test:activity-feed-presentation": "tsx scripts/activity-feed-presentation-tests.ts",
     "test:resolve-pipeline-row-stage": "tsx scripts/resolve-pipeline-row-stage-tests.ts",
     "test:vault-explorer-filter": "tsx scripts/vault-explorer-filter-tests.ts",
     "test:regression:unit": "tsx scripts/regression-protection-tests.ts",
