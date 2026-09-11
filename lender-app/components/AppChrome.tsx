@@ -34,6 +34,7 @@ import { useAuthStateOptional } from "@/lib/auth/authStateContext";
 import { GlobalSearchPalette } from "@/components/GlobalSearchPalette";
 import { HelpHubTrigger } from "@/components/HelpHubTrigger";
 import { HelpKnowledgeShellMount } from "@/components/HelpKnowledgeShellMount";
+import { ReportBugMount } from "@/components/ReportBugMount";
 import { cn } from "@/lib/cn";
 import type { ColorScheme } from "@/lib/colorScheme";
 import {
@@ -636,7 +637,6 @@ function AppChromeBody({
         </div>
       </main>
       {showGlobalBottomNav ? <MobileBottomNav /> : null}
-      <OperationalToastHost />
       <UserOnboardingChecklist layout="classic" />
     </div>
   );
@@ -729,6 +729,8 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
             {children}
           </AppChromeBody>
           <HelpKnowledgeShellMount />
+          <ReportBugMount />
+          <OperationalToastHost />
         </ShellMotionReadyProvider>
         </div>
       </MobileChromeProvider>
