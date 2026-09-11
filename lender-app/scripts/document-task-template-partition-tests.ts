@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import {
+  filterStacksByQuery,
+  filterTemplatesByQuery,
+  normalizeApplyTemplateQuery,
   partitionDocumentTaskTemplates,
   sortIndividualTemplatesByFavorites,
+  templateMatchesQuery,
   templateStackLabel,
 } from "../lib/library/partitionDocumentTaskTemplates";
 
@@ -101,6 +105,97 @@ test("sortIndividualTemplatesByFavorites with no favorites sorts by name", () =>
     sorted.map((t) => t._id),
     ["t2", "t1"],
   );
+});
+
+test("normalizeApplyTemplateQuery trims and lowercases", () => {
+  assert.equal(normalizeApplyTemplateQuery("  Bank  "), "bank");
+  assert.equal(normalizeApplyTemplateQuery(""), "");
+});
+
+test("filterTemplatesByQuery is case-insensitive on title and description", () => {
+  const templates = [
+    { _id: "t1", title: "Bank Statements", description: "Last 3 months" },
+    { _id: "t2", title: "Driver License", description: "Photo ID" },
+    {
+      _id: "t3",
+      title: "Custom",
+      clientInstructionText: "Upload voided check",
+    },
+  ];
+  assert.deepEqual(
+    filterTemplatesByQuery(templates, "bank").map((t) => t._id),
+    ["t1"],
+  );
+  assert.deepEqual(
+    filterTemplatesByQuery(templates, "PHOTO").map((t) => t._id),
+    ["t2"],
+  );
+  assert.deepEqual(
+    filterTemplatesByQuery(templates, "voided").map((t) => t._id),
+    ["t3"],
+  );
+  assert.equal(filterTemplatesByQuery(templates, "   ").length, 3);
+  assert.equal(filterTemplatesByQuery(templates, "nope").length, 0);
+});
+
+test("filterTemplatesByQuery matches optional extra text (stack label)", () => {
+  const templates = [
+    { _id: "t1", title: "ID", stackName: "MCA Pack" },
+    { _id: "t2", title: "Tax", stackName: "Refi Pack" },
+  ];
+  const filtered = filterTemplatesByQuery(
+    templates,
+    "mca",
+    (t) => t.stackName,
+  );
+  assert.deepEqual(
+    filtered.map((t) => t._id),
+    ["t1"],
+  );
+});
+
+test("templateMatchesQuery empty query matches all", () => {
+  assert.equal(templateMatchesQuery({ title: "Anything" }, ""), true);
+  assert.equal(templateMatchesQuery({ title: "Anything" }, "  "), true);
+});
+
+test("filterStacksByQuery matches stack name, description, or member tasks", () => {
+  const stacks = [
+    {
+      _id: "s1",
+      name: "MCA Pack",
+      description: "Working capital docs",
+      templates: [{ title: "Bank Statements" }],
+    },
+    {
+      _id: "s2",
+      name: "Refi Pack",
+      templates: [{ title: "Appraisal", description: "Full appraisal PDF" }],
+    },
+    {
+      _id: "s3",
+      name: "Empty Pack",
+      templates: [] as Array<{ title: string; description?: string }>,
+    },
+  ];
+  assert.deepEqual(
+    filterStacksByQuery(stacks, "mca").map((s) => s._id),
+    ["s1"],
+  );
+  assert.deepEqual(
+    filterStacksByQuery(stacks, "working capital").map((s) => s._id),
+    ["s1"],
+  );
+  assert.deepEqual(
+    filterStacksByQuery(stacks, "appraisal").map((s) => s._id),
+    ["s2"],
+  );
+  assert.deepEqual(
+    filterStacksByQuery(stacks, "FULL APPRAISAL").map((s) => s._id),
+    ["s2"],
+  );
+  assert.equal(filterStacksByQuery(stacks, "xyz").length, 0);
+  assert.equal(filterStacksByQuery(stacks, "").length, 3);
 });
 
 console.log(`\n${passed} passed`);

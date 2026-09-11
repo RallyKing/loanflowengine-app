@@ -85,3 +85,84 @@ export function sortIndividualTemplatesByFavorites<
     return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
   });
 }
+
+/** Trim + lowercase for Apply Template drawer search. */
+export function normalizeApplyTemplateQuery(query: string): string {
+  return query.trim().toLowerCase();
+}
+
+function textMatchesQuery(
+  value: string | null | undefined,
+  normalizedQuery: string,
+): boolean {
+  if (!normalizedQuery) return true;
+  if (!value) return false;
+  return value.toLowerCase().includes(normalizedQuery);
+}
+
+export type ApplyTemplateSearchableTemplate = {
+  title: string;
+  description?: string;
+  clientInstructionText?: string;
+};
+
+export type ApplyTemplateSearchableStack = {
+  name: string;
+  description?: string;
+  templates: ApplyTemplateSearchableTemplate[];
+};
+
+/**
+ * Case-insensitive match against title, description, instruction text,
+ * and optional extra labels (e.g. stack name shown on Individual rows).
+ */
+export function templateMatchesQuery(
+  template: ApplyTemplateSearchableTemplate,
+  query: string,
+  extraText?: string | null,
+): boolean {
+  const q = normalizeApplyTemplateQuery(query);
+  if (!q) return true;
+  return (
+    textMatchesQuery(template.title, q) ||
+    textMatchesQuery(template.description, q) ||
+    textMatchesQuery(template.clientInstructionText, q) ||
+    textMatchesQuery(extraText, q)
+  );
+}
+
+/**
+ * Filter Individual Tasks (or any template list) by search query.
+ * Empty / whitespace query returns the input list unchanged (same order).
+ */
+export function filterTemplatesByQuery<T extends ApplyTemplateSearchableTemplate>(
+  templates: readonly T[],
+  query: string,
+  getExtraText?: (template: T) => string | null | undefined,
+): T[] {
+  const q = normalizeApplyTemplateQuery(query);
+  if (!q) return [...templates];
+  return templates.filter((template) =>
+    templateMatchesQuery(template, query, getExtraText?.(template)),
+  );
+}
+
+/**
+ * Filter template stacks: match stack name/description or any member
+ * task title/description/instruction text.
+ */
+export function filterStacksByQuery<S extends ApplyTemplateSearchableStack>(
+  stacks: readonly S[],
+  query: string,
+): S[] {
+  const q = normalizeApplyTemplateQuery(query);
+  if (!q) return [...stacks];
+  return stacks.filter((stack) => {
+    if (textMatchesQuery(stack.name, q) || textMatchesQuery(stack.description, q)) {
+      return true;
+    }
+    return stack.templates.some((template) =>
+      templateMatchesQuery(template, query),
+    );
+  });
+}
