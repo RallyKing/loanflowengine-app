@@ -97,7 +97,7 @@ Both notification layers stay on:
 1. Immediate per-upload `document_activity` push (in-app + Web Push)
 2. 15m review-package notify (“Client upload review ready”)
 
-No GHL incomplete-docs / incomplete-docs tags in Phase 1–3.
+No GHL incomplete-docs tags in Phase 1–3.
 
 ### Phase 4 (later PR — Stacy handoff locked)
 
