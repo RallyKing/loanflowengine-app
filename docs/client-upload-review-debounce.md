@@ -86,23 +86,40 @@ the package).
 - `approveReview` / `requestChanges` / `dismiss` — update status only
 - `sendFollowUp` internal stub exists but is **never** called from approve in this PR
 
-## Phase 4 handoff (Stacy / GHL — later PR)
+## Phase split (locked with Stacy)
 
-After Joshua **approves**, Cloud Minion calls **Stacy** (GHL & LFE Manager) with:
+### Phase 1–3 (this PR)
 
-- contact phone + email (or GHL contactId)
-- LFE pipeline file id
-- approved SMS body
-- approved email subject + body
-- channels (SMS / email / both)
+Build debounce + gap analysis + drafts + **Joshua/broker notify**. **No client send.**
 
-Stacy sends via **GHL SMS + Gmail only**. Do **not** also fire LFE portal Notify
-on the same package unless Joshua explicitly wants portal. Default: one outbound
-owner.
+Both notification layers stay on:
 
-Manual LFE “Notify client” remains for **initial** doc requests (Document Task
-Request path). Auto Phase 4 is the quiet-window follow-up only. No GHL
-incomplete-docs tags in Phase 1–3.
+1. Immediate per-upload `document_activity` push (in-app + Web Push)
+2. 15m review-package notify (“Client upload review ready”)
+
+No GHL incomplete-docs / incomplete-docs tags in Phase 1–3.
+
+### Phase 4 (later PR — Stacy handoff locked)
+
+After Joshua **approves**, **Cloud Minion** calls **Stacy** (GHL & LFE Manager) with:
+
+| Field | Notes |
+|-------|--------|
+| Contact phone + email | Or GHL `contactId` when already known |
+| LFE pipeline file id | The deal/file the review belongs to |
+| Approved SMS body | From the review package |
+| Approved email subject + body | From the review package |
+| Channels | `SMS` / `email` / `both` |
+
+**Outbound owner (default: one):** Stacy sends via **GHL SMS + Gmail only**.
+
+Do **NOT** also fire LFE portal Notify on the same package unless Joshua
+explicitly asks for portal. Default: Stacy is the sole outbound owner for the
+approved quiet-window follow-up.
+
+**Manual LFE “Notify client”** remains for **initial** Document Task Request /
+portal invite flows. Auto Phase 4 is only the quiet-window follow-up after
+approval.
 
 ## Convex usage (fail closed)
 
