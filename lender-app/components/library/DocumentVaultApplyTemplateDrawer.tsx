@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/cn";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 import { TaskTemplateManager } from "@/components/library/TaskTemplateManager";
+import { templateStackLabel } from "@/lib/library/partitionDocumentTaskTemplates";
 
 export type DocumentVaultApplyTemplateDrawerProps = {
   open: boolean;
@@ -226,10 +227,15 @@ export function DocumentVaultApplyTemplateDrawer({
           <ul className="space-y-1">
             {library.individualTemplates.length === 0 ? (
               <li className="text-xs text-muted-foreground">
-                No individual templates. Use stacks or add templates in settings.
+                No task templates yet. Add templates in Manage Templates.
               </li>
             ) : (
-              library.individualTemplates.map((tpl) => (
+              library.individualTemplates.map((tpl) => {
+                const stackLabel = templateStackLabel(
+                  tpl.stackId ? String(tpl.stackId) : undefined,
+                  library.stacks,
+                );
+                return (
                 <li key={tpl._id}>
                   <label className="flex cursor-pointer items-center gap-2 rounded-dlc-sm px-2 py-1.5 hover:bg-muted/30">
                     <input
@@ -237,7 +243,14 @@ export function DocumentVaultApplyTemplateDrawer({
                       checked={selectedTemplates.has(String(tpl._id))}
                       onChange={() => toggleTemplate(String(tpl._id))}
                     />
-                    <span className="text-sm">{tpl.title}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm">{tpl.title}</span>
+                      {stackLabel ? (
+                        <span className="block text-[10px] text-muted-foreground">
+                          In stack: {stackLabel}
+                        </span>
+                      ) : null}
+                    </span>
                     {(tpl.clientTemplateAttachments?.length ?? 0) > 0 ? (
                       <span className="text-[10px] text-muted-foreground">
                         Template file
@@ -249,7 +262,8 @@ export function DocumentVaultApplyTemplateDrawer({
                     ) : null}
                   </label>
                 </li>
-              ))
+                );
+              })
             )}
           </ul>
         )}
