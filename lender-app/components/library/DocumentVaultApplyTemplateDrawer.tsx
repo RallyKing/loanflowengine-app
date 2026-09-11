@@ -6,6 +6,7 @@ import { Loader2, Settings2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
+import { SearchField } from "@/components/ui/SearchField";
 import {
   RecordInspectorBody,
   RecordInspectorFooter,
@@ -18,6 +19,9 @@ import { showOperationalToast } from "@/lib/ui/operationalToast";
 import { TaskTemplateManager } from "@/components/library/TaskTemplateManager";
 import { DocumentVaultExplorerStarButton } from "@/components/library/DocumentVaultExplorerStarButton";
 import {
+  filterStacksByQuery,
+  filterTemplatesByQuery,
+  normalizeApplyTemplateQuery,
   sortIndividualTemplatesByFavorites,
   templateStackLabel,
 } from "@/lib/library/partitionDocumentTaskTemplates";
@@ -48,6 +52,7 @@ export function DocumentVaultApplyTemplateDrawer({
   onError,
 }: DocumentVaultApplyTemplateDrawerProps) {
   const [tab, setTab] = useState<TabId>("stacks");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedStacks, setSelectedStacks] = useState<Set<string>>(new Set());
   const [selectedTemplates, setSelectedTemplates] = useState<Set<string>>(
     new Set(),
@@ -87,6 +92,11 @@ export function DocumentVaultApplyTemplateDrawer({
     });
   }, [open, organizationId, memberUserKey, seedStarter, seedLegacy]);
 
+  // Clear search when the drawer closes so the next open starts fresh.
+  useEffect(() => {
+    if (!open) setSearchQuery("");
+  }, [open]);
+
   // Seed optimistic cache on open; prefer server when it arrives.
   // Skip while a toggle is in flight so a stale query snapshot cannot wipe it.
   useEffect(() => {
@@ -114,6 +124,23 @@ export function DocumentVaultApplyTemplateDrawer({
       favoriteIds,
     );
   }, [library, favoriteIds]);
+
+  const filteredStacks = useMemo(() => {
+    if (!library) return [];
+    return filterStacksByQuery(library.stacks, searchQuery);
+  }, [library, searchQuery]);
+
+  const filteredIndividuals = useMemo(() => {
+    if (!library) return [];
+    return filterTemplatesByQuery(individualSorted, searchQuery, (tpl) =>
+      templateStackLabel(
+        tpl.stackId ? String(tpl.stackId) : undefined,
+        library.stacks,
+      ),
+    );
+  }, [library, individualSorted, searchQuery]);
+
+  const hasActiveSearch = normalizeApplyTemplateQuery(searchQuery).length > 0;
 
   const toggleStack = (id: string) => {
     setSelectedStacks((prev) => {
@@ -280,6 +307,25 @@ export function DocumentVaultApplyTemplateDrawer({
           ))}
         </div>
 
+        <SearchField
+          compact
+          containerClassName="w-full"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onClear={() => setSearchQuery("")}
+          placeholder={
+            tab === "stacks"
+              ? "Search stacks and tasks…"
+              : "Search individual tasks…"
+          }
+          aria-label={
+            tab === "stacks"
+              ? "Search template stacks"
+              : "Search individual tasks"
+          }
+          data-testid="apply-template-search"
+        />
+
         {library === undefined ? (
           <div className="flex items-center justify-center py-8 text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -290,8 +336,15 @@ export function DocumentVaultApplyTemplateDrawer({
               <li className="text-xs text-muted-foreground">
                 No template stacks yet.
               </li>
+            ) : filteredStacks.length === 0 && hasActiveSearch ? (
+              <li
+                className="text-xs text-muted-foreground"
+                data-testid="apply-template-search-empty"
+              >
+                No stacks match “{normalizeApplyTemplateQuery(searchQuery)}”.
+              </li>
             ) : (
-              library.stacks.map((stack) => (
+              filteredStacks.map((stack) => (
                 <li key={stack._id}>
                   <label className="flex cursor-pointer items-start gap-2 rounded-dlc-md border border-border/60 px-3 py-2 hover:bg-muted/30">
                     <input
@@ -325,15 +378,23 @@ export function DocumentVaultApplyTemplateDrawer({
               <li className="text-xs text-muted-foreground">
                 No task templates yet. Add templates in Manage Templates.
               </li>
+            ) : filteredIndividuals.length === 0 && hasActiveSearch ? (
+              <li
+                className="text-xs text-muted-foreground"
+                data-testid="apply-template-search-empty"
+              >
+                No tasks match “{normalizeApplyTemplateQuery(searchQuery)}”.
+              </li>
             ) : (
-              individualSorted.map((tpl, index) => {
+              filteredIndividuals.map((tpl, index) => {
                 const id = String(tpl._id);
                 const isFavorite = favoriteIds.has(id);
                 const prevIsFavorite =
                   index > 0 &&
-                  favoriteIds.has(String(individualSorted[index - 1]!._id));
+                  favoriteIds.has(String(filteredIndividuals[index - 1]!._id));
                 const showFavoritesHeader = isFavorite && index === 0;
-                const showLibraryDivider = !isFavorite && (index === 0 || prevIsFavorite);
+                const showLibraryDivider =
+                  !isFavorite && (index === 0 || prevIsFavorite);
                 const stackLabel = templateStackLabel(
                   tpl.stackId ? String(tpl.stackId) : undefined,
                   library.stacks,
