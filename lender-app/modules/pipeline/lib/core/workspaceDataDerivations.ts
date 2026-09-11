@@ -25,6 +25,28 @@ export function buildPipelineSwitcherRows<T extends TablePreviewRow>(
   return sorted;
 }
 
+type ProjectScopedRow = {
+  projectId?: string | { toString(): string } | null;
+  fileName?: string | null;
+};
+
+/**
+ * Files in the same project as the active loan file — shared source for the
+ * header project association menu and the disclosure switch-file list.
+ */
+export function buildProjectSiblingFileRows<T extends ProjectScopedRow>(
+  rows: readonly T[],
+  projectId: string | null | undefined,
+): T[] {
+  const key = projectId?.trim();
+  if (!key) return [];
+  return rows.filter((r) => {
+    const pid = r.projectId;
+    if (pid == null) return false;
+    return String(pid) === key;
+  });
+}
+
 export function buildLicenseDisplay(args: {
   pipeline: Doc<"pipeline"> | null | undefined;
   intakeForLicense: Doc<"intakeSheets"> | null | undefined;

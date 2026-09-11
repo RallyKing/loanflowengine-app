@@ -46,12 +46,12 @@ export function usePipelineFileWorkspaceData(args: {
     };
   }, [activeOrganizationId, convexMemberKey]);
 
+  /** `includeSnoozed` is gone — `listTablePreview` always returns snoozed rows now. */
   const pipelineSwitcherListArgs = useMemo(():
     | {
         organizationId: Id<"organizations">;
         memberUserKey: string;
         includeArchived: boolean;
-        includeSnoozed: boolean;
       }
     | "skip" => {
     if (embedded || !fileQueryEnabled) return "skip";
@@ -60,7 +60,6 @@ export function usePipelineFileWorkspaceData(args: {
       organizationId: activeOrganizationId,
       memberUserKey: preferencesAccountId,
       includeArchived: true,
-      includeSnoozed: true,
     };
   }, [embedded, fileQueryEnabled, activeOrganizationId, preferencesAccountId]);
 

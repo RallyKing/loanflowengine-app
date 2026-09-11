@@ -252,6 +252,98 @@ export async function integrationDispatch(
       }
     }
 
+    /**
+     * Private bot work API (same connector token as webhook).
+     * Body: `{ action, payload?, idempotencyKey? }`
+     * Returns 200 with synchronous result (not 202 queue-only).
+     */
+    if (path === "/api/v1/integrations/bot" && request.method === "POST") {
+      const connectorPublicId = url.searchParams.get("connector")?.trim();
+      if (!connectorPublicId) {
+        return jsonResponse(
+          {
+            error: "validation_error",
+            detail: "Query parameter `connector` (public id) is required.",
+          },
+          400,
+        );
+      }
+      const rb = await readRawBodyLimited(request, MAX_WEBHOOK_BYTES);
+      if (!rb.ok) return rb.response;
+
+      let body: Record<string, unknown>;
+      try {
+        body =
+          rb.raw.trim() === ""
+            ? {}
+            : (JSON.parse(rb.raw) as Record<string, unknown>);
+      } catch {
+        return jsonResponse({ error: "invalid_json" }, 400);
+      }
+
+      const action =
+        typeof body.action === "string" ? body.action.trim() : "";
+      if (!action) {
+        return jsonResponse(
+          {
+            error: "validation_error",
+            detail:
+              "JSON must include string field `action` (e.g. upsert_pipeline_lead, add_note, create_task, create_file_task, list_files, list_contacts, get_file).",
+          },
+          400,
+        );
+      }
+
+      const inboundToken =
+        request.headers.get("X-Integration-Token")?.trim() ||
+        url.searchParams.get("token")?.trim() ||
+        undefined;
+      const idempotencyKey =
+        request.headers.get("Idempotency-Key")?.trim() ||
+        (typeof body.idempotencyKey === "string"
+          ? body.idempotencyKey.trim()
+          : undefined) ||
+        undefined;
+
+      try {
+        const out = await ctx.runMutation(
+          internal.integrationBot.dispatchBotAction,
+          {
+            connectorPublicId,
+            inboundToken,
+            action,
+            payload: body.payload ?? body.args ?? body,
+            idempotencyKey,
+          },
+        );
+        const failed =
+          out &&
+          typeof out === "object" &&
+          "ok" in out &&
+          (out as { ok: unknown }).ok === false;
+        return jsonResponse(out, failed ? 400 : 200);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const lower = msg.toLowerCase();
+        if (
+          lower.includes("invalid inbound") ||
+          lower.includes("inbound token") ||
+          lower.includes("unauthorized") ||
+          (lower.includes("token") && lower.includes("required"))
+        ) {
+          return jsonResponse({ error: "unauthorized", detail: msg }, 401);
+        }
+        if (
+          lower.includes("unknown") ||
+          lower.includes("inactive") ||
+          lower.includes("not found")
+        ) {
+          return jsonResponse({ error: "not_found", detail: msg }, 404);
+        }
+        throw e;
+      }
+    }
+
     if (path === "/api/v1/integrations/jobs" && request.method === "POST") {
       const auth = await authenticate(ctx, request);
       if (auth instanceof Response) return auth;

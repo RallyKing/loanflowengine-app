@@ -97,8 +97,13 @@ export function capitalStackSearchHaystack(
     projectCapitalRollup?: ProjectCapitalRollup | null;
     clientDisplayName?: string;
     projectDisplayTitle?: string;
+    linkedClients?: Array<{ displayName?: string | null }> | null;
   },
 ): string {
   const blob = row.projectCapitalRollup?.searchBlob ?? "";
-  return `${row.searchText} ${blob} ${row.clientDisplayName ?? ""} ${row.projectDisplayTitle ?? ""}`.toLowerCase();
+  const linked = (row.linkedClients ?? [])
+    .map((c) => c.displayName?.trim() ?? "")
+    .filter(Boolean)
+    .join(" ");
+  return `${row.searchText} ${blob} ${row.clientDisplayName ?? ""} ${row.projectDisplayTitle ?? ""} ${linked}`.toLowerCase();
 }

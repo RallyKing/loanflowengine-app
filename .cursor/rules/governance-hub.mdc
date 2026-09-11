@@ -1,0 +1,20 @@
+---
+description: Always-apply governance hub — required artifacts and AI session workflow.
+alwaysApply: true
+---
+
+# Governance hub (always apply)
+
+All files in `docs/governance/MANIFEST.json` are required repository artifacts. Run `npm run verify:governance:docs` from `lender-app/` to verify presence.
+
+**Cursor always-apply files in this directory are committed.** Local Cursor/agent state under `.cursor/` stays gitignored except `.cursor/rules/`.
+
+Entry points:
+
+- `docs/governance/canonical-source-rules.md`
+- `docs/governance/platform-philosophy.md`
+- `docs/governance/ai-development-lifecycle.md`
+
+Binding topics include: no shadow systems, temporary code, migration safety, webhook/automation safety, UI/design system, component architecture, observability, feature completion, route ownership, AI governance, performance budgets, Convex resource & cost safety, Convex reactivity, accessibility, production deployment, documentation sync, tenant isolation, integrations, state management.
+
+Pipeline file UX: `docs/governance/workspace-sheet-governance.md` and `docs/governance/runtime-workspace-scroll-authority.md`.

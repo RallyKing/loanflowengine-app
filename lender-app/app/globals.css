@@ -1,12 +1,12 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 /*
- * Brand palette — matches the GoHighLevel set-up:
- *   Deep Forest  #034f35   →  rgb(  3  79  53)
- *   Gold         #bd9028   →  rgb(189 144  40)
- *   White        #ffffff   →  rgb(255 255 255)   (light bg)
- *   Ink          #0b1d15   →  rgb( 11  29  21)   (deep-forest near-black)
+ * Brand palette â€” matches the GoHighLevel set-up:
+ *   Deep Forest  #034f35   â†’  rgb(  3  79  53)
+ *   Gold         #bd9028   â†’  rgb(189 144  40)
+ *   White        #ffffff   â†’  rgb(255 255 255)   (light bg)
+ *   Ink          #0b1d15   â†’  rgb( 11  29  21)   (deep-forest near-black)
  *
  * The same `--primary` / `--accent` tokens are used in both schemes, but
  * which brand color plays which role swaps:
@@ -18,9 +18,9 @@
  */
 
 :root {
-  /* Dynamic viewport inline size — prefer over 100vw (scrollbar bleed / mobile zoom-out) */
+  /* Dynamic viewport inline size â€” prefer over 100vw (scrollbar bleed / mobile zoom-out) */
   --dlc-viewport-inline: 100dvw;
-  /* —— DLC × Material 3 tokens (mirror `styles/design-system/material-tokens.css`) —— */
+  /* â€”â€” DLC Ã— Material 3 tokens (mirror `styles/design-system/material-tokens.css`) â€”â€” */
   --dlc-shape-corner-none: 0px;
   --dlc-shape-corner-extra-small: 4px;
   --dlc-shape-corner-small: 8px;
@@ -83,23 +83,27 @@
   --dlc-elevation-3: 0 4px 8px rgb(15 23 42 / 0.08), 0 8px 16px rgb(15 23 42 / 0.1);
   --dlc-elevation-4: 0 8px 16px rgb(15 23 42 / 0.1), 0 12px 24px rgb(15 23 42 / 0.12);
   --dlc-elevation-5: 0 12px 24px rgb(15 23 42 / 0.12), 0 16px 32px rgb(15 23 42 / 0.14);
-  --dlc-scrim: rgb(15 23 42 / 0.45);
+  /* Light dim â€” background stays readable under modals (no blur on scrims). */
+  --dlc-scrim: rgb(15 23 42 / 0.18);
   --dlc-shell-z-skip-focus: 100;
-  /* Phase 15 Step 15 — overlay layering (see lib/ui/layering.ts) */
+  /* Phase 15 Step 15 â€” overlay layering (see lib/ui/layering.ts) */
   --dlc-z-header: 20;
   --dlc-z-popover: 35;
   --dlc-z-dropdown: 38;
   --dlc-z-sheet: 40;
   --dlc-z-inspector: 45;
   --dlc-z-sidebar: 45;
+  --dlc-z-floating-window: 46;
   --dlc-z-help: 48;
   --dlc-z-modal: 50;
   --dlc-z-command-palette: 52;
+  /* Masterpage Updates/Alerts — above sticky list toolbars (z-40/z-50). */
+  --dlc-z-chrome-menu: 53;
   --dlc-z-toast: 60;
   --dlc-z-destructive-confirm: 65;
   --dlc-z-product-tour: 62;
 
-  /* Record inspector shell — canonical padding (classic + SaaS) */
+  /* Record inspector shell â€” canonical padding (classic + SaaS) */
   --dlc-inspector-pad-x: 1.5rem;
   --dlc-inspector-pad-y-header: 0.75rem;
   --dlc-inspector-pad-y-body: 1.25rem;
@@ -111,11 +115,11 @@
   --brand-accent: 189 144 40;  /* Gold */
   --brand-accent-fg: 11 29 21;
 
-  /* Theme tokens (light) — pure white canvas, soft neutral panels */
+  /* Theme tokens (light) â€” pure white canvas, soft neutral panels */
   --bg: 255 255 255;           /* pure white */
   --fg: 11 29 21;              /* near-black w/ forest hint */
   --muted: 242 243 240;        /* soft warm-neutral panel */
-  /* Darker sage for secondary UI copy — AA on white & on muted panels */
+  /* Darker sage for secondary UI copy â€” AA on white & on muted panels */
   --muted-fg: 52 68 58;
   --border: 210 214 206;       /* slightly stronger than before for card/table edges */
   /* Table header band (data grids) */
@@ -144,7 +148,7 @@
 
   /*
    * Material-aligned semantic surfaces (DLC design system).
-   * Map to existing RGB tokens — tenant / scheme aware.
+   * Map to existing RGB tokens â€” tenant / scheme aware.
    */
   --dlc-surface-page: rgb(var(--bg) / 1);
   --dlc-surface-container-lowest: rgb(var(--bg) / 1);
@@ -155,7 +159,7 @@
   --dlc-surface-variant: rgb(var(--border) / 0.35);
 
   /*
-   * Semantic trust tokens — meaning divorced from brand gold/forest/SaaS blue.
+   * Semantic trust tokens â€” meaning divorced from brand gold/forest/SaaS blue.
    * Use for status, validation, alerts, badges, activity. Brand tokens stay for CTAs/nav.
    * Mapping: MD3 "container" / "on-container" / border accent.
    */
@@ -171,7 +175,7 @@
   --dlc-semantic-info-container: 239 246 255;
   --dlc-semantic-info-on-container: 30 58 138;
   --dlc-semantic-info-border: 96 165 250;
-  /* "Needs review" — violet, not gold (avoids brand-accent collision) */
+  /* "Needs review" â€” violet, not gold (avoids brand-accent collision) */
   --dlc-semantic-attention-container: 245 243 255;
   --dlc-semantic-attention-on-container: 76 29 149;
   --dlc-semantic-attention-border: 167 139 250;
@@ -194,7 +198,7 @@
   --dlc-semantic-inactive-container: 241 242 240;
   --dlc-semantic-inactive-on-container: 96 106 100;
   --dlc-semantic-inactive-border: 203 207 201;
-  /* Soft destructive surfaces (banners, inline alerts) — solid buttons still use --destructive */
+  /* Soft destructive surfaces (banners, inline alerts) â€” solid buttons still use --destructive */
   --dlc-semantic-destructive-container: 254 242 242;
   --dlc-semantic-destructive-on-container: 127 29 29;
   --dlc-semantic-destructive-border: 185 28 28;
@@ -220,7 +224,7 @@
   --dlc-tone-secondary-outline: 202 138 4;
 
   /*
-   * Finance-safe momentum semantics — avoid pure "traffic light" red/green for numeric deltas.
+   * Finance-safe momentum semantics â€” avoid pure "traffic light" red/green for numeric deltas.
    * Use for P&L hints, balance trends, spreads; pair with text labels, not color alone.
    */
   --dlc-finance-credit: 13 116 104;
@@ -249,7 +253,7 @@
   --font-sans: var(--font-brand), ui-serif, Georgia, "Times New Roman", serif;
 }
 
-/* OS dark — classic scheme only; SaaS workspace stays light (see below). */
+/* OS dark â€” classic scheme only; SaaS workspace stays light (see below). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-color-scheme="saas"]) {
     --bg: 9 22 16;             /* deep-forest ink */
@@ -326,7 +330,7 @@
     --dlc-elevation-3: 0 4px 12px rgb(0 0 0 / 0.5), 0 8px 20px rgb(0 0 0 / 0.4);
     --dlc-elevation-4: 0 8px 20px rgb(0 0 0 / 0.55), 0 14px 28px rgb(0 0 0 / 0.45);
     --dlc-elevation-5: 0 12px 28px rgb(0 0 0 / 0.6), 0 20px 40px rgb(0 0 0 / 0.5);
-    --dlc-scrim: rgb(0 0 0 / 0.58);
+    --dlc-scrim: rgb(0 0 0 / 0.28);
   }
 }
 
@@ -339,12 +343,12 @@
 [data-color-scheme="saas"] {
   --app-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
-  --bg: 248 250 252;            /* slate-50 — barely cooler than gray-50 */
+  --bg: 248 250 252;            /* slate-50 â€” barely cooler than gray-50 */
   --fg: 15 23 42;                /* slate-900 body (stronger than slate-800) */
   --muted: 255 255 255;         /* white cards / panels */
-  /* slate-600/700 blend — comfortable secondary on white + on cards */
+  /* slate-600/700 blend â€” comfortable secondary on white + on cards */
   --muted-fg: 71 85 105;
-  --border: 203 213 225;        /* slate-300 — clearer edges on white */
+  --border: 203 213 225;        /* slate-300 â€” clearer edges on white */
   --table-header: 241 245 249;   /* slate-100 */
   /* Blue = primary buttons, key CTAs, interactive highlights */
   --primary: 26 115 232;        /* ~#1A73E8 */
@@ -428,12 +432,12 @@ html[data-color-scheme="saas"] {
 
 html {
   /*
-   * Percentage heights resolve from here — keep `height: 100%` for flex chains;
+   * Percentage heights resolve from here â€” keep `height: 100%` for flex chains;
    * Phase 24.4H: `min-height: 100dvh` tracks mobile dynamic viewport (URL bar).
    */
   height: 100%;
   min-height: 100dvh;
-  /* Phase 15A: lock document inline size — prevents shrink-to-fit zoom-out on mobile */
+  /* Phase 15A: lock document inline size â€” prevents shrink-to-fit zoom-out on mobile */
   max-width: 100%;
   overflow-x: clip;
 }
@@ -442,7 +446,7 @@ body {
   /*
    * Phase 2 root layout contract:
    *   - html/body fill the viewport at 100% height
-   *   - the document never scrolls — the AppChrome <main> is the
+   *   - the document never scrolls â€” the AppChrome <main> is the
    *     SOLE vertical scroll container in the app
    *   - drawers/modals overlay above this shell with their own
    *     internal scroll (see PipelineFileWorkspace/LenderDrawer/TaskDrawer)
@@ -477,14 +481,14 @@ body[data-shell="auth"] {
   box-sizing: border-box;
 }
 
-/* Linked / shared field chip — follows account indicator tint when set */
+/* Linked / shared field chip â€” follows account indicator tint when set */
 .ui-sync-indicator-linked {
   border-color: var(--ui-indicator-border, rgb(var(--primary) / 0.35));
   background-color: var(--ui-indicator-soft-bg, rgb(var(--primary) / 0.1));
   color: var(--ui-indicator, rgb(var(--primary) / 1));
 }
 
-/* Selection styling — gold highlight on cream, forest on dark */
+/* Selection styling â€” gold highlight on cream, forest on dark */
 ::selection {
   background: rgb(var(--accent) / 0.45);
   color: var(--ui-body-text);
@@ -501,7 +505,7 @@ body[data-shell="auth"] {
   border-radius: 6px;
 }
 
-/* Narrow scroll bar — tinted with brand */
+/* Narrow scroll bar â€” tinted with brand */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -514,7 +518,7 @@ body[data-shell="auth"] {
   background: rgb(var(--muted-fg) / 0.65);
 }
 
-/* Drawer slide-in — timing uses design tokens (reduced motion zeroed in material-tokens.css) */
+/* Drawer slide-in â€” timing uses design tokens (reduced motion zeroed in material-tokens.css) */
 @keyframes slide-in-right {
   from { transform: translateX(100%); }
   to { transform: translateX(0); }
@@ -538,12 +542,12 @@ a:hover {
   color: rgb(var(--primary));
 }
 
-/* User settings: text scale (Settings → persisted on <html data-text-scale>) */
+/* User settings: text scale (Settings â†’ persisted on <html data-text-scale>) */
 html[data-text-scale="large"] {
   font-size: 1.05rem;
 }
 
-/* Analyst / operator density — driven by `UserPreferences.displaySettings.uiDensity` */
+/* Analyst / operator density â€” driven by `UserPreferences.displaySettings.uiDensity` */
 html[data-ui-density="compact"] {
   --dlc-density-compact: 0.6875rem;
   --dlc-density-default: 0.875rem;
@@ -560,7 +564,7 @@ html[data-ui-density="analyst"] {
   --dlc-type-title-medium-size: 0.9375rem;
 }
 
-/* Shared skeleton surface — list rows, inspector placeholders */
+/* Shared skeleton surface â€” list rows, inspector placeholders */
 @keyframes dlc-skeleton-breathe {
   0%,
   100% {
@@ -583,7 +587,7 @@ html[data-ui-density="analyst"] {
   }
 }
 
-/* Status / chip transition — factual reassurance without celebration */
+/* Status / chip transition â€” factual reassurance without celebration */
 @keyframes dlc-status-settle {
   from {
     opacity: 0.88;
@@ -607,7 +611,7 @@ html[data-ui-density="analyst"] {
   }
 }
 
-/* Finance momentum chips — always pair with visible text / icons */
+/* Finance momentum chips â€” always pair with visible text / icons */
 .dlc-finance-credit-chip {
   background: rgb(var(--dlc-finance-credit-muted) / 1);
   color: rgb(var(--dlc-finance-credit) / 1);
@@ -626,7 +630,7 @@ html[data-ui-density="analyst"] {
 
 /*
  * Pipeline file workspace (workspace sheet): vertical scroll lives in
- * `[data-pipeline-workspace-scroll]` — not in `AppChrome` `<main>` on `/pipeline/[fileId]`.
+ * `[data-pipeline-workspace-scroll]` â€” not in `AppChrome` `<main>` on `/pipeline/[fileId]`.
  * Snap header is a `shrink-0` region above the scroller (no sticky, no measured CSS vars).
  * Scroll-margin uses a stable cushion token (tune if chrome height changes materially).
  *
@@ -637,6 +641,19 @@ html[data-ui-density="analyst"] {
     var(--pipeline-ws-chrome-cushion, 6.75rem) + var(--pipeline-scroll-anchor-gap)
   );
 }
+
+/*
+ * File-route Vaul sheet: exactly one top safe-area (no AppChrome master header).
+ * CSS anchor so Dynamic Island clearance cannot be lost to utility purge / Vaul resets.
+ * Keep in sync with WORKSPACE_SHEET_SAFE_TOP_PAD_CLASS — do not also pad the snap header.
+ */
+@media (max-width: 767px) {
+  [data-workspace-sheet-safe-top] {
+    /* One env() top inset + 0.5rem breath — sync with WORKSPACE_SHEET_SAFE_TOP_PAD_CLASS. */
+    padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
+  }
+}
+
 
 @media (max-width: 767px) {
   /**
@@ -680,7 +697,7 @@ html[data-ui-density="analyst"] {
   }
 }
 
-/* Phase 24.4B — pipeline surfaces: native scroll only (no smooth scroll coupling). */
+/* Phase 24.4B â€” pipeline surfaces: native scroll only (no smooth scroll coupling). */
 [data-app-main-scroll]:has([data-pipeline-page-root]),
 [data-pipeline-workspace-scroll] {
   scroll-behavior: auto;
@@ -694,17 +711,22 @@ html[data-reduce-motion="true"] [data-contacts-panel-scroll] {
   scroll-behavior: auto;
 }
 
-/* Phase 24.4J — pipeline bottom nav cannot slide off-screen (CSS override). */
-html[data-pipeline-bottom-nav-locked] nav[aria-label="Primary"] {
+/* Phase 24.4J — pipeline bottom nav cannot slide off-screen (CSS override).
+   Exception: SaaS hamburger open (data-saas-menu-covered) — white dock must
+   not paint a full-width strip under the green drawer / scrim. */
+html[data-pipeline-bottom-nav-locked]
+  nav[aria-label="Primary"]:not([data-saas-menu-covered="true"]) {
   transform: translate3d(0, 0, 0) !important;
   opacity: 1 !important;
   pointer-events: auto !important;
   visibility: visible !important;
 }
 
-/* Phase 24.4L — DOM mount lock: nav never display:none or translate off-screen on pipeline. */
+/* Phase 24.4L — DOM mount lock: nav never display:none or translate off-screen on pipeline.
+   Same SaaS-menu exception as 24.4J. */
 @media (max-width: 767px) {
-  html[data-pipeline-nav-dom-lock="true"] nav[aria-label="Primary"] {
+  html[data-pipeline-nav-dom-lock="true"]
+    nav[aria-label="Primary"]:not([data-saas-menu-covered="true"]) {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
@@ -713,8 +735,62 @@ html[data-pipeline-bottom-nav-locked] nav[aria-label="Primary"] {
   }
 }
 
+/* SaaS mobile menu open — hard-hide bottom dock (beats any remaining lock CSS). */
+@media (max-width: 767px) {
+  nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"][data-saas-menu-covered="true"],
+  html[data-saas-menu-open]
+    nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translate3d(0, 100%, 0) !important;
+  }
+
+  /* Any subpixel gap under overlays paints dark, never page white. */
+  html[data-saas-menu-open],
+  html[data-saas-menu-open] body {
+    background-color: #000;
+  }
+
+  /*
+   * Mobile SaaS drawer: stretch with inset top/bottom only (no fixed 100dvh height
+   * that ignores bottom and leaves a white body gap in the home-indicator zone).
+   */
+  aside[data-saas-mobile-drawer="open"],
+  aside[data-saas-mobile-drawer="closed"] {
+    top: 0 !important;
+    bottom: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 100dvh;
+    min-height: 100svh;
+    min-height: -webkit-fill-available;
+  }
+
+  /* Scrim paints edge-to-edge including home-indicator zone. */
+  [data-saas-menu-scrim] {
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    height: auto !important;
+    min-height: 100dvh;
+    min-height: 100svh;
+    min-height: -webkit-fill-available;
+  }
+
+  /* Closed dock: continuous surface to the physical bottom (no orphan white under-bar). */
+  nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"]:not(
+      [data-saas-menu-covered="true"]
+    ) {
+    bottom: 0 !important;
+    background-color: rgb(var(--bg)) !important;
+  }
+}
+
 /*
- * Phase 24.4R — mobile native document scroll (Track A).
+ * Phase 24.4R â€” mobile native document scroll (Track A).
  * Unlocks html/body; demotes nested `#app-main-scroll` so browser URL bar
  * physics target the document, not a hidden overflow parent.
  */
@@ -803,7 +879,7 @@ html[data-pipeline-bottom-nav-locked] nav[aria-label="Primary"] {
 }
 
 /*
- * Phase 24.4N — pipeline hub velocity: block overscroll chaining on fast momentum
+ * Phase 24.4N â€” pipeline hub velocity: block overscroll chaining on fast momentum
  * swipes (no rubber-band transfer to hidden parents). Single scroll owner stays
  * `#app-main-scroll` when 24.4K native window test is reverted.
  */
@@ -816,19 +892,26 @@ html[data-pipeline-velocity-overscroll-none="true"] [data-app-main-scroll] {
 }
 
 /*
- * Phase 24.4P — master layout lock: fixed top chrome, no sticky hub bands,
- * frozen safe-area stand-ins (24px bottom ≈ pb-6).
+ * Phase 24.4P — master layout lock: fixed top chrome, no sticky hub bands.
+ * Bottom pad matches aggressive flush MobileBottomNav (inset − 28px, ≥2px) —
+ * not the full ~34px home-indicator band. Never force 1.5rem / 24px on the nav.
  */
 html[data-pipeline-safe-area-frozen="true"] {
   --dlc-pipeline-safe-top: 0px;
-  --dlc-pipeline-safe-bottom: 24px;
+  --dlc-pipeline-safe-bottom: max(
+    2px,
+    calc(env(safe-area-inset-bottom, 0px) - 28px)
+  );
 }
 
 html[data-pipeline-master-layout-lock="true"]
   header[data-pipeline-layout-locked="true"] {
-  height: 4rem;
-  min-height: 4rem;
-  max-height: 4rem;
+  /* Content row stays 4rem; top padding clears iOS status bar / notch. */
+  height: calc(4rem + env(safe-area-inset-top, 0px));
+  min-height: calc(4rem + env(safe-area-inset-top, 0px));
+  max-height: calc(4rem + env(safe-area-inset-top, 0px));
+  padding-top: max(0px, env(safe-area-inset-top, 0px));
+  box-sizing: border-box;
   flex-shrink: 0;
 }
 
@@ -850,9 +933,9 @@ html[data-pipeline-master-layout-lock="true"]
 
 html[data-pipeline-safe-area-frozen="true"]
   nav[aria-label="Primary"][data-dlc-component="MobileBottomNav"] {
+  /* Keep horizontal flush; never override padding-bottom (env() only on nav). */
   padding-left: 0 !important;
   padding-right: 0 !important;
-  padding-bottom: 1.5rem !important;
 }
 
 html[data-pipeline-safe-area-frozen="true"]
@@ -861,7 +944,14 @@ html[data-pipeline-safe-area-frozen="true"]
 html[data-pipeline-safe-area-frozen="true"]
   [data-pipeline-page-root]
   [data-testid="operational-batch-bar"] {
-  bottom: calc(4.5rem + var(--dlc-pipeline-safe-bottom, 24px)) !important;
+  /* Shorter flush dock (~2.75rem) + minimal home pad (not full inset). */
+  bottom: calc(
+    2.75rem +
+      var(
+        --dlc-pipeline-safe-bottom,
+        max(2px, calc(env(safe-area-inset-bottom, 0px) - 28px))
+      )
+  ) !important;
 }
 
 html[data-pipeline-master-layout-lock="true"] [data-pipeline-page-root] .sticky {
@@ -871,7 +961,7 @@ html[data-pipeline-master-layout-lock="true"] [data-pipeline-page-root] .sticky 
 }
 
 /*
- * Phase 24.4Q — pipeline: no smooth-scroll coupling on momentum touch scroll.
+ * Phase 24.4Q â€” pipeline: no smooth-scroll coupling on momentum touch scroll.
  */
 @media (max-width: 767px) {
   html[data-pipeline-scroll-behavior-auto="true"],
@@ -884,7 +974,7 @@ html[data-pipeline-master-layout-lock="true"] [data-pipeline-page-root] .sticky 
   }
 }
 
-/* Phase 24.4I — hub hierarchy layout containment (opt-in via html attribute). */
+/* Phase 24.4I â€” hub hierarchy layout containment (opt-in via html attribute). */
 html[data-pipeline-hub-layout-contain="true"] [data-pipeline-hub-hierarchy] > section {
   content-visibility: auto;
   contain-intrinsic-size: 0 120px;
@@ -905,7 +995,7 @@ html[data-pipeline-hub-layout-contain="true"]
   contain-intrinsic-size: 0 56px;
 }
 
-/* Phase 24.4E — debug-only: disable scroll anchoring on hub hierarchy root (opt-in). */
+/* Phase 24.4E â€” debug-only: disable scroll anchoring on hub hierarchy root (opt-in). */
 html[data-pipeline-layout-debug-anchor-off="true"] [data-pipeline-hub-hierarchy] {
   @supports (overflow-anchor: none) {
     overflow-anchor: none;
@@ -925,7 +1015,7 @@ html[data-pipeline-layout-debug-anchor-off="true"] [data-pipeline-hub-hierarchy]
   }
 }
 
-/* App shell — block accidental horizontal pan on narrow viewports (320–430px). */
+/* App shell â€” block accidental horizontal pan on narrow viewports (320â€“430px). */
 @media (max-width: 767px) {
   [data-app-shell-root] {
     max-width: 100%;
@@ -945,7 +1035,7 @@ html[data-reduce-motion="true"] [data-vaul-drawer] {
   opacity: 0.35;
 }
 
-/* User settings: effective reduced motion (OS + in-app “Reduce motion” / “Match device”) */
+/* User settings: effective reduced motion (OS + in-app â€œReduce motionâ€ / â€œMatch deviceâ€) */
 html[data-reduce-motion="true"] {
   scroll-behavior: auto;
   --dlc-motion-duration-instant: 0ms;
@@ -965,14 +1055,14 @@ html[data-reduce-motion="true"] *::after {
   transition-delay: 0.01ms !important;
 }
 
-/* User settings: stronger :focus-visible (Settings → “Stronger focus indicators”) */
+/* User settings: stronger :focus-visible (Settings â†’ â€œStronger focus indicatorsâ€) */
 html[data-focus-rings="enhanced"] :is(a, button, input, select, textarea, summary):focus-visible,
 html[data-focus-rings="enhanced"] [tabindex]:not([tabindex="-1"]):focus-visible {
   outline: 2px solid rgb(var(--primary));
   outline-offset: 2px;
 }
 
-/* Settings → side panel animation: skip slide-in for drawers using `.animate-slide-in-right` */
+/* Settings â†’ side panel animation: skip slide-in for drawers using `.animate-slide-in-right` */
 html[data-panel-slide="none"] .animate-slide-in-right {
   animation: none !important;
 }
@@ -980,7 +1070,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
   animation: none !important;
 }
 
-/* Shared data tables — scan lines, hover affordance, calmer header band */
+/* Shared data tables â€” scan lines, hover affordance, calmer header band */
 @layer components {
   .dlc-data-table thead {
     background: rgb(var(--table-header) / 0.92);
@@ -1001,7 +1091,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
     background: rgb(var(--table-header) / 0.75);
   }
 
-  /* —— Material-aligned surfaces (prefer over ad-hoc bg/border/shadow) —— */
+  /* â€”â€” Material-aligned surfaces (prefer over ad-hoc bg/border/shadow) â€”â€” */
   .dlc-surface-card {
     background: var(--dlc-surface-container);
     border: 1px solid rgb(var(--border) / 0.85);
@@ -1009,7 +1099,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
     box-shadow: var(--dlc-elevation-1);
   }
 
-  /* Phase 18.5 — open workspace interior bands (pipeline file, contacts, ledger) */
+  /* Phase 18.5 â€” open workspace interior bands (pipeline file, contacts, ledger) */
   .dlc-workspace-island {
     border: none;
     border-radius: var(--dlc-shape-corner-medium);
@@ -1075,30 +1165,6 @@ html[data-panel-slide="none"] .animate-slide-in-up {
     opacity: 0.4;
   }
 
-  /*
-   * Phase 24.3B — mobile input zoom elimination.
-   * Floor editable native controls at 16px below `md` (does not block pinch-zoom).
-   */
-  @media (max-width: 767px) {
-    :where(
-      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
-          [type="hidden"]
-        ):not([type="file"]):not([type="button"]):not([type="submit"]):not(
-          [type="reset"]
-        ):not([type="image"]):not(.op-micro-control),
-      textarea,
-      select
-    ) {
-      font-size: 1rem;
-      line-height: 1.5rem;
-    }
-
-    :where([contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]) {
-      font-size: 1rem;
-      line-height: 1.5rem;
-    }
-  }
-
   .dlc-surface-raised {
     background: var(--dlc-surface-container-high);
     border-radius: var(--dlc-shape-corner-medium);
@@ -1110,7 +1176,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
     box-shadow: var(--dlc-elevation-4);
   }
 
-  /* Phase 18.8F — desktop destructive confirm (workspace-centered, not sheet) */
+  /* Phase 18.8F â€” desktop destructive confirm (workspace-centered, not sheet) */
   @keyframes dlc-destructive-confirm-desktop-in {
     from {
       opacity: 0;
@@ -1148,8 +1214,16 @@ html[data-panel-slide="none"] .animate-slide-in-up {
     min-width: 9.25rem;
     max-width: 9.25rem;
   }
+  /* Mobile hub: natural width so 4–5 icons never clip / spill as a stray icon */
+  @media (max-width: 767px) {
+    .hub-row-action-rail {
+      min-width: 0;
+      max-width: none;
+      width: auto;
+    }
+  }
 
-  /* Phase 18.8H — body-level overlay stack (never inside row/hierarchy flex) */
+  /* Phase 18.8H â€” body-level overlay stack (never inside row/hierarchy flex) */
   #dlc-global-overlay-root {
     position: fixed;
     inset: 0;
@@ -1170,7 +1244,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
   }
 
   /*
-   * Semantic trust surfaces — use instead of raw amber/red/sky Tailwind for
+   * Semantic trust surfaces â€” use instead of raw amber/red/sky Tailwind for
    * status meaning. Pairs: *-fill + *-ink optional for text-only hints.
    */
   .dlc-semantic-badge {
@@ -1279,7 +1353,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
     color: rgb(var(--dlc-semantic-destructive-emphasis) / 1);
     font-size: var(--dlc-type-label-medium-size);
   }
-  /* Secondary destructive control — outline; primary destructive stays solid `Button variant="danger"` */
+  /* Secondary destructive control â€” outline; primary destructive stays solid `Button variant="danger"` */
   .dlc-btn-destructive-outline {
     border: 1px solid rgb(var(--dlc-semantic-destructive-border) / 0.85);
     background: rgb(var(--dlc-semantic-destructive-container) / 0.35);
@@ -1291,7 +1365,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
 }
 
 /**
- * Mobile / iOS: momentum (“inertia”) scrolling inside overflow regions.
+ * Mobile / iOS: momentum (â€œinertiaâ€) scrolling inside overflow regions.
  * - `touch-action` routes drags to the intended axis (avoids stuck scrollers).
  * - Use `touch-scroll-x` on horizontal-only overflow wrappers (desktop table pan).
  * - Use `touch-pan-xy` when the region scrolls horizontally but must not steal
@@ -1313,7 +1387,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
     touch-action: pan-x pan-y;
   }
 
-  /** Minimum 44×44px hit target on mobile (pairs with `--dlc-touch-target-min`). */
+  /** Minimum 44Ã—44px hit target on mobile (pairs with `--dlc-touch-target-min`). */
   .dlc-touch-target {
     min-height: var(--dlc-touch-target-min);
     min-width: var(--dlc-touch-target-min);
@@ -1321,7 +1395,7 @@ html[data-panel-slide="none"] .animate-slide-in-up {
   }
 
   /**
-   * Governed motion utilities — `html[data-reduce-motion="true"]` zeros underlying durations.
+   * Governed motion utilities â€” `html[data-reduce-motion="true"]` zeros underlying durations.
    * Prefer these over ad-hoc `transition-all` on finance flows.
    */
   .dlc-motion-productive {
@@ -1341,7 +1415,37 @@ html[data-panel-slide="none"] .animate-slide-in-up {
   }
 }
 
-/* Document vault editor — crop overlay scoped to viewport (Phase 48.9.3) */
+/*
+ * Mobile input focus-zoom elimination (permanent).
+ *
+ * iOS Safari zooms focused text controls when computed font-size < 16px.
+ * Prior Phase 24.3B floor lived in @layer components with :where() (0 specificity),
+ * so Tailwind utilities (text-xs / text-sm / text-[11px]) always won → zoom returned.
+ *
+ * This rule is INTENTIONALLY UNLAYERED + !important so it beats @layer utilities.
+ * Pinch-zoom stays enabled (viewport maximumScale: 5). Do not use user-scalable=no.
+ */
+@media (max-width: 767px), ((hover: none) and (pointer: coarse)) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+      [type="hidden"]
+    ):not([type="file"]):not([type="button"]):not([type="submit"]):not(
+      [type="reset"]
+    ):not([type="image"]):not(.op-micro-control),
+  textarea,
+  select {
+    font-size: 16px !important;
+    line-height: 1.5 !important;
+  }
+
+  [contenteditable=""],
+  [contenteditable="true"],
+  [contenteditable="plaintext-only"] {
+    font-size: 16px !important;
+    line-height: 1.5 !important;
+  }
+}
+
+/* Document vault editor â€” crop overlay scoped to viewport (Phase 48.9.3) */
 [data-testid="document-editor-crop-viewport"] .reactEasyCrop_CropArea {
   color: transparent !important;
 }

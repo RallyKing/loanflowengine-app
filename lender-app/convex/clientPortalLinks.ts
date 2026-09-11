@@ -10,6 +10,7 @@ import { hashPassword, normalizePortalToken, randomHex, sha256Hex } from "./clie
 import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 import { buildClientPortalUrl } from "../lib/clientPortalUrl";
 import { invalidateSessionsForGrant } from "./clientPortalShared";
+import { resolveTriageEvaluationTime } from "../lib/triageClock";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -62,6 +63,7 @@ export async function registerClientPortalLink(
     createdByUserKey: string;
     createdAt: number;
     targetName?: string;
+    issuedUrl?: string;
   },
 ): Promise<Id<"clientPortalLinks">> {
   return await ctx.db.insert("clientPortalLinks", {
@@ -75,6 +77,7 @@ export async function registerClientPortalLink(
     tokenHash: args.tokenHash,
     status: "active",
     linkKind: args.linkKind,
+    issuedUrl: args.issuedUrl?.trim() || undefined,
     expiresAt: args.expiresAt,
     createdByUserKey: args.createdByUserKey,
     createdAt: args.createdAt,
@@ -95,6 +98,7 @@ export async function registerLenderPortalLink(
     expiresAt: number;
     createdByUserKey: string;
     createdAt: number;
+    issuedUrl?: string;
   },
 ): Promise<Id<"clientPortalLinks">> {
   return await ctx.db.insert("clientPortalLinks", {
@@ -109,6 +113,7 @@ export async function registerLenderPortalLink(
     tokenHash: args.tokenHash,
     status: "active",
     linkKind: "lender_delivery",
+    issuedUrl: args.issuedUrl?.trim() || undefined,
     expiresAt: args.expiresAt,
     createdByUserKey: args.createdByUserKey,
     createdAt: args.createdAt,
@@ -127,6 +132,7 @@ export async function registerTaskUploadPortalLink(
     expiresAt: number;
     createdByUserKey: string;
     createdAt: number;
+    issuedUrl?: string;
   },
 ): Promise<Id<"clientPortalLinks">> {
   return await ctx.db.insert("clientPortalLinks", {
@@ -140,6 +146,7 @@ export async function registerTaskUploadPortalLink(
     status: "active",
     linkKind: "task_upload",
     legacyPath: true,
+    issuedUrl: args.issuedUrl?.trim() || undefined,
     expiresAt: args.expiresAt,
     createdByUserKey: args.createdByUserKey,
     createdAt: args.createdAt,
@@ -158,6 +165,7 @@ export async function registerPortalGrantLink(
     expiresAt: number;
     createdByUserKey: string;
     createdAt: number;
+    issuedUrl?: string;
   },
 ): Promise<Id<"clientPortalLinks">> {
   const tokenHash = await grantRegistryTokenHash(args.grantId);
@@ -172,6 +180,7 @@ export async function registerPortalGrantLink(
     tokenHash,
     status: "active",
     linkKind: "portal_grant",
+    issuedUrl: args.issuedUrl?.trim() || undefined,
     expiresAt: args.expiresAt,
     createdByUserKey: args.createdByUserKey,
     createdAt: args.createdAt,
@@ -223,8 +232,10 @@ function mapLinkRow(row: Doc<"clientPortalLinks">, now: number) {
     grantId: row.grantId,
     emailKey: row.emailKey,
     legacyPath: row.legacyPath === true,
+    issuedUrl: row.issuedUrl,
     requiresVerification: row.requiresVerification === true,
     verificationType: row.verificationType,
+    verificationEmail: row.verificationEmail,
   };
 }
 
@@ -257,14 +268,16 @@ export const listLinksForPipeline = query({
         v.literal("access"),
       ),
     ),
+    /** Minute bucket from `TriageClockProvider` — never Date.now() in this query. */
+    nowBucket: v.optional(v.number()),
     ...memberKeyArg,
   },
-  handler: async (ctx, { pipelineFileId, linkType, memberUserKey }) => {
+  handler: async (ctx, { pipelineFileId, linkType, memberUserKey, nowBucket }) => {
     const pipeline = await ctx.db.get(pipelineFileId);
     if (!pipeline) return [];
     await assertCanReadPipelineRow(ctx, pipeline, memberUserKey);
 
-    const now = Date.now();
+    const now = resolveTriageEvaluationTime(nowBucket);
     const rows = await ctx.db
       .query("clientPortalLinks")
       .withIndex("by_pipeline_created", (q) =>
@@ -281,11 +294,8 @@ export const listLinksForPipeline = query({
         if (linkType === "access") {
           return row.linkType === "task_upload" || row.linkType === "portal_grant";
         }
-        return (
-          row.linkType === "client" ||
-          row.linkType === "task_upload" ||
-          row.linkType === "portal_grant"
-        );
+        // Client Links tab — client portal / block-fill only (not access controls).
+        return row.linkType === "client";
       });
   },
 });
@@ -437,6 +447,49 @@ export const extendLinkExpiry = mutation({
   },
 });
 
+const MAX_LINK_EXPIRY_AHEAD_MS = 5 * 365 * 24 * 60 * 60 * 1000;
+
+/** Set an absolute expiry (increase or decrease). Syncs linked session tokens. */
+export const setLinkExpiry = mutation({
+  args: {
+    linkId: v.id("clientPortalLinks"),
+    expiresAt: v.number(),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, { linkId, expiresAt, memberUserKey }) => {
+    const link = await ctx.db.get(linkId);
+    if (!link) throw new Error("Portal link not found.");
+    const pipeline = await ctx.db.get(link.pipelineFileId);
+    if (!pipeline) throw new Error("Pipeline file not found.");
+    await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
+
+    if (link.status === "revoked") {
+      throw new Error("Revoked links must be reactivated before changing expiry.");
+    }
+
+    if (!Number.isFinite(expiresAt)) {
+      throw new Error("Invalid expiry date.");
+    }
+
+    const now = Date.now();
+    if (expiresAt <= now) {
+      throw new Error("Expiry must be in the future.");
+    }
+    if (expiresAt > now + MAX_LINK_EXPIRY_AHEAD_MS) {
+      throw new Error("Expiry cannot be more than 5 years from now.");
+    }
+
+    await ctx.db.patch(linkId, { expiresAt, status: "active" });
+    await syncSessionExpiry(ctx, link, expiresAt);
+
+    return {
+      ok: true as const,
+      linkId,
+      expiresAt,
+    };
+  },
+});
+
 export const reactivateLink = mutation({
   args: {
     linkId: v.id("clientPortalLinks"),
@@ -499,6 +552,7 @@ export const regenerateLinkToken = mutation({
       if (!delivery) throw new Error("Lender delivery session not found.");
       plainToken = randomHex(24);
       const tokenHash = await sha256Hex(plainToken);
+      portalUrl = buildClientPortalUrl(companySlug, plainToken);
       await ctx.db.patch(delivery._id, {
         tokenHash,
         status: "active",
@@ -511,13 +565,19 @@ export const regenerateLinkToken = mutation({
         revokedAt: undefined,
         companySlug,
         legacyPath: false,
+        issuedUrl: portalUrl,
       });
-      portalUrl = buildClientPortalUrl(companySlug, plainToken);
     } else if (linkType === "task_upload" && link.fileTaskUploadTokenId) {
       const upload = await ctx.db.get(link.fileTaskUploadTokenId);
       if (!upload) throw new Error("Task upload session not found.");
       plainToken = randomHex(24);
       const tokenHash = await sha256Hex(plainToken);
+      const origin = (
+        process.env.CLIENT_PORTAL_ORIGIN?.trim() ||
+        process.env.NEXT_PUBLIC_CLIENT_PORTAL_ORIGIN?.trim() ||
+        "https://paperworkprocessing.com"
+      ).replace(/\/$/, "");
+      portalUrl = `${origin}/upload/${encodeURIComponent(plainToken)}`;
       await ctx.db.patch(upload._id, {
         tokenHash,
         status: "active",
@@ -529,16 +589,14 @@ export const regenerateLinkToken = mutation({
         expiresAt,
         revokedAt: undefined,
         legacyPath: true,
+        issuedUrl: portalUrl,
       });
-      const origin = (
-        process.env.CLIENT_PORTAL_ORIGIN?.trim() || "http://127.0.0.1:3004"
-      ).replace(/\/$/, "");
-      portalUrl = `${origin}/upload/${encodeURIComponent(plainToken)}`;
     } else if (link.bundleTokenId) {
       const bundle = await ctx.db.get(link.bundleTokenId);
       if (!bundle) throw new Error("Client bundle session not found.");
       plainToken = randomHex(24);
       const tokenHash = await sha256Hex(plainToken);
+      portalUrl = buildClientPortalUrl(companySlug, plainToken);
       await ctx.db.patch(bundle._id, {
         tokenHash,
         status: "active",
@@ -551,8 +609,8 @@ export const regenerateLinkToken = mutation({
         revokedAt: undefined,
         companySlug,
         legacyPath: false,
+        issuedUrl: portalUrl,
       });
-      portalUrl = buildClientPortalUrl(companySlug, plainToken);
     } else if (linkType === "portal_grant") {
       throw new Error(
         "Portal grants use magic-link invites. Re-invite the client from the portal invite block.",

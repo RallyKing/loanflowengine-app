@@ -25,11 +25,23 @@ const orgArgs = {
 };
 
 const triageTimeArgs = {
-  /** Minute bucket from `TriageClockProvider` (preferred). */
+  /**
+   * Minute bucket from `TriageClockProvider`. Required in practice — these
+   * handlers never read the wall clock, so an omitted bucket evaluates as
+   * "nothing due yet" (see `resolveTriageEvaluationTime`).
+   */
   nowBucket: v.optional(v.number()),
   /** @deprecated Alias for `nowBucket`. */
   currentTriageTime: v.optional(v.number()),
 };
+
+/** Client minute bucket, never the server clock — keeps these queries cacheable. */
+function triageBucketFromArgs(args: {
+  nowBucket?: number;
+  currentTriageTime?: number;
+}): number | undefined {
+  return args.nowBucket ?? args.currentTriageTime;
+}
 
 export type TriageHighlightEntry = {
   triageLabelId: Id<"organizationTriageLabels">;
@@ -125,7 +137,7 @@ async function buildHubTriageHighlightMap(
   ctx: Parameters<typeof assertOrgMember>[0],
   organizationId: Id<"organizations">,
   memberUserKey: string,
-  nowBucket: number,
+  nowBucket: number | undefined,
 ): Promise<HubTriageHighlightMapResult> {
   const presets = await readTaskColorPresetsForOrg(ctx, organizationId);
   const triageLabels = await loadTriageLabelsForOrg(ctx, organizationId);
@@ -264,7 +276,7 @@ export const getHubTriageHighlightMap = query({
       const key = await resolveMemberUserKey(ctx, args.memberUserKey);
       if (!key) return empty;
       await assertOrgMember(ctx, args.organizationId, key);
-      const bucket = args.nowBucket ?? args.currentTriageTime ?? Date.now();
+      const bucket = triageBucketFromArgs(args);
       return await buildHubTriageHighlightMap(
         ctx,
         args.organizationId,
@@ -292,7 +304,7 @@ export const getFileTriageHighlight = query({
     const key = await resolveMemberUserKey(ctx, args.memberUserKey);
     if (!key) return null;
     await assertOrgMember(ctx, args.organizationId, key);
-    const bucket = args.nowBucket ?? args.currentTriageTime ?? Date.now();
+    const bucket = triageBucketFromArgs(args);
     const map = await buildHubTriageHighlightMap(
       ctx,
       args.organizationId,
@@ -315,7 +327,7 @@ export const getHierarchyHighlights = query({
     const key = await resolveMemberUserKey(ctx, args.memberUserKey);
     if (!key) return null;
     await assertOrgMember(ctx, args.organizationId, key);
-    const bucket = args.nowBucket ?? args.currentTriageTime ?? Date.now();
+    const bucket = triageBucketFromArgs(args);
     const map = await buildHubTriageHighlightMap(
       ctx,
       args.organizationId,

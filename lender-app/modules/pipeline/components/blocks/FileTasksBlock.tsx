@@ -18,11 +18,17 @@ import {
 import { TaskTriageQuickEditPopover } from "@/components/pipeline/tasks/triage/TaskTriageQuickEditPopover";
 import { TaskAttemptSnoozeSheet } from "@/components/pipeline/tasks/TaskAttemptSnoozeSheet";
 import { TaskAttemptAuditDialog } from "@/components/pipeline/tasks/TaskAttemptAuditDialog";
+import { FileTaskOutcomeNoteModal } from "@/components/pipeline/tasks/FileTaskOutcomeNoteModal";
 import { useTriageClockTime } from "@/components/providers/TriageClockProvider";
 import { DEFAULT_TASK_COLOR_PRESETS } from "@/lib/taskColorPresets";
 import type { FileTaskCreatePayload } from "@/lib/inFileTaskTriageUi";
 import { buildTriageLabelsMap } from "@/lib/inFileTaskTriageUi";
 import { roundTriageTimeToNearestMinute } from "@/lib/triageClock";
+import {
+  formatFileTaskOutcomeNote,
+  type FileTaskOutcomeKind,
+} from "@/lib/pipeline/formatFileTaskOutcomeNote";
+import { showOperationalToast } from "@/lib/ui/operationalToast";
 
 export type FileTasksBlockProps = {
   tasks: Doc<"tasks">[];
@@ -74,9 +80,14 @@ export function FileTasksBlock({
   );
   const [auditTask, setAuditTask] = useState<Doc<"tasks"> | null>(null);
   const [wakingTaskId, setWakingTaskId] = useState<Id<"tasks"> | null>(null);
+  const [pendingOutcome, setPendingOutcome] = useState<{
+    kind: FileTaskOutcomeKind;
+    task: Doc<"tasks">;
+  } | null>(null);
   const patchTaskMutation = useMutation(api.tasks.patch);
   const wakeUpTask = useMutation(api.tasks.wakeUpTask);
   const snoozeTask = useMutation(api.tasks.snooze);
+  const createFileNote = useMutation(api.pipelineFileNotes.createNote);
 
   const triageClock = useTriageClockTime();
   const evaluationTime =
@@ -200,6 +211,85 @@ export function FileTasksBlock({
     [actorUserKey, memberUserKey, organizationId, wakeUpTask],
   );
 
+  const canPromptFileNote = Boolean(pipelineFileId);
+  const canSaveFileNote = Boolean(
+    pipelineFileId && organizationId && memberUserKey && !disabled,
+  );
+
+  const requestToggleDone = useCallback(
+    async (task: Doc<"tasks">) => {
+      if (task.status === "done" || !canPromptFileNote) {
+        await onToggleDone(task);
+        return;
+      }
+      setPendingOutcome({ kind: "complete", task });
+    },
+    [canPromptFileNote, onToggleDone],
+  );
+
+  const requestDelete = useCallback(
+    async (task: Doc<"tasks">) => {
+      if (!canPromptFileNote) {
+        await onDelete(task);
+        return;
+      }
+      setPendingOutcome({ kind: "delete", task });
+    },
+    [canPromptFileNote, onDelete],
+  );
+
+  const confirmOutcome = useCallback(
+    async (userNote: string) => {
+      if (!pendingOutcome) return;
+      const { kind, task } = pendingOutcome;
+      const noteBody = formatFileTaskOutcomeNote(kind, task.title, userNote);
+
+      if (kind === "complete") {
+        await onToggleDone(task);
+      } else {
+        await onDelete(task);
+      }
+
+      if (noteBody) {
+        if (!pipelineFileId || !organizationId || !memberUserKey) {
+          showOperationalToast({
+            title: kind === "complete" ? "Task completed" : "Task deleted",
+            description:
+              "Note could not be saved to this file’s Notes block. Add it from Notes.",
+            variant: "destructive",
+          });
+        } else {
+          try {
+            await createFileNote({
+              pipelineFileId,
+              organizationId,
+              memberUserKey,
+              content: noteBody,
+            });
+          } catch {
+            showOperationalToast({
+              title: kind === "complete" ? "Task completed" : "Task deleted",
+              description:
+                "Note could not be saved to this file’s Notes block. Add it from Notes.",
+              variant: "destructive",
+            });
+          }
+        }
+      }
+
+      setPendingOutcome(null);
+    },
+    [
+      createFileNote,
+      memberUserKey,
+      onDelete,
+      onToggleDone,
+      organizationId,
+      pendingOutcome,
+      pipelineFileId,
+    ],
+  );
+
   return (
     <div
       className="w-full min-w-0 space-y-1.5"
@@ -275,8 +365,8 @@ export function FileTasksBlock({
                   labelsById={labelsById}
                   evaluationTime={evaluationTime}
                   attachmentCount={attachmentCounts?.[String(task._id)] ?? 0}
-                  onToggleDone={onToggleDone}
-                  onDelete={onDelete}
+                  onToggleDone={requestToggleDone}
+                  onDelete={requestDelete}
                   onOpen={onOpen}
                   onLabelPillClick={
                     canManageLabels
@@ -325,8 +415,8 @@ export function FileTasksBlock({
                   <FileTaskCompletedRow
                     key={task._id}
                     task={task}
-                    onToggleDone={onToggleDone}
-                    onDelete={onDelete}
+                    onToggleDone={requestToggleDone}
+                    onDelete={requestDelete}
                   />
                 ))}
               </div>
@@ -417,6 +507,15 @@ export function FileTasksBlock({
           />
         </>
       ) : null}
+
+      <FileTaskOutcomeNoteModal
+        open={pendingOutcome != null}
+        kind={pendingOutcome?.kind ?? "complete"}
+        task={pendingOutcome?.task ?? null}
+        canSaveFileNote={canSaveFileNote}
+        onClose={() => setPendingOutcome(null)}
+        onConfirm={confirmOutcome}
+      />
     </div>
   );
 }

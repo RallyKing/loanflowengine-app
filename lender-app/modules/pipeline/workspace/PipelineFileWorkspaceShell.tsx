@@ -69,9 +69,8 @@ function PipelineFileWorkspaceShellInner({
         <div
           className={cn(
             "min-w-0",
-            embedded
-              ? "pb-2 pt-1"
-              : "pb-[max(1rem,env(safe-area-inset-bottom))] pt-0.5 sm:pt-1",
+            /* Bottom nav + home indicator clearance is solely MobileBottomNavScrollSpacer. */
+            embedded ? "pb-2 pt-1" : "pb-2 pt-0.5 sm:pt-1",
           )}
         >
           {scrollLead}
@@ -96,7 +95,7 @@ function PipelineFileWorkspaceShellInner({
         <header
           className={cn(
             "z-[var(--pipeline-file-sticky-z)] box-border w-full shrink-0 border-b border-border/70 supports-[overflow-anchor:auto]:[overflow-anchor:none]",
-            "max-sm:pt-[max(0.5rem,env(safe-area-inset-top))]",
+            /* Safe-area lives on Vaul `Drawer.Content` only — do not double-pad here. */
             isSnoozed
               ? "border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/80"
               : "bg-background",
@@ -107,7 +106,7 @@ function PipelineFileWorkspaceShellInner({
         >
           <WorkspaceContentContainer
             width="standard"
-            className="pointer-events-auto py-1 sm:py-1.5"
+            className="pointer-events-auto py-0.5 sm:py-1.5"
           >
             <PipelineWorkspaceSection
               htmlId="pipeline-ws-file-chrome"

@@ -56,7 +56,7 @@ export function PipelineHubMobileFilterSheetTrigger({
       <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" aria-hidden />
       Filters
       {activeCount > 0 ? (
-        <span className="inline-flex min-w-[1.125rem] justify-center rounded-full bg-primary/15 px-1 text-[10px] font-semibold tabular-nums text-primary">
+        <span className="inline-flex min-w-[1.125rem] justify-center rounded-dlc-full bg-primary/15 px-1 text-[10px] font-semibold tabular-nums text-primary">
           {activeCount}
         </span>
       ) : null}
@@ -146,15 +146,15 @@ export function PipelineHubMobileFilterSheet({
         aria-modal
         aria-labelledby={titleId}
         className={cn(
-          "relative mt-auto flex max-h-[min(92dvh,100dvh)] w-full min-h-0 flex-col rounded-t-2xl border border-border/80 bg-background shadow-[var(--dlc-elevation-4)]",
+          "relative mt-auto flex max-h-[min(92dvh,100dvh)] w-full min-h-0 flex-col rounded-t-dlc-xl border border-border/55 bg-dlc-surface-high shadow-dlc-4",
           "pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1",
           "motion-safe:animate-slide-in-up motion-reduce:animate-none",
         )}
         style={shellPanelZIndex("sheet")}
         data-record-inspector-ignore-escape
       >
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-4 py-3">
-          <h2 id={titleId} className="text-base font-semibold text-foreground">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-4 py-3">
+          <h2 id={titleId} className="text-base font-semibold tracking-tight text-foreground">
             Filters &amp; sort
           </h2>
           <Button

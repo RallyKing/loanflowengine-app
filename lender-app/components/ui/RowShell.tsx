@@ -89,8 +89,9 @@ export function RowShell({
       <div
         className={cn(
           "flex min-w-0 items-center gap-1.5 overflow-hidden",
+          // Hub stacked rows: keep multi-line file identity (project / ★ lender) visible.
           stackOnMobile &&
-            "max-md:w-full max-md:flex-col max-md:items-start max-md:gap-1 max-md:overflow-visible",
+            "max-md:w-full max-md:flex-col max-md:items-stretch max-md:gap-1 max-md:overflow-visible md:items-start md:overflow-visible",
           primaryClassName,
         )}
       >
@@ -123,26 +124,35 @@ export function RowShell({
           densityClass[density],
           rowShellHoverClass,
           onRowClick && "cursor-pointer text-left",
-          "md:flex-row md:items-center md:gap-2.5",
+          // items-start: multi-line hierarchy (title / project / ★) must not clip.
+          "md:flex-row md:items-start md:gap-2.5",
           className,
         )}
         {...rest}
       >
-        <div className="flex w-full min-w-0 items-start gap-2 md:min-w-0 md:flex-1 md:items-center md:overflow-hidden">
+        <div className="flex w-full min-w-0 items-start gap-2 md:min-w-0 md:flex-1 md:overflow-visible">
           {left ? (
             <div className="flex shrink-0 items-center gap-1">{left}</div>
           ) : null}
-          <div className="min-w-0 w-full flex-1 md:w-auto md:overflow-hidden">
+          <div className="min-w-0 w-full flex-1 basis-0 md:w-auto md:overflow-visible">
             {primaryNode}
           </div>
           {meta ? (
-            <RowShellMetadata className="hidden min-w-0 max-w-[min(100%,20rem)] shrink overflow-hidden sm:block">
+            <RowShellMetadata
+              className={cn(
+                "hidden min-w-0 max-w-[min(100%,20rem)] shrink",
+                // When stacked, mobileSecondary owns meta until md — avoid
+                // sm–md squeezing the title column to zero width.
+                "md:block md:overflow-visible md:whitespace-normal",
+              )}
+            >
               {meta}
             </RowShellMetadata>
           ) : null}
           {trailing ? (
             <div
-              className="hidden shrink-0 items-center gap-1.5 md:flex"
+              className="relative z-[1] hidden shrink-0 items-center gap-1.5 overflow-visible md:flex"
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
               {trailing}

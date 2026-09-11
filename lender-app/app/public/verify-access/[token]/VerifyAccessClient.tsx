@@ -209,7 +209,10 @@ function GateCard({
 }) {
   return (
     <div className="flex min-h-dvh items-center justify-center px-4">
-      <div className="max-w-md rounded-dlc-lg border border-border/80 bg-white p-6 text-center shadow-dlc-1">
+      <div
+        className="max-w-md rounded-dlc-lg border border-border/80 bg-white p-6 text-center shadow-dlc-1"
+        data-testid="portal-verify-access"
+      >
         <h1 className="text-lg font-semibold text-foreground">{title}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{children}</p>
       </div>

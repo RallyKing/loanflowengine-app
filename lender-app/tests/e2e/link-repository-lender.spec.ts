@@ -73,12 +73,18 @@ describeOrSkip("Unified link repository — lender tab", () => {
     );
 
     await deliverBtn.click();
-    await page.getByRole("combobox").first().selectOption({ index: 1 }).catch(() => {});
+    const lenderOption = page
+      .getByTestId("deliver-lender-list")
+      .getByRole("option")
+      .first();
+    if (await lenderOption.isVisible().catch(() => false)) {
+      await lenderOption.click();
+    }
     const taskCheckbox = page.locator('input[type="checkbox"]').first();
     if (await taskCheckbox.isVisible().catch(() => false)) {
       await taskCheckbox.check();
     }
-    await page.getByRole("button", { name: /Create Link/i }).click();
+    await page.getByTestId("deliver-create-link").click();
 
     const urlInput = page.locator('input[readonly]').first();
     const deliveryUrl = await urlInput.inputValue().catch(() => "");
@@ -123,12 +129,18 @@ describeOrSkip("Unified link repository — lender tab", () => {
     );
 
     await deliverBtn.click();
-    await page.getByRole("combobox").first().selectOption({ index: 1 }).catch(() => {});
+    const lenderOption = page
+      .getByTestId("deliver-lender-list")
+      .getByRole("option")
+      .first();
+    if (await lenderOption.isVisible().catch(() => false)) {
+      await lenderOption.click();
+    }
     const taskCheckbox = page.locator('input[type="checkbox"]').first();
     if (await taskCheckbox.isVisible().catch(() => false)) {
       await taskCheckbox.check();
     }
-    await page.getByRole("button", { name: /Create Link/i }).click();
+    await page.getByTestId("deliver-create-link").click();
 
     const urlInput = page.locator("input[readonly]").first();
     const deliveryUrl = await urlInput.inputValue().catch(() => "");

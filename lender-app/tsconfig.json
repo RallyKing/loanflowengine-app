@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -13,19 +17,49 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "plugins": [{ "name": "next" }],
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
     "paths": {
-      "@/modules/pipeline/*": ["./modules/pipeline/*"],
-      "@/modules/contacts/*": ["./modules/contacts/*"],
-      "@/modules/settings/*": ["./modules/settings/*"],
-      "@/components/pipeline/*": ["./modules/pipeline/components/*"],
-      "@/components/contacts/*": ["./modules/contacts/components/*"],
-      "@/components/registry/*": ["./modules/contacts/registry/*"],
-      "@/components/settings/*": ["./modules/settings/components/*"],
-      "@/lib/pipeline/*": ["./modules/pipeline/lib/core/*"],
-      "@/*": ["./*"]
+      "@/modules/pipeline/*": [
+        "./modules/pipeline/*"
+      ],
+      "@/modules/contacts/*": [
+        "./modules/contacts/*"
+      ],
+      "@/modules/settings/*": [
+        "./modules/settings/*"
+      ],
+      "@/components/pipeline/*": [
+        "./modules/pipeline/components/*"
+      ],
+      "@/components/contacts/*": [
+        "./modules/contacts/components/*"
+      ],
+      "@/components/registry/*": [
+        "./modules/contacts/registry/*"
+      ],
+      "@/components/settings/*": [
+        "./modules/settings/components/*"
+      ],
+      "@/lib/pipeline/*": [
+        "./modules/pipeline/lib/core/*"
+      ],
+      "@/*": [
+        "./*"
+      ]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".next-local/types/**/*.ts",
+    ".next/types/**/*.ts",
+    "next-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

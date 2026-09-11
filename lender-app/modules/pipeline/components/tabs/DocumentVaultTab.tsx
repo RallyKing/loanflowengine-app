@@ -11,9 +11,9 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { DOCUMENTS_TAB_SECTION_IDS } from "@/lib/pipeline/fileWorkspaceTabRouting";
 import type { DocumentVaultNavigationFocus } from "@/lib/pipeline/documentVaultNavigation";
 import type { DocumentCreatorTokenContext } from "@/lib/pipeline/documentVaultCreator";
-import { DocumentVaultStateProvider } from "@/lib/library/documentVaultState";
 import { documentVaultBlockMeta } from "@/lib/pipeline/collapsibleBlockMetadata";
 import { DocumentVaultAuditPanel } from "@/components/library/DocumentVaultAuditPanel";
+import { PipelineClientUploadAutoReviewControl } from "@/components/pipeline/PipelineClientUploadAutoReviewControl";
 import { Shield } from "lucide-react";
 
 export type DocumentVaultTabProps = {
@@ -30,6 +30,9 @@ export type DocumentVaultTabProps = {
   /** Cross-tab focus from Client Portal promote / view-in-documents. */
   navigationFocus?: DocumentVaultNavigationFocus | null;
   onNavigationFocusConsumed?: () => void;
+  /** Per-file auto-review flag; unset means ON. */
+  clientUploadAutoReviewEnabled?: boolean;
+  readOnly?: boolean;
   className?: string;
 };
 
@@ -43,6 +46,8 @@ export function DocumentVaultTab({
   documentCreatorTokenContext,
   navigationFocus,
   onNavigationFocusConsumed,
+  clientUploadAutoReviewEnabled,
+  readOnly = false,
   className,
 }: DocumentVaultTabProps) {
   const listArgs = useMemo(() => {
@@ -85,46 +90,57 @@ export function DocumentVaultTab({
       data-workspace-layout="constrained"
       data-primary-borrower-contact-id={_primaryBorrowerContactId ?? undefined}
     >
-      <DocumentVaultStateProvider>
-        <CollapsibleBlock
-          id={DOCUMENTS_TAB_SECTION_IDS.vault}
-          title="Document vault"
-          status={vaultMeta.status}
-          summary={vaultMeta.summary}
-          indicatorCount={vaultMeta.indicatorCount}
-          badgeVariant={vaultMeta.badgeVariant}
-          icon={<FolderOpen className="h-4 w-4" aria-hidden />}
-          description="Versioned files, directory tree, upload queue, and deal package compiler."
-          defaultOpen
-          lazyMount={false}
-        >
-          <LibraryDocumentsWorkspace
-            layout="vault"
-            context={{ kind: "pipeline", pipelineFileId: fileId }}
-            memberUserKey={memberUserKey}
-            canUseHub={canUseHub}
-            actionTitle={(hint) => hint}
-            dealPackageLabel={dealPackageLabel}
-            organizationId={organizationId}
-            documentCreatorTokenContext={documentCreatorTokenContext}
-            navigationFocus={navigationFocus}
-            onNavigationFocusConsumed={onNavigationFocusConsumed}
-          />
-        </CollapsibleBlock>
+      <div className="mb-3">
+        <PipelineClientUploadAutoReviewControl
+          fileId={fileId}
+          enabled={clientUploadAutoReviewEnabled}
+          preferencesAccountId={memberUserKey}
+          readOnly={readOnly}
+        />
+      </div>
+      {/*
+        Vault nav state lives on PipelineFileWorkspace (above FloatingBlockWindow
+        host) so “Open in window” does not mount LibraryDocumentsWorkspace outside
+        DocumentVaultStateProvider.
+      */}
+      <CollapsibleBlock
+        id={DOCUMENTS_TAB_SECTION_IDS.vault}
+        title="Document vault"
+        status={vaultMeta.status}
+        summary={vaultMeta.summary}
+        indicatorCount={vaultMeta.indicatorCount}
+        badgeVariant={vaultMeta.badgeVariant}
+        icon={<FolderOpen className="h-4 w-4" aria-hidden />}
+        description="Versioned files, directory tree, upload queue, and deal package compiler."
+        defaultOpen
+        lazyMount={false}
+      >
+        <LibraryDocumentsWorkspace
+          layout="vault"
+          context={{ kind: "pipeline", pipelineFileId: fileId }}
+          memberUserKey={memberUserKey}
+          canUseHub={canUseHub}
+          actionTitle={(hint) => hint}
+          dealPackageLabel={dealPackageLabel}
+          organizationId={organizationId}
+          documentCreatorTokenContext={documentCreatorTokenContext}
+          navigationFocus={navigationFocus}
+          onNavigationFocusConsumed={onNavigationFocusConsumed}
+        />
+      </CollapsibleBlock>
 
-        <CollapsibleBlock
-          id={DOCUMENTS_TAB_SECTION_IDS.auditTrail}
-          title="Vault audit trail"
-          status="Compliance"
-          summary="Client uploads, broker reviews, lender data room access"
-          icon={<Shield className="h-4 w-4" aria-hidden />}
-          description="Compliance-grade chronological history for this loan file's document vault."
-          defaultOpen={false}
-          lazyMount
-        >
-          <DocumentVaultAuditPanel fileId={fileId} />
-        </CollapsibleBlock>
-      </DocumentVaultStateProvider>
+      <CollapsibleBlock
+        id={DOCUMENTS_TAB_SECTION_IDS.auditTrail}
+        title="Vault audit trail"
+        status="Compliance"
+        summary="Client uploads, broker reviews, lender data room access"
+        icon={<Shield className="h-4 w-4" aria-hidden />}
+        description="Compliance-grade chronological history for this loan file's document vault."
+        defaultOpen={false}
+        lazyMount
+      >
+        <DocumentVaultAuditPanel fileId={fileId} />
+      </CollapsibleBlock>
     </div>
   );
 }

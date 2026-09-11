@@ -6,27 +6,24 @@ export function roundTriageTimeToNearestMinute(ms: number): number {
   return Math.round(ms / TRIAGE_CLOCK_TICK_MS) * TRIAGE_CLOCK_TICK_MS;
 }
 
-/** Max client/server clock skew accepted for triage evaluation (2 minutes). */
-export const TRIAGE_CLOCK_MAX_SKEW_MS = 2 * TRIAGE_CLOCK_TICK_MS;
-
 /**
  * Resolve the evaluation instant for highlight activation.
- * Prefers the client-supplied minute bucket; falls back to server time on skew/invalid input.
+ *
+ * The caller's minute bucket is authoritative: Convex queries must stay
+ * deterministic or the platform cannot cache them, so there is no server-clock
+ * fallback here. A missing or nonsensical bucket resolves to `0`, which reads as
+ * "nothing has come due yet" — scheduled labels stay dormant and snoozes stay in
+ * effect rather than leaking hidden tasks into a highlight.
  */
 export function resolveTriageEvaluationTime(
   currentTriageTime: number | undefined,
-  serverNow: number = Date.now(),
 ): number {
   if (
     currentTriageTime == null ||
     !Number.isFinite(currentTriageTime) ||
     currentTriageTime <= 0
   ) {
-    return serverNow;
+    return 0;
   }
-  const rounded = roundTriageTimeToNearestMinute(currentTriageTime);
-  if (Math.abs(rounded - serverNow) > TRIAGE_CLOCK_MAX_SKEW_MS) {
-    return serverNow;
-  }
-  return rounded;
+  return roundTriageTimeToNearestMinute(currentTriageTime);
 }

@@ -34,7 +34,7 @@ describeOrSkip("Settings: customization workflow UI", () => {
     });
 
     await expect(
-      page.getByRole("heading", { name: "Workflow", exact: true }),
+      page.getByRole("heading", { name: /Pipeline & workflow|Workflow/i }),
     ).toBeVisible({ timeout: 15_000 });
 
     await expect(

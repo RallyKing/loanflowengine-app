@@ -74,6 +74,8 @@ export async function logDocumentVaultAudit(
     lenderId: args.lenderId,
     libraryDocumentId: args.libraryDocumentId,
     delta: args.meta,
+    // File activity already mirrors into activityFeed — avoid duplicate cards.
+    mirrorToFeed: false,
   });
 }
 
@@ -87,6 +89,10 @@ export async function notifyPipelineBrokers(
     actorUserKey?: string;
     dedupeKey?: string;
     libraryDocumentId?: Id<"libraryDocuments">;
+    documentVaultFileTaskId?: Id<"documentVaultFileTasks">;
+    contextContactName?: string;
+    contextFileName?: string;
+    contextStageLabel?: string;
   },
 ): Promise<void> {
   for (const userKey of brokerRecipientKeys(args.pipeline, args.actorUserKey)) {
@@ -98,6 +104,10 @@ export async function notifyPipelineBrokers(
       actorUserKey: args.actorUserKey,
       fileId: args.pipeline._id,
       libraryDocumentId: args.libraryDocumentId,
+      documentVaultFileTaskId: args.documentVaultFileTaskId,
+      contextContactName: args.contextContactName,
+      contextFileName: args.contextFileName,
+      contextStageLabel: args.contextStageLabel,
       dedupeKey: args.dedupeKey,
     });
   }
@@ -137,6 +147,7 @@ async function issueRevisionPortalUrl(
     expiresAt: now + BUNDLE_TTL_MS,
     createdByUserKey: "__revision_notify__",
     createdAt: now,
+    issuedUrl: buildClientPortalUrl(companySlug, plainToken),
   });
 
   return buildClientPortalUrl(companySlug, plainToken);
@@ -205,6 +216,8 @@ export async function recordClientVaultUpload(
     task: Doc<"documentVaultFileTasks">;
     fileName: string;
     documentId?: Id<"libraryDocuments">;
+    /** Portal submitter display name when known. */
+    submitterName?: string;
   },
 ): Promise<void> {
   const summary = `Client uploaded "${args.fileName}" for ${args.task.title}`;
@@ -218,10 +231,15 @@ export async function recordClientVaultUpload(
       fileTaskId: args.task._id,
       fileName: args.fileName,
       documentId: args.documentId,
+      submitterName: args.submitterName,
     },
     libraryDocumentId: args.documentId,
   });
 
+  // Broker phone/in-app recipient = pipeline.ownerUserKey (via notifyPipelineBrokers).
+  // documentVaultFileTasks has no broker assigneeUserKey — assignedContactId/etc. are clients.
+  // Layer 1 (immediate): always notify on each upload — in-app + Web Push.
+  // Not gated by clientUploadAutoReviewEnabled flags.
   await notifyPipelineBrokers(ctx, {
     pipeline: args.pipeline,
     category: "document_activity",
@@ -229,7 +247,14 @@ export async function recordClientVaultUpload(
     detail: summary,
     dedupeKey: `vault-upload:${args.task._id}:${Date.now()}`,
     libraryDocumentId: args.documentId,
+    documentVaultFileTaskId: args.task._id,
+    contextContactName: args.submitterName,
   });
+
+  // Layer 2 (additive): 15m quiet-window review package when org+file flags allow.
+  // Dynamic import avoids a cycle: this module ↔ clientUploadReview (broker notify).
+  const { scheduleClientUploadReview } = await import("./clientUploadReview");
+  await scheduleClientUploadReview(ctx, args.pipeline);
 }
 
 export async function recordBrokerVaultReview(

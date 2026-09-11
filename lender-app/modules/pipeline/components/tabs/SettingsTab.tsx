@@ -10,6 +10,7 @@ import {
   History,
   LayoutGrid,
   Share2,
+  LogOut,
   Trash2,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -76,11 +77,14 @@ export type SettingsTabProps = {
   organizationId?: Id<"organizations"> | null;
   memberUserKey?: string;
   readOnly: boolean;
+  /** When true, Danger Zone offers Leave share instead of permanent Delete. */
+  isSharedRecipient?: boolean;
   archivedAt?: number | null;
   archiving: boolean;
   archiveError: string | null;
   onToggleArchive: () => void;
   onDelete: () => void;
+  onLeaveShare?: () => void;
   drawerLayout: PipelineDrawerLayoutV1;
   onDrawerLayoutChange: React.Dispatch<
     React.SetStateAction<PipelineDrawerLayoutV1>
@@ -105,11 +109,13 @@ export function SettingsTab({
   organizationId,
   memberUserKey,
   readOnly,
+  isSharedRecipient = false,
   archivedAt,
   archiving,
   archiveError,
   onToggleArchive,
   onDelete,
+  onLeaveShare,
   drawerLayout,
   onDrawerLayoutChange,
   layoutNonHideableIds,
@@ -163,7 +169,7 @@ export function SettingsTab({
                 Default sections
               </span>
               <select
-                className="h-9 w-full rounded-dlc-sm border border-border bg-background px-2 text-xs shadow-dlc-1 focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+                className="h-9 w-full rounded-dlc-sm border border-border bg-background px-2 text-base shadow-dlc-1 focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 md:text-xs"
                 value={effectiveCollapseBehavior}
                 aria-label="Default pipeline drawer section expand mode"
                 disabled={readOnly}
@@ -325,22 +331,44 @@ export function SettingsTab({
         id={SETTINGS_TAB_SECTION_IDS.dangerZone}
         title="Danger zone"
         status="Destructive"
-        summary="Permanent file removal — use with caution"
-        description="Removing a file hides it from active pipeline work and may limit borrower portal visibility. Ledger references can remain for audit purposes."
+        summary={
+          isSharedRecipient
+            ? "Leave this shared file — does not delete the owner’s copy"
+            : "Permanent file removal — use with caution"
+        }
+        description={
+          isSharedRecipient
+            ? "Leaving removes only your access. The owner and other collaborators keep the file."
+            : "Removing a file hides it from active pipeline work and may limit borrower portal visibility. Ledger references can remain for audit purposes."
+        }
         icon={<AlertTriangle className="h-4 w-4" aria-hidden />}
         variant="danger"
       >
-        <Button
-          type="button"
-          variant="danger"
-          size="sm"
-          disabled={readOnly}
-          onClick={onDelete}
-          data-testid="pipeline-settings-delete-action"
-        >
-          <Trash2 className="h-3.5 w-3.5" aria-hidden />
-          Delete file
-        </Button>
+        {isSharedRecipient ? (
+          <Button
+            type="button"
+            variant="danger"
+            size="sm"
+            disabled={!onLeaveShare}
+            onClick={() => onLeaveShare?.()}
+            data-testid="pipeline-settings-leave-share-action"
+          >
+            <LogOut className="h-3.5 w-3.5" aria-hidden />
+            Leave share
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="danger"
+            size="sm"
+            disabled={readOnly}
+            onClick={onDelete}
+            data-testid="pipeline-settings-delete-action"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+            Delete file
+          </Button>
+        )}
       </SettingsSection>
 
       <SettingsSection

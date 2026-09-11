@@ -7,16 +7,26 @@ export const Z_LAYER = {
   HEADER: 20,
   POPOVER: 35,
   DROPDOWN: 38,
-  /** Mobile bottom nav / sheet scrims sit below this (see `SHELL_Z.bottomNav`). */
+  /** Sheet / bottom-sheet panels. Menu dimmers use `SHELL_Z.overlay` (above bottomNav). */
   SHEET: 40,
   /** Record inspectors — above workspace chrome, below modals/command palette. */
   INSPECTOR: 45,
   /** Legacy alias: same tier as inspector (pipeline side surfaces). */
   SIDEBAR: 45,
+  /**
+   * Detached block “window-in-window” panels — above workspace/inspectors,
+   * below blocking modals / command palette. No scrim; background stays interactive.
+   */
+  FLOATING_WINDOW: 46,
   /** Help center — below command palette and toast. */
   HELP: 48,
   MODAL: 50,
   COMMAND_PALETTE: 52,
+  /**
+   * Masterpage chrome menus (Updates, Alerts) — must sit above sticky list
+   * toolbars that still use ad-hoc Tailwind `z-40` / `z-50`.
+   */
+  CHROME_MENU: 53,
   /** Destructive delete/archive confirms — above batch bar + toasts. */
   DESTRUCTIVE_CONFIRM: 65,
   TOAST: 60,
@@ -34,9 +44,11 @@ export const Z_LAYER_CSS_VAR: Record<ZLayer, string> = {
   SHEET: "--dlc-z-sheet",
   INSPECTOR: "--dlc-z-inspector",
   SIDEBAR: "--dlc-z-sidebar",
+  FLOATING_WINDOW: "--dlc-z-floating-window",
   HELP: "--dlc-z-help",
   MODAL: "--dlc-z-modal",
   COMMAND_PALETTE: "--dlc-z-command-palette",
+  CHROME_MENU: "--dlc-z-chrome-menu",
   DESTRUCTIVE_CONFIRM: "--dlc-z-destructive-confirm",
   TOAST: "--dlc-z-toast",
   PRODUCT_TOUR: "--dlc-z-product-tour",
@@ -61,7 +73,7 @@ export type OverlaySurfaceVariant =
   | "command-panel";
 
 /**
- * Opaque overlay surfaces — no bleed-through. Backdrop blur only on scrims, not menus.
+ * Opaque overlay surfaces — no bleed-through. Scrims are light dim only (no blur).
  */
 export function overlaySurfaceClass(
   variant: OverlaySurfaceVariant = "dropdown",
@@ -80,7 +92,10 @@ export function overlaySurfaceClass(
   }
 }
 
-/** Scrim behind modals / command palette — does not replace panel opacity. */
+/**
+ * Light dim behind blocking modals / command palette — no blur.
+ * Prefer readability of background content over heavy obscuring.
+ */
 export function overlayScrimClass(): string {
-  return "bg-[var(--dlc-scrim,oklch(0%_0_0_/0.45))]";
+  return "bg-[var(--dlc-scrim,rgb(15_23_42_/0.18))]";
 }

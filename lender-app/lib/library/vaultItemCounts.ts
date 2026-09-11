@@ -19,7 +19,8 @@ function isCompleteDoc(doc: VaultTreeDocumentRef): boolean {
   return doc.status === "complete" || doc.status === "pending_review";
 }
 
-function collectFolderSubtreeIds(
+/** Folder id plus every nested descendant folder id. */
+export function collectFolderSubtreeIds(
   folders: DocumentFolderRow[],
   rootFolderId: Id<"documentFolders">,
 ): Set<string> {

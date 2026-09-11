@@ -1,4 +1,8 @@
 import { cn } from "@/lib/cn";
+import {
+  FILE_WORKSPACE_BOTTOM_NAV_SPACER_CLASS,
+  GLOBAL_BOTTOM_NAV_SPACER_CLASS,
+} from "@/lib/ui/safeArea";
 
 /** Physical tail spacer so fixed bottom nav never covers the last scrollable content. */
 export function MobileBottomNavScrollSpacer({
@@ -11,7 +15,10 @@ export function MobileBottomNavScrollSpacer({
     <div
       className={cn(
         "w-full shrink-0 pointer-events-none",
-        variant === "file" ? "h-32" : "h-28",
+        /* File: tighter dock clearance. Global/hub: taller list tail (unchanged). */
+        variant === "file"
+          ? FILE_WORKSPACE_BOTTOM_NAV_SPACER_CLASS
+          : GLOBAL_BOTTOM_NAV_SPACER_CLASS,
       )}
       aria-hidden="true"
       data-testid={

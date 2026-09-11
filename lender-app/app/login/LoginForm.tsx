@@ -1,6 +1,6 @@
 "use client";
 
-import { APP_DISPLAY_NAME, APP_MONOGRAM } from "@/lib/brandIdentity";
+import { APP_DISPLAY_NAME, APP_HOME_HREF, APP_MONOGRAM } from "@/lib/brandIdentity";
 
 import {
   MAX_PLAINTEXT_PASSWORD_LENGTH,
@@ -56,7 +56,7 @@ export function LoginForm({
         setSubmitting(false);
         return;
       }
-      window.location.href = next || "/tasks";
+      window.location.href = next || APP_HOME_HREF;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error.");
       setSubmitting(false);

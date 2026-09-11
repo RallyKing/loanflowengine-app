@@ -118,9 +118,9 @@ const DEAL_INFO_SECTION_DESCRIPTIONS: Partial<
   household: "Dependents counted for underwriting and DTI.",
   income: "Add a row per income stream per borrower (gross, before taxes).",
   assets: "Personal financial statement — assets and liabilities.",
-  reo: "Row-by-row summary of every property the borrower owns.",
+  reo: "Full Schedule of REO — assign contacts, copy into another file or a new file, and download a fillable PDF.",
   businessDebt:
-    "Corporate liabilities and MCAs — row-by-row schedule for stacking rules.",
+    "Corporate liabilities and MCAs — assign contacts, copy into other files, and download a fillable PDF.",
 };
 
 function dealInfoAnchorForSection(sectionId: DealInfoSectionId): string {

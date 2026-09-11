@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { APP_HOME_HREF } from "@/lib/brandIdentity";
 import {
   HEADER_CORRELATION_ID,
   HEADER_REQUEST_ID,
@@ -193,7 +194,7 @@ export default async function middleware(req: NextRequest) {
   if (session && isAuthPage(pathname)) {
     return withObservability(
       applyHostOrgCookie(
-        NextResponse.redirect(new URL("/tasks", req.url)),
+        NextResponse.redirect(new URL(APP_HOME_HREF, req.url)),
         hostOrgId,
       ),
       requestId,

@@ -54,6 +54,13 @@ export type DocumentVaultPreviewModalProps = {
   lastModified?: number;
   /** Optional broker review controls shown below preview (non-blocking). */
   reviewFooter?: ReactNode;
+  /**
+   * `modal` — OverlayShell centered preview (default).
+   * `embedded` — panel only for FloatingBlockWindow (no scrim / portal).
+   */
+  variant?: "modal" | "embedded";
+  /** Float this document; typically closes the modal after detach. */
+  onOpenInWindow?: () => void;
 };
 
 export function DocumentVaultPreviewModal({
@@ -80,7 +87,10 @@ export function DocumentVaultPreviewModal({
   onError,
   lastModified,
   reviewFooter,
+  variant = "modal",
+  onOpenInWindow,
 }: DocumentVaultPreviewModalProps) {
+  const embedded = variant === "embedded";
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mode, setMode] = useState<PreviewMode>("view");
   const [displayFileName, setDisplayFileName] = useState(fileName);
@@ -198,13 +208,17 @@ export function DocumentVaultPreviewModal({
       return;
     }
     try {
-      await patchDocumentTitle({
+      const result = await patchDocumentTitle({
         documentId,
         title: trimmed,
         proof,
         memberUserKey,
       });
-      setDisplayFileName(trimmed);
+      setDisplayFileName(
+        "fileName" in result && typeof result.fileName === "string"
+          ? result.fileName
+          : trimmed,
+      );
       setIsEditingPreviewTitle(false);
     } catch (e) {
       onError?.(e instanceof Error ? e.message : String(e));
@@ -275,18 +289,25 @@ export function DocumentVaultPreviewModal({
   }, [docUrl, kind, open, documentId, versionId]);
 
   const panelClassName = cn(
-    "flex h-[min(100dvh,960px)] max-h-[100dvh] w-full min-h-0 flex-col overflow-hidden bg-background",
-    isFullscreen
-      ? "fixed inset-0 z-[51] h-[100dvh] max-w-none rounded-none border-0 shadow-none"
-      : "mx-auto max-w-5xl rounded-dlc-lg border border-border/70 shadow-dlc-3",
+    "flex w-full min-h-0 flex-col overflow-hidden bg-background",
+    embedded
+      ? "h-full min-h-0 rounded-none border-0 shadow-none"
+      : "h-[min(100dvh,960px)] max-h-[100dvh]",
+    !embedded &&
+      (isFullscreen
+        ? "fixed inset-0 z-[51] h-[100dvh] max-w-none rounded-none border-0 shadow-none"
+        : "mx-auto max-w-5xl rounded-dlc-lg border border-border/70 shadow-dlc-3"),
   );
 
   const sharedChrome = {
     breadcrumbs,
     onBreadcrumbSelect,
     onClosePreview: onClose,
-    onToggleFullscreen: () => setIsFullscreen((prev) => !prev),
+    onToggleFullscreen: embedded
+      ? undefined
+      : () => setIsFullscreen((prev) => !prev),
     previewFullscreen: isFullscreen,
+    onOpenInWindow: embedded ? undefined : onOpenInWindow,
     onOpenProperties,
     fileName: displayFileName,
   };
@@ -331,6 +352,131 @@ export function DocumentVaultPreviewModal({
     };
   }, [mode, editorReady]);
 
+  const panel = (
+    <div
+      className={panelClassName}
+      role="document"
+      aria-label={displayFileName || "Document preview"}
+      data-preview-mode={mode}
+      data-testid={
+        embedded
+          ? "document-vault-preview-embedded"
+          : "document-vault-preview-panel"
+      }
+    >
+      <BlockIdentityHeader
+        fileName={displayFileName}
+        fileType={fileTypeLabel}
+        pageCount={pageCount}
+        pageCountLoading={pageCountLoading}
+        lastModified={lastModified}
+        mode={mode}
+        className="relative z-30 shrink-0"
+        canEditTitle={Boolean(canMutate && documentId && proof && memberUserKey)}
+        isEditingTitle={isEditingPreviewTitle}
+        editTitleValue={previewTitleDraft}
+        onStartEditTitle={() => {
+          setPreviewTitleDraft(displayFileName);
+          setIsEditingPreviewTitle(true);
+        }}
+        onEditTitleChange={setPreviewTitleDraft}
+        onSaveTitle={() => void handleSavePreviewTitle()}
+        onCancelEditTitle={() => {
+          setPreviewTitleDraft(displayFileName);
+          setIsEditingPreviewTitle(false);
+        }}
+      />
+
+      <div
+        ref={setEditToolbarSlot}
+        className={cn(
+          "relative z-30 shrink-0",
+          mode !== "edit" && "hidden",
+        )}
+        data-testid="document-vault-edit-toolbar-slot"
+      />
+
+      {mode === "edit" && canEnterHtmlEditMode ? (
+        htmlEditorReady ? (
+          <HtmlDocumentEditorCanvas
+            documentId={documentId!}
+            title={displayFileName}
+            url={docUrl!}
+            proof={proof!}
+            memberUserKey={memberUserKey!}
+            vaultMutations={vaultMutations!}
+            canMutate={canMutate}
+            versionNumber={versionNumber}
+            className="min-h-0 min-w-0 flex-1 overflow-hidden border-0 shadow-none"
+            onError={onError}
+            onVersionCommitted={onVersionCommitted}
+            onCancelEditMode={() => setMode("view")}
+            {...sharedChrome}
+          />
+        ) : (
+          <PreviewEditorSkeleton
+            className="min-h-0 flex-1"
+            onCancelEditMode={() => setMode("view")}
+          />
+        )
+      ) : mode === "edit" && canEnterMediaEditMode ? (
+        editorReady ? (
+          <DocumentEditorCanvas
+            key={editorKey}
+            contentType={contentType}
+            url={docUrl}
+            className="min-h-0 min-w-0 flex-1 overflow-hidden border-0 shadow-none"
+            documentId={documentId!}
+            versionNumber={versionNumber}
+            proof={proof!}
+            memberUserKey={memberUserKey!}
+            canMutate={canMutate}
+            vaultMutations={vaultMutations!}
+            onError={onError}
+            onVersionCommitted={onVersionCommitted}
+            onCancelEditMode={() => setMode("view")}
+            toolbarSlot={editToolbarSlot}
+            {...sharedChrome}
+          />
+        ) : (
+          <PreviewEditorSkeleton
+            className="min-h-0 flex-1"
+            onCancelEditMode={() => setMode("view")}
+          />
+        )
+      ) : (
+        <DocumentVaultPreviewCanvas
+          key={`view-${documentId ?? "none"}-${versionId ?? "none"}`}
+          contentType={contentType}
+          url={docUrl}
+          loading={docLoading}
+          className="min-h-0 min-w-0 flex-1 overflow-hidden border-0 shadow-none"
+          documentId={documentId}
+          versionId={versionId}
+          versionNumber={versionNumber}
+          initialAnnotations={initialAnnotations}
+          proof={proof}
+          memberUserKey={memberUserKey}
+          canMutate={canMutate}
+          pipelineFileId={pipelineFileId}
+          mergeCandidates={mergeCandidates}
+          vaultMutations={vaultMutations}
+          onError={onError}
+          onVersionCommitted={onVersionCommitted}
+          canEnterEditMode={canEnterEditMode}
+          onEnterEditMode={handleEnterEditMode}
+          {...sharedChrome}
+        />
+      )}
+      {reviewFooter}
+    </div>
+  );
+
+  if (embedded) {
+    if (!open) return null;
+    return panel;
+  }
+
   return (
     <OverlayShell
       open={open}
@@ -340,122 +486,13 @@ export function DocumentVaultPreviewModal({
       align="center"
       className="fixed inset-0 z-[var(--z-modal,50)] items-stretch justify-center p-0 sm:p-4"
       contentClassName="flex h-full w-full max-w-full min-h-0 items-stretch justify-center"
-      scrimClassName={isFullscreen ? "bg-background" : undefined}
+      scrimClassName={
+        isFullscreen ? "bg-background backdrop-blur-none" : "backdrop-blur-none"
+      }
       aria-label="Document preview"
       data-testid="document-vault-preview-modal"
     >
-      <div
-        className={panelClassName}
-        role="document"
-        aria-label={displayFileName || "Document preview"}
-        data-preview-mode={mode}
-      >
-        <BlockIdentityHeader
-          fileName={displayFileName}
-          fileType={fileTypeLabel}
-          pageCount={pageCount}
-          pageCountLoading={pageCountLoading}
-          lastModified={lastModified}
-          mode={mode}
-          className="relative z-30 shrink-0"
-          canEditTitle={Boolean(canMutate && documentId && proof && memberUserKey)}
-          isEditingTitle={isEditingPreviewTitle}
-          editTitleValue={previewTitleDraft}
-          onStartEditTitle={() => {
-            setPreviewTitleDraft(displayFileName);
-            setIsEditingPreviewTitle(true);
-          }}
-          onEditTitleChange={setPreviewTitleDraft}
-          onSaveTitle={() => void handleSavePreviewTitle()}
-          onCancelEditTitle={() => {
-            setPreviewTitleDraft(displayFileName);
-            setIsEditingPreviewTitle(false);
-          }}
-        />
-
-        <div
-          ref={setEditToolbarSlot}
-          className={cn(
-            "relative z-30 shrink-0",
-            mode !== "edit" && "hidden",
-          )}
-          data-testid="document-vault-edit-toolbar-slot"
-        />
-
-        {mode === "edit" && canEnterHtmlEditMode ? (
-          htmlEditorReady ? (
-            <HtmlDocumentEditorCanvas
-              documentId={documentId!}
-              title={displayFileName}
-              url={docUrl!}
-              proof={proof!}
-              memberUserKey={memberUserKey!}
-              vaultMutations={vaultMutations!}
-              canMutate={canMutate}
-              versionNumber={versionNumber}
-              className="min-h-0 min-w-0 flex-1 overflow-hidden border-0 shadow-none"
-              onError={onError}
-              onVersionCommitted={onVersionCommitted}
-              onCancelEditMode={() => setMode("view")}
-              {...sharedChrome}
-            />
-          ) : (
-            <PreviewEditorSkeleton
-              className="min-h-0 flex-1"
-              onCancelEditMode={() => setMode("view")}
-            />
-          )
-        ) : mode === "edit" && canEnterMediaEditMode ? (
-          editorReady ? (
-            <DocumentEditorCanvas
-              key={editorKey}
-              contentType={contentType}
-              url={docUrl}
-              className="min-h-0 min-w-0 flex-1 overflow-hidden border-0 shadow-none"
-              documentId={documentId!}
-              versionNumber={versionNumber}
-              proof={proof!}
-              memberUserKey={memberUserKey!}
-              canMutate={canMutate}
-              vaultMutations={vaultMutations!}
-              onError={onError}
-              onVersionCommitted={onVersionCommitted}
-              onCancelEditMode={() => setMode("view")}
-              toolbarSlot={editToolbarSlot}
-              {...sharedChrome}
-            />
-          ) : (
-            <PreviewEditorSkeleton
-              className="min-h-0 flex-1"
-              onCancelEditMode={() => setMode("view")}
-            />
-          )
-        ) : (
-          <DocumentVaultPreviewCanvas
-            key={`view-${documentId ?? "none"}-${versionId ?? "none"}`}
-            contentType={contentType}
-            url={docUrl}
-            loading={docLoading}
-            className="min-h-0 min-w-0 flex-1 overflow-hidden border-0 shadow-none"
-            documentId={documentId}
-            versionId={versionId}
-            versionNumber={versionNumber}
-            initialAnnotations={initialAnnotations}
-            proof={proof}
-            memberUserKey={memberUserKey}
-            canMutate={canMutate}
-            pipelineFileId={pipelineFileId}
-            mergeCandidates={mergeCandidates}
-            vaultMutations={vaultMutations}
-            onError={onError}
-            onVersionCommitted={onVersionCommitted}
-            canEnterEditMode={canEnterEditMode}
-            onEnterEditMode={handleEnterEditMode}
-            {...sharedChrome}
-          />
-        )}
-        {reviewFooter}
-      </div>
+      {panel}
     </OverlayShell>
   );
 }

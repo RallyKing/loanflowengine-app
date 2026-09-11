@@ -1,0 +1,22 @@
+---
+description: Always-apply Convex resource and cost-safety hard bans.
+alwaysApply: true
+---
+
+# Resource & cost safety (always apply)
+
+Full policy: `docs/governance/resource-consumption-policy.md`. Enforced by `npm run verify:resource-safety` (runs inside `npm run build`).
+
+Hard bans — no exception without a §8 policy entry **and** a `// resource-safety-allow:` annotation:
+
+- **No polling.** No `setInterval`/`setTimeout` loops calling Convex, no `refetchInterval`, no manual refresh timers, no SWR/React-Query polling. Convex `useQuery` is push-based.
+- **No unstable query args.** Never `Date.now()`, `new Date()`, or freshly-built objects/arrays inside `useQuery` args.
+- **No effect-driven write loops.** An effect that mutates must not depend on server fields that mutation writes.
+- **No heavy subscriptions in the shell.** Subscribe from the owning route.
+- **No unbounded reads.** `withIndex` + `.paginate()` / `.take(N)` on growth tables; `.collect()` only on a provably bounded set with `// bounded: <why>`.
+- **No `Date.now()` inside query handlers** — pass time as an arg.
+- **No idle scheduler pumps.** `runAfter(0, self)` only when work remains. Schedule `internal*` only.
+- **No cron under 15 minutes.** Adding or changing a cron requires updating the policy cron registry in the same change.
+- **Idempotency required** for outbound HTTP/email/SMS/payments and inbound webhooks.
+
+Load-check on a **local** Convex backend only. Never load-test in production.

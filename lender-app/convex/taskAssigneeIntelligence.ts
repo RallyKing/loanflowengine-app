@@ -83,7 +83,7 @@ export const suggestAssignees = query({
       .sort((a, b) => b.score - a.score)
       .slice(0, cap);
 
-    return { suggestions: scored, generatedAt: Date.now() };
+    return { suggestions: scored };
   },
 });
 
@@ -132,7 +132,6 @@ export const teamWorkloadSummary = query({
         maxLoad > 0 && Number.isFinite(minLoad)
           ? Math.max(0, maxLoad - minLoad)
           : 0,
-      generatedAt: Date.now(),
     };
   },
 });

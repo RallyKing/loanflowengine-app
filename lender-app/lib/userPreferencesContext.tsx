@@ -220,3 +220,20 @@ export function useUserPreferences(): UserPreferencesContextValue {
   }
   return c;
 }
+
+/** Public-portal safe: defaults when outside UserPreferencesProvider. */
+export function useUserPreferencesOptional(): UserPreferencesContextValue & {
+  isProvided: boolean;
+} {
+  const c = useContext(UserPreferencesContext);
+  if (c) return { ...c, isProvided: true };
+  const preferences = getDefaultUserPreferences();
+  return {
+    accountId: "",
+    preferences,
+    ready: true,
+    replacePreferences: async () => {},
+    updatePreferences: async () => {},
+    isProvided: false,
+  };
+}

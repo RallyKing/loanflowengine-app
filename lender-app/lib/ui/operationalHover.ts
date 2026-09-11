@@ -16,12 +16,13 @@ export const opHoverPrimaryClass = cn(
 /** Action cluster reveal on row hover (no layout shift). */
 export function opHoverActionRevealClass(className?: string): string {
   return cn(
-    "opacity-100 max-md:opacity-100",
-    "md:opacity-0 md:translate-y-px",
+    "opacity-100 max-md:opacity-100 max-md:pointer-events-auto",
+    // Invisible desktop rail must not intercept stage-pill / trailing clicks.
+    "md:!pointer-events-none md:opacity-0 md:translate-y-px",
     "md:transition-[opacity,transform]",
     "md:duration-[140ms] md:ease-out",
-    "md:group-hover/row-shell:opacity-100 md:group-hover/row-shell:translate-y-0",
-    "md:group-focus-within/row-shell:opacity-100 md:group-focus-within/row-shell:translate-y-0",
+    "md:group-hover/row-shell:!pointer-events-auto md:group-hover/row-shell:opacity-100 md:group-hover/row-shell:translate-y-0",
+    "md:group-focus-within/row-shell:!pointer-events-auto md:group-focus-within/row-shell:opacity-100 md:group-focus-within/row-shell:translate-y-0",
     "motion-reduce:translate-y-0 motion-reduce:transition-none",
     className,
   );
@@ -36,11 +37,12 @@ export function opHoverMetadataRevealClass(className?: string): string {
   );
 }
 
-/** Tertiary chips / ownership — lowest contrast until hover. */
+/** Tertiary chips / ownership — lowest contrast until hover (opt out via alwaysShowTertiary). */
 export function opHoverTertiaryRevealClass(className?: string): string {
   return cn(
     opHoverMetadataRevealClass(),
-    "md:opacity-0 md:group-hover/row-shell:opacity-80",
+    "md:opacity-0 md:group-hover/row-shell:opacity-100",
+    "md:group-focus-within/row-shell:opacity-100",
     className,
   );
 }

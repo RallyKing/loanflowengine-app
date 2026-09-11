@@ -16,6 +16,16 @@ const orgIntegrationRuleV = v.object({
       body: v.optional(v.string()),
     }),
     v.object({
+      type: v.literal("create_file_task"),
+      relatedFileId: v.string(),
+      title: v.string(),
+      body: v.optional(v.string()),
+      triageLabelId: v.optional(v.string()),
+      triageLabelName: v.optional(v.string()),
+      category: v.optional(v.literal("call")),
+      status: v.optional(v.literal("todo")),
+    }),
+    v.object({
       type: v.literal("enqueue_integration_job"),
       category: v.union(
         v.literal("crm"),
@@ -25,6 +35,10 @@ const orgIntegrationRuleV = v.object({
       providerKey: v.string(),
       kind: v.union(v.literal("action"), v.literal("sync_push")),
       connectorPublicId: v.optional(v.string()),
+    }),
+    v.object({
+      type: v.literal("upsert_pipeline_lead"),
+      defaultStatus: v.optional(v.string()),
     }),
   ),
 });

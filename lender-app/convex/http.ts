@@ -264,6 +264,17 @@ http.route({
   handler: integrationHandler,
 });
 
+http.route({
+  path: "/api/v1/integrations/bot",
+  method: "POST",
+  handler: integrationHandler,
+});
+http.route({
+  path: "/api/v1/integrations/bot",
+  method: "OPTIONS",
+  handler: integrationHandler,
+});
+
 /**
  * Public JWKS for local Next.js → cloud Convex JWT validation.
  * Set `CONVEX_JWT_JWKS_JSON` to the same keyset Next publishes (kid: dlc-workspace-rs256).

@@ -92,6 +92,7 @@ export function OperationalDisclosurePanel({
       className={cn(
         opMotionCollapseGrid,
         open ? opMotionCollapseOpen : opMotionCollapseClosed,
+        "w-full min-w-0",
         className,
       )}
       aria-hidden={!open}
@@ -99,12 +100,14 @@ export function OperationalDisclosurePanel({
       <div
         className={cn(
           opMotionCollapseInner,
+          "w-full min-w-0",
           preserveScrollAnchor && "[overflow-anchor:none]",
         )}
       >
         <div
           className={cn(
             opMotionDisclosureBodyClass,
+            "w-full min-w-0",
             !open && "pointer-events-none opacity-0",
             open && "opacity-100",
           )}

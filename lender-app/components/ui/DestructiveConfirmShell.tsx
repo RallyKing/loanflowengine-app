@@ -62,9 +62,9 @@ export function DestructiveConfirmShell({
     <button
       type="button"
       className={cn(
-        "absolute inset-0 cursor-default backdrop-blur-[3px]",
+        "absolute inset-0 cursor-default",
         overlayScrimClass(),
-        isDesktop ? "bg-black/45" : "bg-black/50",
+        isDesktop ? "bg-black/20" : "bg-black/25",
       )}
       aria-label="Close"
       tabIndex={-1}

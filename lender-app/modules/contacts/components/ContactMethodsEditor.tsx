@@ -25,8 +25,16 @@ function setPrimary<T extends { id: string; isPrimary: boolean }>(
 type ContactMethodsEditorProps = {
   emails: ContactEmailEntry[];
   phones: ContactPhoneEntry[];
-  onEmailsChange: (next: ContactEmailEntry[]) => void;
-  onPhonesChange: (next: ContactPhoneEntry[]) => void;
+  onEmailsChange: (
+    next:
+      | ContactEmailEntry[]
+      | ((prev: ContactEmailEntry[]) => ContactEmailEntry[]),
+  ) => void;
+  onPhonesChange: (
+    next:
+      | ContactPhoneEntry[]
+      | ((prev: ContactPhoneEntry[]) => ContactPhoneEntry[]),
+  ) => void;
   disabled?: boolean;
 };
 
@@ -38,29 +46,33 @@ export function ContactMethodsEditor({
   disabled,
 }: ContactMethodsEditorProps) {
   const addEmail = () => {
-    const isFirst = emails.length === 0;
-    onEmailsChange([
-      ...emails,
-      {
-        id: newContactMethodId(),
-        label: "Work",
-        email: "",
-        isPrimary: isFirst,
-      },
-    ]);
+    onEmailsChange((prev) => {
+      const isFirst = prev.length === 0;
+      return [
+        ...prev,
+        {
+          id: newContactMethodId(),
+          label: "Work",
+          email: "",
+          isPrimary: isFirst,
+        },
+      ];
+    });
   };
 
   const addPhone = () => {
-    const isFirst = phones.length === 0;
-    onPhonesChange([
-      ...phones,
-      {
-        id: newContactMethodId(),
-        label: "Mobile",
-        number: "",
-        isPrimary: isFirst,
-      },
-    ]);
+    onPhonesChange((prev) => {
+      const isFirst = prev.length === 0;
+      return [
+        ...prev,
+        {
+          id: newContactMethodId(),
+          label: "Mobile",
+          number: "",
+          isPrimary: isFirst,
+        },
+      ];
+    });
   };
 
   return (
@@ -90,8 +102,8 @@ export function ContactMethodsEditor({
                       onChange={(e) => {
                         const label = (e.currentTarget?.value ??
                           "") as ContactEmailLabel;
-                        onEmailsChange(
-                          emails.map((x) =>
+                        onEmailsChange((prev) =>
+                          prev.map((x) =>
                             x.id === entry.id ? { ...x, label } : x,
                           ),
                         );
@@ -113,8 +125,8 @@ export function ContactMethodsEditor({
                       placeholder="name@example.com"
                       onChange={(e) => {
                         const email = e.currentTarget.value;
-                        onEmailsChange(
-                          emails.map((x) =>
+                        onEmailsChange((prev) =>
+                          prev.map((x) =>
                             x.id === entry.id ? { ...x, email } : x,
                           ),
                         );
@@ -134,7 +146,9 @@ export function ContactMethodsEditor({
                         ? "Primary email"
                         : "Set as primary email"
                     }
-                    onClick={() => onEmailsChange(setPrimary(emails, entry.id))}
+                    onClick={() =>
+                      onEmailsChange((prev) => setPrimary(prev, entry.id))
+                    }
                   >
                     <Star
                       className={cn(
@@ -152,11 +166,13 @@ export function ContactMethodsEditor({
                     className="text-muted-foreground hover:text-destructive"
                     aria-label="Remove email"
                     onClick={() => {
-                      const next = emails.filter((x) => x.id !== entry.id);
-                      if (next.length && !next.some((x) => x.isPrimary)) {
-                        next[0] = { ...next[0], isPrimary: true };
-                      }
-                      onEmailsChange(next);
+                      onEmailsChange((prev) => {
+                        const next = prev.filter((x) => x.id !== entry.id);
+                        if (next.length && !next.some((x) => x.isPrimary)) {
+                          next[0] = { ...next[0], isPrimary: true };
+                        }
+                        return next;
+                      });
                     }}
                   >
                     <Trash2 className="h-3.5 w-3.5" aria-hidden />
@@ -204,8 +220,8 @@ export function ContactMethodsEditor({
                       onChange={(e) => {
                         const label = (e.currentTarget?.value ??
                           "") as ContactPhoneLabel;
-                        onPhonesChange(
-                          phones.map((x) =>
+                        onPhonesChange((prev) =>
+                          prev.map((x) =>
                             x.id === entry.id ? { ...x, label } : x,
                           ),
                         );
@@ -227,8 +243,8 @@ export function ContactMethodsEditor({
                       placeholder="Phone number"
                       onChange={(e) => {
                         const number = e.currentTarget?.value ?? "";
-                        onPhonesChange(
-                          phones.map((x) =>
+                        onPhonesChange((prev) =>
+                          prev.map((x) =>
                             x.id === entry.id ? { ...x, number } : x,
                           ),
                         );
@@ -248,7 +264,9 @@ export function ContactMethodsEditor({
                         ? "Primary phone"
                         : "Set as primary phone"
                     }
-                    onClick={() => onPhonesChange(setPrimary(phones, entry.id))}
+                    onClick={() =>
+                      onPhonesChange((prev) => setPrimary(prev, entry.id))
+                    }
                   >
                     <Star
                       className={cn(
@@ -266,11 +284,13 @@ export function ContactMethodsEditor({
                     className="text-muted-foreground hover:text-destructive"
                     aria-label="Remove phone"
                     onClick={() => {
-                      const next = phones.filter((x) => x.id !== entry.id);
-                      if (next.length && !next.some((x) => x.isPrimary)) {
-                        next[0] = { ...next[0], isPrimary: true };
-                      }
-                      onPhonesChange(next);
+                      onPhonesChange((prev) => {
+                        const next = prev.filter((x) => x.id !== entry.id);
+                        if (next.length && !next.some((x) => x.isPrimary)) {
+                          next[0] = { ...next[0], isPrimary: true };
+                        }
+                        return next;
+                      });
                     }}
                   >
                     <Trash2 className="h-3.5 w-3.5" aria-hidden />

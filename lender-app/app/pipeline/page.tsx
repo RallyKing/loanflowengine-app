@@ -16,7 +16,7 @@ const pipelineLoadingFallback = (
       />
       <p className="text-sm text-muted-foreground">Loading pipeline…</p>
     </div>
-    <div className="h-48 max-w-5xl animate-pulse rounded-lg border border-border/50 bg-muted/30" />
+    <div className="h-48 max-w-5xl animate-pulse rounded-dlc-xl border border-border/50 bg-dlc-surface-low/40 shadow-dlc-1" />
   </div>
 );
 

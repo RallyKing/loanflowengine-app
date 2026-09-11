@@ -82,13 +82,13 @@ export function DealPartyIdentityChip({
         ) : null}
       </div>
       {onChangeLink || onRemoveLink ? (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col items-start gap-1">
           {onChangeLink ? (
             <Button
               type="button"
               size="sm"
               variant="ghost"
-              className="h-8 w-full justify-start gap-1.5 px-1.5 text-xs"
+              className="inline-flex h-10 w-auto min-h-10 shrink-0 justify-start gap-1.5 self-start px-1.5 text-xs"
               onClick={onChangeLink}
               data-testid="deal-party-change-link"
             >
@@ -101,7 +101,7 @@ export function DealPartyIdentityChip({
               type="button"
               size="sm"
               variant="ghost"
-              className="h-8 w-full justify-start gap-1.5 px-1.5 text-xs text-muted-foreground hover:text-destructive"
+              className="inline-flex h-10 w-auto min-h-10 shrink-0 justify-start gap-1.5 self-start px-1.5 text-xs text-muted-foreground hover:text-destructive"
               onClick={onRemoveLink}
               data-testid="deal-party-remove-link"
             >

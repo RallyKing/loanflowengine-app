@@ -24,6 +24,8 @@ export const PIPELINE_BLOCK_IDS = [
   "constructionBudget",
   "investorExperience",
   "pfs",
+  "trackRecord",
+  "simplePl",
 ] as const;
 
 export type PipelineBlockId = (typeof PIPELINE_BLOCK_IDS)[number];
@@ -132,8 +134,10 @@ export type PipelineBlockDefinition = {
   /** Whether the block is required and cannot be removed from the drawer layout. */
   readonly isMandatory: boolean;
   /**
-   * Repo-relative path to the primary implementation surface for this block
-   * (Next.js app root: `lender-app/`). Used for audits and tooling — not a dynamic import path.
+   * Repo-relative filesystem path to the primary implementation surface for this
+   * block (Next.js app root: `lender-app/`). Must exist on disk — do not use
+   * tsconfig aliases such as `@/components/pipeline/*` → `modules/pipeline/components/*`.
+   * Used for audits and tooling, not as a dynamic import path.
    */
   readonly componentReference: string;
   /**
@@ -166,7 +170,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "dealInfo",
     isDefault: true,
     isMandatory: true,
-    componentReference: "components/PipelineFileWorkspace.tsx",
+    componentReference: "modules/pipeline/components/blocks/FileDetailsBlock.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["file", "details", "basics"],
@@ -182,7 +186,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "dealInfo",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/pipeline/blocks/FileNotesBlock.tsx",
+    componentReference: "modules/pipeline/components/blocks/FileNotesBlock.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["notes", "memo", "file"],
@@ -190,7 +194,7 @@ export const PIPELINE_BLOCKS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        rows: { type: "integer", default: 4, minimum: 2, maximum: 24 },
+        rows: { type: "integer", default: 2, minimum: 2, maximum: 24 },
       },
     },
   },
@@ -218,7 +222,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "dealInfo",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/PipelineFileWorkspace.tsx",
+    componentReference: "modules/pipeline/components/tabs/DealInfoTab.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["licensing", "nmls"],
@@ -233,7 +237,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "financials",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/PipelineScenarioMatch.tsx",
+    componentReference: "modules/pipeline/workspace/PipelineScenarioMatch.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["scenario", "match", "pricing"],
@@ -248,7 +252,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "financials",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/PipelineFileWorkspace.tsx",
+    componentReference: "modules/pipeline/workspace/PipelineFileWorkspace.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["terms", "generate"],
@@ -270,7 +274,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "dealInfo",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/PipelineFileWorkspace.tsx",
+    componentReference: "modules/pipeline/components/blocks/FileLendersBlock.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["lenders", "shopping"],
@@ -285,7 +289,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "dealInfo",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/pipeline/blocks/FileContactsBlock.tsx",
+    componentReference: "modules/pipeline/components/blocks/FileContactsBlock.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["contacts", "borrowers"],
@@ -300,7 +304,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "dealInfo",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/PipelineFileWorkspace.tsx",
+    componentReference: "modules/pipeline/components/blocks/FeesSplitsBlock.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["fees", "splits", "comp"],
@@ -323,7 +327,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "dealInfo",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/pipeline/blocks/FileTasksBlock.tsx",
+    componentReference: "modules/pipeline/components/blocks/FileTasksBlock.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["tasks", "checklist"],
@@ -338,7 +342,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "settings",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/PipelineFileSharingSection.tsx",
+    componentReference: "modules/pipeline/workspace/PipelineFileSharingSection.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["people", "team"],
@@ -353,7 +357,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "settings",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/PipelineFileWorkspace.tsx",
+    componentReference: "modules/pipeline/components/tabs/SettingsTab.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["archive", "history"],
@@ -368,7 +372,7 @@ export const PIPELINE_BLOCKS = [
     parentTab: "settings",
     isDefault: true,
     isMandatory: false,
-    componentReference: "components/PipelineFileWorkspace.tsx",
+    componentReference: "modules/pipeline/components/tabs/SettingsTab.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["danger", "delete"],
@@ -379,13 +383,13 @@ export const PIPELINE_BLOCKS = [
     name: "Construction budget",
     label: "Construction budget",
     description:
-      "Line-item construction budget with draw tracking and spend roll-up (ground-up / rehab files).",
+      "Construction budget matching the Construction Lender Services template (plans, sitework, building, mechanical, interior, contractor fees).",
     category: "deal",
     parentTab: "financials",
     isDefault: false,
     isMandatory: false,
     componentReference:
-      "components/pipeline/blocks/ConstructionBudgetBlock.tsx",
+      "modules/pipeline/components/blocks/ConstructionBudgetBlock.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["construction", "budget", "draws", "rehab"],
@@ -402,7 +406,7 @@ export const PIPELINE_BLOCKS = [
     isDefault: false,
     isMandatory: false,
     componentReference:
-      "components/pipeline/blocks/InvestorExperienceBlock.tsx",
+      "modules/pipeline/components/blocks/InvestorExperienceBlock.tsx",
     component: null,
     uiSurface: "drawer",
     discoveryTags: ["investor", "experience", "track record", "projects"],
@@ -413,15 +417,67 @@ export const PIPELINE_BLOCKS = [
     name: "Personal financial statement",
     label: "Personal financial statement",
     description:
-      "Spreadsheet-style assets/liabilities grid over the borrower's sticky financial profile, with computed net worth.",
+      "SBA-style personal financial statement (assets, liabilities, schedules, net worth) matching the standard PFS spreadsheet.",
     category: "deal",
     parentTab: "financials",
     isDefault: false,
     isMandatory: false,
-    componentReference: "components/pipeline/blocks/PfsBlock.tsx",
+    componentReference: "modules/pipeline/components/blocks/PfsBlock.tsx",
     component: null,
     uiSurface: "drawer",
-    discoveryTags: ["pfs", "net worth", "assets", "liabilities"],
+    discoveryTags: [
+      "pfs",
+      "personal financial statement",
+      "net worth",
+      "assets",
+      "liabilities",
+      "guarantor",
+    ],
+    settingsSchema: null,
+  },
+  {
+    blockId: "trackRecord",
+    name: "Track record",
+    label: "Track record",
+    description:
+      "Investment property track record — rehab and new-construction experience matching the Track Record workbook.",
+    category: "deal",
+    parentTab: "financials",
+    isDefault: false,
+    isMandatory: false,
+    componentReference: "modules/pipeline/components/blocks/TrackRecordBlock.tsx",
+    component: null,
+    uiSurface: "drawer",
+    discoveryTags: [
+      "track record",
+      "investor",
+      "rehab",
+      "new construction",
+      "guarantor experience",
+    ],
+    settingsSchema: null,
+  },
+  {
+    blockId: "simplePl",
+    name: "Simple P&L",
+    label: "Simple P&L",
+    description:
+      "Simple profit and loss matching the Simple P&L template — year-to-date and past-year timeframes, revenue, CoGS, expenses, and net profit.",
+    category: "deal",
+    parentTab: "financials",
+    isDefault: false,
+    isMandatory: false,
+    componentReference: "modules/pipeline/components/blocks/SimplePlBlock.tsx",
+    component: null,
+    uiSurface: "drawer",
+    discoveryTags: [
+      "p&l",
+      "pnl",
+      "profit and loss",
+      "income statement",
+      "financials",
+      "ytd",
+    ],
     settingsSchema: null,
   },
 ] as const satisfies readonly PipelineBlockDefinition[];
@@ -525,9 +581,12 @@ export function validatePipelineBlockRegistry(): PipelineBlockRegistryValidation
         `Unknown parentTab ${JSON.stringify(block.parentTab)} for blockId ${block.blockId}`,
       );
     }
-    if (!block.componentReference.startsWith("components/")) {
+    if (
+      !block.componentReference.startsWith("components/") &&
+      !block.componentReference.startsWith("modules/")
+    ) {
       errors.push(
-        `componentReference must start with "components/" for blockId ${block.blockId} (got ${JSON.stringify(block.componentReference)})`,
+        `componentReference must start with "components/" or "modules/" for blockId ${block.blockId} (got ${JSON.stringify(block.componentReference)})`,
       );
     }
     if (

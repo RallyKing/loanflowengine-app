@@ -78,8 +78,14 @@ function bottomNavOverlayClass(
 
 /**
  * Phase 24.4L — always mounted; pipeline routes never hide via focus/CSS/display:none.
+ * SaaS mobile drawer may force-hide so the white dock cannot paint over the menu scrim.
  */
-export const MobileBottomNav = memo(function MobileBottomNav() {
+export const MobileBottomNav = memo(function MobileBottomNav({
+  forceHidden = false,
+}: {
+  /** When true (e.g. SaaS hamburger drawer open), fully hide the dock on phone. */
+  forceHidden?: boolean;
+} = {}) {
   const pathname = usePathname();
   const { layout, triggerHaptic } = useResponsiveNav();
   const shellMotionReady = useShellMotionReady();
@@ -91,22 +97,32 @@ export const MobileBottomNav = memo(function MobileBottomNav() {
     onPipelineSurface &&
     (PHASE_24_4J_PIPELINE_NAV_LOCK || domMountLock);
   const hideBottomNav =
-    !navLocked && !domMountLock && focusModeFromStore;
+    forceHidden ||
+    (!navLocked && !domMountLock && focusModeFromStore);
 
   useLayoutEffect(() => {
+    /* SaaS hamburger open: clear pipeline locks so !important CSS cannot
+       force the white dock to paint a full-width strip under the green menu. */
+    const lockActive = navLocked && !forceHidden;
+    const domLockActive = domMountLock && !forceHidden;
     document.documentElement.toggleAttribute(
       "data-pipeline-bottom-nav-locked",
-      navLocked,
+      lockActive,
     );
     document.documentElement.toggleAttribute(
       PIPELINE_NAV_DOM_LOCK_HTML_ATTR,
-      domMountLock,
+      domLockActive,
+    );
+    document.documentElement.toggleAttribute(
+      "data-saas-menu-open",
+      forceHidden,
     );
     return () => {
       document.documentElement.removeAttribute("data-pipeline-bottom-nav-locked");
       document.documentElement.removeAttribute(PIPELINE_NAV_DOM_LOCK_HTML_ATTR);
+      document.documentElement.removeAttribute("data-saas-menu-open");
     };
-  }, [navLocked, domMountLock]);
+  }, [navLocked, domMountLock, forceHidden]);
 
   const [moreOpen, setMoreOpen] = useState(false);
   const navCtx = useNavigationConfigOptional();
@@ -130,7 +146,15 @@ export const MobileBottomNav = memo(function MobileBottomNav() {
   const touchTarget =
     layout.densityBucket === "high" ? "min-h-[3.5rem]" : "min-h-[3.25rem]";
   const iconOnlyBottom = layout.shell === "mobile";
-  const navItemTarget = iconOnlyBottom ? "min-h-[2.75rem] py-1.5" : touchTarget;
+  /**
+   * Phone icon dock: pin glyphs to the *bottom* of the tap target so empty
+   * min-height lives *above* the icon — never centered. Slight -mb pulls
+   * glyphs into the remaining home-indicator pad (~2–8px, not full ~34px).
+   * ~40px hit target retained.
+   */
+  const navItemTarget = iconOnlyBottom
+    ? "min-h-10 justify-end pb-0 pt-2 -mb-1"
+    : touchTarget;
 
   const navBottom = useMemo(
     () =>
@@ -140,16 +164,18 @@ export const MobileBottomNav = memo(function MobileBottomNav() {
     [layout.keyboardInsetBottom],
   );
 
-  const navVisibilityLocked = navLocked || domMountLock;
+  const navVisibilityLocked = (navLocked || domMountLock) && !forceHidden;
 
   return (
     <>
       <nav
         className={cn(
-          "fixed bottom-0 left-0 right-0 z-40 w-full max-w-none",
+          /* Edge-to-edge dock: continuous surface to the physical bottom. */
+          "fixed inset-x-0 bottom-0 z-40 w-full max-w-none",
           placement,
-          "rounded-none border-x-0",
-          "border border-border/80 bg-background/92 backdrop-blur supports-[backdrop-filter]:bg-background/88 shadow-dlc-4",
+          "flex flex-col border-0 border-t border-border/40",
+          "bg-background supports-[backdrop-filter]:bg-background/95 backdrop-blur-md",
+          /* No elevation shadow — avoid floating-island look over home indicator. */
           NAV_SAFE_X,
           NAV_PX,
           "max-md:[backface-visibility:hidden]",
@@ -169,33 +195,49 @@ export const MobileBottomNav = memo(function MobileBottomNav() {
                   ? mobileFocusBottomNavHidden
                   : mobileFocusBottomNavVisible,
               ),
-          "max-md:landscape:min-h-0 max-md:landscape:py-0.5",
+          "max-md:landscape:min-h-0",
         )}
         style={{
           ...shellZIndexStyle("bottomNav"),
           bottom: navBottom,
+          /* Minimal home-indicator pad (≪ full inset) — icons sit lower. */
+          paddingBottom: safeAreaBottom(),
           ...(navVisibilityLocked
             ? {
                 transform: "translate3d(0, 0, 0)",
                 opacity: 1,
-                visibility: "visible",
+                visibility: "visible" as const,
                 display: "flex",
               }
-            : {}),
+            : forceHidden
+              ? {
+                  /* display:none beats Phase 24.4J/L !important visibility locks */
+                  display: "none",
+                  transform: "translate3d(0, 100%, 0)",
+                  opacity: 0,
+                  visibility: "hidden" as const,
+                  pointerEvents: "none" as const,
+                }
+              : {}),
         }}
         aria-label="Primary"
-        aria-hidden={false}
+        aria-hidden={forceHidden ? true : false}
         data-pipeline-static-bottom-nav={
           navVisibilityLocked ? "true" : undefined
         }
-        data-pipeline-nav-dom-lock={domMountLock ? "true" : undefined}
+        data-pipeline-nav-dom-lock={
+          domMountLock && !forceHidden ? "true" : undefined
+        }
         data-dlc-component="MobileBottomNav"
+        data-saas-menu-covered={forceHidden ? "true" : undefined}
       >
+        {/* Top breath only; safe-area is solely on <nav> paddingBottom. */}
         <div
-          className="mx-auto flex max-w-7xl items-stretch justify-around gap-0 px-1 pt-1"
-          style={{
-            paddingBottom: `max(0.5rem, ${safeAreaBottom()})`,
-          }}
+          className={cn(
+            "mx-auto flex w-full max-w-7xl justify-around gap-0 px-1 pt-1",
+            /* End-align so stretch tall cells do not float icons mid-band. */
+            iconOnlyBottom ? "items-end" : "items-stretch",
+          )}
         >
           {bottomItems.map((e) => {
             const Icon = navIconForKey(e.iconKey);
@@ -209,7 +251,8 @@ export const MobileBottomNav = memo(function MobileBottomNav() {
                 aria-label={e.label}
                 onClick={() => triggerHaptic("selection")}
                 className={cn(
-                  "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1 text-[10px] font-medium touch-manipulation",
+                  "flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-xl px-1 text-[10px] font-medium touch-manipulation",
+                  iconOnlyBottom ? null : "justify-center py-1",
                   shellMotionTw.navLinkTone,
                   navItemTarget,
                   navFocusRingClass,
@@ -234,7 +277,8 @@ export const MobileBottomNav = memo(function MobileBottomNav() {
             <button
               type="button"
               className={cn(
-                "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1 text-[10px] font-medium touch-manipulation",
+                "flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-xl px-1 text-[10px] font-medium touch-manipulation",
+                iconOnlyBottom ? null : "justify-center py-1",
                 shellMotionTw.navLinkTone,
                 navItemTarget,
                 navFocusRingClass,

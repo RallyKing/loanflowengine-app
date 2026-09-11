@@ -1,5 +1,6 @@
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
+import { DURABLE_JOB_BACKUP_SWEEP_MINUTES } from "../lib/convexCronIntervals";
 
 const crons = cronJobs();
 
@@ -12,7 +13,7 @@ crons.daily(
 
 crons.interval(
   "integration durable jobs sweep",
-  { minutes: 1 },
+  { minutes: DURABLE_JOB_BACKUP_SWEEP_MINUTES },
   internal.integrationJobs.sweepDueJobs,
   {},
 );
@@ -26,7 +27,7 @@ crons.interval(
 
 crons.interval(
   "communications due sweep",
-  { minutes: 1 },
+  { minutes: DURABLE_JOB_BACKUP_SWEEP_MINUTES },
   internal.communications.sweepDueOutboundMessages,
   {},
 );
@@ -40,7 +41,7 @@ crons.interval(
 
 crons.interval(
   "outbound webhook deliveries sweep",
-  { minutes: 1 },
+  { minutes: DURABLE_JOB_BACKUP_SWEEP_MINUTES },
   internal.webhookOutbound.sweepOutboundWebhookDeliveries,
   {},
 );
@@ -61,10 +62,13 @@ crons.interval(
 
 crons.interval(
   "collaboration presence purge",
-  { minutes: 5 },
+  { minutes: 15 },
   internal.presence.purgeExpired,
   {},
 );
+
+// Auto-archive is manual only (`pipelineAutoArchiveSweep.runDueAutoArchives`).
+// Do not re-add a cron — chained empty ticks burned ~1.3M function calls.
 
 crons.daily(
   "full data backup snapshot",

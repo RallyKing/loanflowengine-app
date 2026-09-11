@@ -58,6 +58,7 @@ import {
 import { getPipelineStatusInfo } from "@/lib/pipelineStatus";
 import { PipelineFileRowHierarchyStack } from "@/components/pipeline/PipelineFileRowHierarchyStack";
 import { PipelineFileArchivedIndicator } from "@/components/pipeline/PipelineFileArchivedIndicator";
+import { PipelineFileAutoArchiveMarker } from "@/components/pipeline/PipelineFileAutoArchiveMarker";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
 import type { InlineSelectOption } from "@/components/inline";
 import { PipelineHubNotesIndicatorChip } from "@/components/pipeline/notes/PipelineHubNotesIndicatorChip";
@@ -79,6 +80,12 @@ import { usePipelineLayoutRemountProbe } from "@/lib/debug/pipelineLayoutRemount
 import {
   hubHierarchySectionVisible,
 } from "@/lib/debug/phase24-4I-hub-stabilization";
+import {
+  hubIconAccentClass,
+  hubIconQuietClass,
+  hubLoanCardClass,
+  hubLoanCardFocusedClass,
+} from "@/lib/ui/pipelineHubSurfaces";
 
 /** Convex-backed hub entities only — legacy synthetic keys cannot use hierarchy mutations. */
 function hubEntitySupportsInlineCreate(entityId: string): boolean {
@@ -185,10 +192,11 @@ function LoanStackRow({
     <HubTriageHighlightFrame
       highlight={fileHighlight}
       className={cn(
-        "group/loan-row flex flex-col gap-1 rounded-md border-2 border-border/60 bg-background px-3 py-2 shadow-sm transition-colors",
-        stackTotal > 1 && "ml-4 border-l-2 border-l-primary/25 pl-3",
-        focused && "ring-2 ring-brand-accent/40",
-        fileHighlight && "pr-28",
+        "group/loan-row flex flex-col gap-1 px-3 py-2",
+        hubLoanCardClass,
+        stackTotal > 1 && "ml-4 border-l-2 border-l-primary/30 pl-3",
+        focused && hubLoanCardFocusedClass,
+        fileHighlight && "md:pr-28",
       )}
       badgeClassName="top-1.5"
     >
@@ -198,7 +206,7 @@ function LoanStackRow({
       className="relative flex flex-col gap-1"
     >
       {stackTotal > 1 && (
-        <span className="absolute -left-[9px] top-3 flex h-4 w-4 items-center justify-center rounded-full bg-primary/15 text-[9px] font-bold text-primary">
+        <span className="absolute -left-[9px] top-3 flex h-4 w-4 items-center justify-center rounded-dlc-full bg-primary/15 text-[9px] font-bold text-primary shadow-dlc-1 ring-2 ring-background">
           {stackIndex + 1}
         </span>
       )}
@@ -207,6 +215,7 @@ function LoanStackRow({
           type="button"
           className="flex w-full min-w-0 items-start gap-1.5 text-left"
           onClick={onOpen}
+          aria-label={`Open file ${row.fileName}`}
         >
           <PipelineFileArchivedIndicator
             archivedAt={row.archivedAt}
@@ -218,7 +227,7 @@ function LoanStackRow({
         </button>
         <div
           className={cn(
-            "flex w-full flex-wrap items-center gap-2",
+            "flex w-full min-w-0 flex-wrap items-center gap-2",
             mobileHierarchySecondaryInsetClass,
           )}
         >
@@ -231,7 +240,7 @@ function LoanStackRow({
             onClick={(e) => e.stopPropagation()}
           />
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="tabular-nums font-medium text-foreground/80">
+            <span className="tabular-nums font-semibold text-foreground">
               {fmtPipelineBoardLoanCompact(row.fundingAmount)}
             </span>
             <span>{statusInfo.label}</span>
@@ -241,21 +250,30 @@ function LoanStackRow({
               fileName={row.fileName}
               onOpenNotes={onOpenNotes}
             />
+            <PipelineFileAutoArchiveMarker
+              autoArchiveInactivityDays={row.autoArchiveInactivityDays}
+              autoArchiveAfterAt={row.autoArchiveAfterAt}
+              lastActivityAt={row.updatedAt}
+              compact
+            />
             <TaskRollupBadge counts={fileTaskCounts} />
           </div>
-          {organizationId && memberUserKey ? (
+        </div>
+        {organizationId && memberUserKey ? (
+          <div className="flex w-full justify-end">
             <HubHierarchyLoanRowActions
               row={row}
               organizationId={organizationId}
               memberUserKey={memberUserKey}
               onOpen={onOpen}
               onDuplicated={onFileDuplicated}
+              compactMobile
             />
-          ) : null}
-          {row.ownership ? (
-            <ResourceOwnershipLine presentation={row.ownership} compact />
-          ) : null}
-        </div>
+          </div>
+        ) : null}
+        {row.ownership ? (
+          <ResourceOwnershipLine presentation={row.ownership} compact />
+        ) : null}
         {(row.linkedClients?.length ?? 0) > 1 ? (
           <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
         ) : null}
@@ -291,7 +309,7 @@ function LoanStackRow({
             </div>
           </button>
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="tabular-nums font-medium text-foreground/80">
+            <span className="tabular-nums font-semibold text-foreground">
               {fmtPipelineBoardLoanCompact(row.fundingAmount)}
             </span>
             <span>{statusInfo.label}</span>
@@ -300,6 +318,12 @@ function LoanStackRow({
               noteCount={row.fileNotesCount ?? 0}
               fileName={row.fileName}
               onOpenNotes={onOpenNotes}
+            />
+            <PipelineFileAutoArchiveMarker
+              autoArchiveInactivityDays={row.autoArchiveInactivityDays}
+              autoArchiveAfterAt={row.autoArchiveAfterAt}
+              lastActivityAt={row.updatedAt}
+              compact
             />
             <TaskRollupBadge counts={fileTaskCounts} />
           </div>
@@ -320,7 +344,7 @@ function LoanStackRow({
         </div>
       </div>
       <div
-        className="flex flex-wrap items-center gap-2"
+        className="flex flex-wrap items-center gap-2 max-md:gap-y-2"
         onClick={(e) => e.stopPropagation()}
       >
         <PipelineStageSelector
@@ -422,7 +446,7 @@ function ProjectSection({
     >
       <HubTriageHighlightFrame
         highlight={projectHighlight}
-        className={cn(projectHighlight && "pr-28")}
+        className={cn(projectHighlight && "md:pr-28")}
         badgeClassName="top-1"
       >
       <RowShell
@@ -436,7 +460,7 @@ function ProjectSection({
               onToggle={() => onToggleProject(project.projectId)}
               label={project.title}
             />
-            <FolderKanban className="h-4 w-4 shrink-0 text-primary/70" />
+            <FolderKanban className={cn("h-4 w-4 shrink-0", hubIconAccentClass)} />
           </>
         }
         primary={
@@ -680,7 +704,7 @@ function ClientSection({
     >
       <HubTriageHighlightFrame
         highlight={clientHighlight}
-        className={cn(clientHighlight && "pr-28")}
+        className={cn(clientHighlight && "md:pr-28")}
         badgeClassName="top-1"
       >
       <RowShell
@@ -695,7 +719,7 @@ function ClientSection({
               onToggle={() => onToggleClient(client.clientId)}
               label={client.displayName}
             />
-            <User className="h-4 w-4 shrink-0 text-foreground/70" />
+            <User className={cn("h-4 w-4 shrink-0", hubIconQuietClass)} />
           </>
         }
         primary={
@@ -770,7 +794,7 @@ function ClientSection({
         />
       ) : null}
       {showNested && (
-        <div className="space-y-1 border-t-2 border-border/50 px-1 pb-2 pt-1">
+        <div className="space-y-1 border-t-2 border-border/40 px-1 pb-2 pt-1">
           {client.projects.map((project) => (
             <ProjectSection
               key={project.projectId}

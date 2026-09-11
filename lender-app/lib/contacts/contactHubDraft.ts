@@ -68,10 +68,11 @@ export function contactHubDraftFromDoc(c: ContactHubRecord): IndividualHubDraft 
 export function contactMethodsMutationArgs(draft: {
   emails: ContactEmailEntry[];
   phones: ContactPhoneEntry[];
-}): { emails?: ContactEmailEntry[]; phones?: ContactPhoneEntry[] } {
+}): { emails: ContactEmailEntry[]; phones: ContactPhoneEntry[] } {
+  // Always send arrays (including empty) so Save can clear methods.
   return {
-    ...(draft.emails.length > 0 ? { emails: draft.emails } : {}),
-    ...(draft.phones.length > 0 ? { phones: draft.phones } : {}),
+    emails: draft.emails,
+    phones: draft.phones,
   };
 }
 

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { APP_DISPLAY_NAME } from "@/lib/brandIdentity";
+import { APP_DISPLAY_NAME, APP_HOME_HREF } from "@/lib/brandIdentity";
 
 export const metadata: Metadata = {
   title: `Sign in — ${APP_DISPLAY_NAME}`,
@@ -22,6 +22,6 @@ export default async function SignInRedirectPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
-  const next = pickFirst(params.next) ?? "/tasks";
+  const next = pickFirst(params.next) ?? APP_HOME_HREF;
   redirect(`/login?next=${encodeURIComponent(next)}`);
 }

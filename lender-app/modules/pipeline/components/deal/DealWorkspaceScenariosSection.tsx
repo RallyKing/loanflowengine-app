@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Sparkles } from "lucide-react";
 import { ScenarioSection } from "@/components/intake/IntakeSections2";
 import { CollapsibleBlock } from "@/components/ui/CollapsibleBlock";
@@ -57,7 +57,11 @@ function ScenariosLenderMatchBody() {
 }
 
 /** Scenarios & Lender Match — deal structuring block for Portals tab. */
-export function DealWorkspaceScenariosSection() {
+export function DealWorkspaceScenariosSection({
+  headerRight,
+}: {
+  headerRight?: ReactNode;
+} = {}) {
   return (
     <div data-testid="pipeline-portals-scenarios-section">
       <CollapsibleBlock
@@ -66,6 +70,7 @@ export function DealWorkspaceScenariosSection() {
         status="Modeling"
         summary="Scenario criteria and lender attach tooling"
         icon={<Sparkles className="h-4 w-4" aria-hidden />}
+        headerRight={headerRight}
         description="Scenario modeling, saved match criteria, and lender attach tooling."
         lazyMount
         animated

@@ -1,0 +1,32 @@
+---
+description: Always-apply Direct Lending Connection project rules (architecture, scroll, mobile, deploy).
+alwaysApply: true
+---
+
+# Project rules (always apply)
+
+Canonical sources (read before product changes):
+
+1. `docs/ai-development-rules.md`
+2. `docs/governance/` (`MANIFEST.json`; `npm run verify:governance:docs`)
+3. `docs/project-intelligence-summary.md`
+4. `docs/scroll-architecture-rules.md`
+5. `docs/governance/runtime-workspace-scroll-authority.md`
+6. `docs/mobile-testing-rules.md`
+7. `docs/deployment-rules.md`
+8. `docs/ui-ux-rules.md`
+9. `docs/performance-rules.md`
+
+Repo-root `.cursorrules` is the session summary. Do not invent parallel policy.
+
+## Session discipline
+
+- Acknowledge architecture + scroll + mobile + deployment constraints before writing product code.
+- No feature complete without mobile validation when UI/layout/sticky/overlays/responsive behavior changed.
+- No shipped user-facing work without `npm run build`, `npm run qa:governance` (from `lender-app/`), `npm run deploy:prod`, and production smoke — unless exempt per `docs/deployment-rules.md`.
+
+## Commands (`cwd: lender-app/`)
+
+- `npm run qa:governance` — automated pre-complete gate
+- `npm run verify:governance:docs` — required policy files exist
+- `npm run deploy:prod` — build + Vercel production deploy (CLI)

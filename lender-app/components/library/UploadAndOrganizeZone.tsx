@@ -140,6 +140,7 @@ export function VaultUploadTriggerButton({
         multiple
         className="sr-only"
         disabled={disabled || busy}
+        data-testid="document-vault-upload-input"
         onChange={(e) => {
           handleFiles(e.target.files);
           e.target.value = "";

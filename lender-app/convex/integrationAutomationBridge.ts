@@ -7,34 +7,50 @@ import {
 } from "../lib/integrations/catalog";
 import { resolveOrganizationPlanForCtx } from "./organizationPlan";
 import { planHasFeature } from "../lib/orgPlanFeatures";
+import { upsertPipelineLeadFromInboundJob } from "./integrationInboundPipelineLead";
+import { applyCreateFileTaskFromInbound } from "./integrationFileTask";
+import { parseCreateFileTaskPayload } from "../lib/inboundFileTask";
 
 const MAX_ORG_INBOUND_AUTOMATION_EFFECTS = 16;
 
 /**
- * After an inbound integration job is queued, apply org-scoped automation rules
- * (tasks, chained integration jobs). Idempotent via `inboundAutomationDispatched`.
+ * Apply org-scoped automation for an inbound integration job (tasks, chained
+ * jobs). Called from the worker **after** `tryClaimJob` succeeds.
+ *
+ * Atomically claims `inboundAutomationDispatched` **before** side effects so
+ * concurrent/retry paths cannot double-apply. Idempotency keys on chained jobs
+ * (`org-inbound-chain:${jobId}:${ruleId}`) remain unchanged.
  */
 export const processInboundIntegrationJob = internalMutation({
   args: { jobId: v.id("integrationJobs") },
   handler: async (ctx, { jobId }) => {
     const job = await ctx.db.get(jobId);
-    if (!job || job.kind !== "inbound_event") return;
-    if (job.inboundAutomationDispatched) return;
+    if (!job || job.kind !== "inbound_event") {
+      return { claimed: false as const, applied: false as const };
+    }
+    if (job.inboundAutomationDispatched) {
+      return { claimed: false as const, applied: false as const };
+    }
 
     const now = Date.now();
+
+    // CAS claim before any side effects — single writer for automation apply.
+    await ctx.db.patch(jobId, {
+      inboundAutomationDispatched: true,
+      updatedAt: now,
+    });
+
     const plan = await resolveOrganizationPlanForCtx(ctx, job.organizationId);
     if (!planHasFeature(plan, "integrations")) {
-      await ctx.db.patch(jobId, {
-        inboundAutomationDispatched: true,
-        updatedAt: now,
-      });
-      return;
+      return { claimed: true as const, applied: false as const };
     }
 
     let connectorPublicId: string | undefined;
+    let actorUserKey: string | undefined;
     if (job.connectorId) {
       const conn = await ctx.db.get(job.connectorId);
       connectorPublicId = conn?.publicId;
+      actorUserKey = conn?.createdByUserKey?.trim();
     }
 
     const settings = await ctx.db
@@ -45,6 +61,7 @@ export const processInboundIntegrationJob = internalMutation({
       .unique();
 
     let effects = 0;
+    let lastActionError: string | undefined;
 
     if (settings?.rules?.length) {
       for (const rule of settings.rules) {
@@ -78,6 +95,36 @@ export const processInboundIntegrationJob = internalMutation({
             updatedAt: now,
           });
           effects += 1;
+        } else if (act.type === "create_file_task") {
+          if (!actorUserKey) {
+            console.warn(
+              `create_file_task rule ${rule.id} skipped: connector owner missing`,
+            );
+            continue;
+          }
+          try {
+            await applyCreateFileTaskFromInbound(ctx, {
+              organizationId: job.organizationId,
+              actorUserKey,
+              now,
+              payload: {
+                action: "create_file_task",
+                relatedFileId: act.relatedFileId,
+                title: act.title,
+                description: act.body,
+                triageLabelId: act.triageLabelId,
+                triageLabelName: act.triageLabelName,
+                category: act.category ?? "call",
+                status: act.status ?? "todo",
+              },
+              requireAction: true,
+            });
+            effects += 1;
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            lastActionError = msg;
+            console.warn(`create_file_task rule ${rule.id} skipped: ${msg}`);
+          }
         } else if (act.type === "enqueue_integration_job") {
           const cat = act.category as IntegrationCategory;
           const pk = act.providerKey.trim();
@@ -104,13 +151,53 @@ export const processInboundIntegrationJob = internalMutation({
             },
           );
           effects += 1;
+        } else if (act.type === "upsert_pipeline_lead") {
+          await upsertPipelineLeadFromInboundJob(ctx, {
+            jobId,
+            defaultStatus: act.defaultStatus,
+          });
+          effects += 1;
         }
       }
     }
 
-    await ctx.db.patch(jobId, {
-      inboundAutomationDispatched: true,
-      updatedAt: now,
+    const payloadTask = parseCreateFileTaskPayload(job.payload, {
+      requireAction: true,
     });
+    if (payloadTask && effects < MAX_ORG_INBOUND_AUTOMATION_EFFECTS) {
+      if (!actorUserKey) {
+        lastActionError = "connector owner missing; cannot create file task";
+        console.warn(`create_file_task webhook skipped: ${lastActionError}`);
+      } else {
+        try {
+          await applyCreateFileTaskFromInbound(ctx, {
+            organizationId: job.organizationId,
+            actorUserKey,
+            now,
+            parsed: payloadTask,
+            payload: job.payload,
+            requireAction: true,
+          });
+          effects += 1;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          lastActionError = msg;
+          console.warn(`create_file_task webhook rejected: ${msg}`);
+        }
+      }
+    }
+
+    if (lastActionError) {
+      await ctx.db.patch(jobId, {
+        updatedAt: Date.now(),
+        lastError: lastActionError.slice(0, 500),
+      });
+    }
+
+    return {
+      claimed: true as const,
+      applied: effects > 0,
+      effects,
+    };
   },
 });

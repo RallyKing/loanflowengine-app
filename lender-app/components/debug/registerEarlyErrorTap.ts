@@ -1,6 +1,10 @@
 "use client";
 
-import { appendPriorityDebugClientLog, debugAgentLogPostUrl } from "@/lib/debugClientLog";
+import {
+  appendPriorityDebugClientLog,
+  isDebugAgentRemoteEnabled,
+  postDebugAgentRemote,
+} from "@/lib/debugClientLog";
 
 /**
  * Loaded from root layout (`DebugEarlyClientBootstrap`) — registers `error` in **capture**
@@ -33,14 +37,8 @@ function post(kind: string, message: string, stack: string) {
     timestamp: Date.now(),
   };
   appendPriorityDebugClientLog(payload);
-
   // #region agent log
-  void fetch(debugAgentLogPostUrl(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    keepalive: true,
-  }).catch(() => {});
+  postDebugAgentRemote(payload);
   // #endregion
 }
 let listenersInstalled = false;
@@ -74,8 +72,8 @@ function installWindowErrorTap(): void {
 }
 installWindowErrorTap();
 
-/** Once per tab — proves `/api/debug-agent-log` + ingest path run (debug sessions). */
-if (typeof window !== "undefined") {
+/** Once per tab — proves `/api/debug-agent-log` + ingest path run (debug sessions only). */
+if (typeof window !== "undefined" && isDebugAgentRemoteEnabled()) {
   queueMicrotask(() => {
     try {
       if (sessionStorage.getItem("dlc.f25461.boot") === "1") return;

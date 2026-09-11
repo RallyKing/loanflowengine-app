@@ -167,14 +167,16 @@ export const addMember = mutation({
     assignedRoleId: v.optional(v.id("organizationRoles")),
   },
   handler: async (ctx, args) => {
-    const actor = args.actorUserKey.trim();
     const newKey = args.userKey.trim();
-    if (!actor || !newKey) throw new Error("user keys are required");
+    if (!args.actorUserKey.trim() || !newKey) {
+      throw new Error("user keys are required");
+    }
 
-    await assertOrgPermission(
+    // Bind actor to JWT / verified caller — never trust spoofable actorUserKey alone.
+    const actor = await assertOrgPermission(
       ctx,
       args.organizationId,
-      actor,
+      args.actorUserKey,
       "org.members.invite",
     );
 
@@ -409,14 +411,15 @@ export const removeMember = mutation({
     actorUserKey: v.string(),
   },
   handler: async (ctx, args) => {
-    const actor = args.actorUserKey.trim();
     const target = args.userKey.trim();
-    if (!actor || !target) throw new Error("user keys are required");
+    if (!args.actorUserKey.trim() || !target) {
+      throw new Error("user keys are required");
+    }
 
-    await assertOrgPermission(
+    const actor = await assertOrgPermission(
       ctx,
       args.organizationId,
-      actor,
+      args.actorUserKey,
       "org.members.invite",
     );
 
@@ -761,7 +764,8 @@ export const get = query({
         jwtIssuer: identity?.issuer?.trim() || null,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw err;
+      /** Fail closed for UI: avoids Convex client `useQuery` throwing on execution errors. */
+      return null;
     }
   },
 });

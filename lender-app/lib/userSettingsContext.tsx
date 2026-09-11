@@ -80,3 +80,23 @@ export function useUserSettings(): {
   }
   return c;
 }
+
+/**
+ * Safe for public / tokenized portals that may render shared deal widgets
+ * outside the signed-in AppChrome tree. Prefer wrapping with
+ * {@link UserSettingsProvider} (see PublicPortalProviders); this avoids a
+ * hard crash if a shared hook still mounts without the provider.
+ */
+export function useUserSettingsOptional(): {
+  settings: UserSettingsV1;
+  update: (patch: Partial<UserSettingsV1>) => void;
+  isProvided: boolean;
+} {
+  const c = useContext(UserSettingsContext);
+  if (c) return { ...c, isProvided: true };
+  return {
+    settings: getDefaultUserSettings(),
+    update: () => {},
+    isProvided: false,
+  };
+}

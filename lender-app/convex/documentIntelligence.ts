@@ -15,6 +15,7 @@ import {
   assertProofWrite,
   requireLinkForProof,
 } from "./libraryDocuments";
+import { resolveVaultOutboundFileName } from "../lib/library/vaultOutboundFileName";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -159,7 +160,10 @@ export const internalGetClassificationContext = internalQuery({
     if (confirmed) return null;
     const doc = await ctx.db.get(args.documentId);
     if (!doc) return null;
-    return { documentId: args.documentId, fileName: doc.latestFileName ?? doc.title };
+    return {
+      documentId: args.documentId,
+      fileName: resolveVaultOutboundFileName(doc.title, doc.latestFileName),
+    };
   },
 });
 

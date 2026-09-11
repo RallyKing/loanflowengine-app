@@ -8,6 +8,11 @@ import {
   authUserHasGlobalAdminElevation,
   tryGetAuthUserByPermissionKey,
 } from "./auth/globalAdmin";
+import {
+  callerIsPlatformGodMode,
+  jwtIdentityIsPlatformGodMode,
+  PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID,
+} from "./auth/platformGodMode";
 import { normalizeAuthEmail } from "../lib/auth/normalizeAuthEmail";
 import { normalizeUsername } from "../lib/auth/normalizeUsername";
 import { bumpCredentialForUserKey } from "./auth/sessionInvalidate";
@@ -18,52 +23,94 @@ import {
   syncSystemRolePermissions,
 } from "./organizationRbac";
 
+const orgListRowValidator = v.object({
+  _id: v.id("organizations"),
+  name: v.string(),
+  updatedAt: v.number(),
+});
+
+function mapOrgRows(rows: Doc<"organizations">[]): {
+  _id: Id<"organizations">;
+  name: string;
+  updatedAt: number;
+}[] {
+  const sorted = [...rows].sort(
+    (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+  );
+  const out: {
+    _id: Id<"organizations">;
+    name: string;
+    updatedAt: number;
+  }[] = [];
+
+  for (const o of sorted) {
+    if (!o?._id) continue;
+    const updatedAt = o.updatedAt;
+    if (typeof updatedAt !== "number" || Number.isNaN(updatedAt)) continue;
+    const rawName = o.name;
+    const name =
+      typeof rawName === "string" && rawName.trim().length > 0
+        ? rawName.trim()
+        : "Unnamed workspace";
+    out.push({ _id: o._id, name, updatedAt });
+  }
+  return out;
+}
+
+/**
+ * GodMode tenant switcher list.
+ *
+ * Must never throw to the client: `useQuery` rethrows query errors and the
+ * signed-in shell (`OrgSubtreeDebugBoundary`) white-screens as "Workspace UI error".
+ * Do not gate on `organizationMembers` — that table can fail schema reads
+ * (same failure mode `organizations.listMyMemberships` already guards against).
+ * Global-admin elevation alone is sufficient; tenant isolation is preserved for
+ * non-elevated callers (empty list).
+ */
 export const listAllOrganizations = query({
   args: { memberUserKey: v.string() },
+  returns: v.array(orgListRowValidator),
   handler: async (ctx, { memberUserKey }) => {
-    const key =
-      typeof memberUserKey === "string" ? memberUserKey.trim() : "";
-    if (!key) return [];
-
-    const actor = await tryGetAuthUserByPermissionKey(ctx, key);
-    if (!actor) return [];
-    if (!authUserHasGlobalAdminElevation(actor)) return [];
-
-    const userKey = actor._id as string;
-    const memberships = await ctx.db
-      .query("organizationMembers")
-      .withIndex("by_user_org", (q) => q.eq("userKey", userKey))
-      .collect();
-    if (memberships.length === 0) return [];
-
-    let rows: Doc<"organizations">[];
     try {
-      rows = await ctx.db.query("organizations").collect();
-    } catch {
+      const key =
+        typeof memberUserKey === "string" ? memberUserKey.trim() : "";
+      if (!key) return [];
+
+      const identity = await ctx.auth.getUserIdentity();
+      const elevated =
+        jwtIdentityIsPlatformGodMode(identity) ||
+        (await callerIsPlatformGodMode(ctx, key));
+      if (!elevated) {
+        // Narrow fallback: authUsers flag without JWT (session key path).
+        const actor = await tryGetAuthUserByPermissionKey(ctx, key);
+        if (!authUserHasGlobalAdminElevation(actor)) return [];
+      }
+
+      let rows: Doc<"organizations">[] = [];
+      try {
+        rows = await ctx.db.query("organizations").collect();
+      } catch (err) {
+        console.warn(
+          "[organizationResolver.listAllOrganizations] organizations.collect failed",
+          { reason: err instanceof Error ? err.message : String(err) },
+        );
+        try {
+          const primary = await ctx.db.get(
+            PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID,
+          );
+          if (primary) rows = [primary];
+        } catch {
+          return [];
+        }
+      }
+
+      return mapOrgRows(rows);
+    } catch (err) {
+      console.warn("[organizationResolver.listAllOrganizations] failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
       return [];
     }
-
-    rows.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-
-    const out: {
-      _id: Id<"organizations">;
-      name: string;
-      updatedAt: number;
-    }[] = [];
-
-    for (const o of rows) {
-      if (!o?._id) continue;
-      const updatedAt = o.updatedAt;
-      if (typeof updatedAt !== "number" || Number.isNaN(updatedAt)) continue;
-      const rawName = o.name;
-      const name =
-        typeof rawName === "string" && rawName.trim().length > 0
-          ? rawName.trim()
-          : "Unnamed workspace";
-      out.push({ _id: o._id, name, updatedAt });
-    }
-
-    return out;
   },
 });
 
@@ -76,6 +123,25 @@ export const repairPrimaryMembership = mutation({
     adminSecret: v.string(),
     loginOrEmail: v.string(),
   },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      userId: v.id("authUsers"),
+      organizationId: v.id("organizations"),
+      membershipAction: v.union(
+        v.literal("inserted"),
+        v.literal("updated"),
+        v.literal("unchanged"),
+      ),
+    }),
+    v.object({
+      ok: v.literal(false),
+      reason: v.string(),
+      normalizedUsername: v.optional(v.string()),
+      normalizedEmail: v.optional(v.union(v.string(), v.null())),
+      userIds: v.optional(v.array(v.string())),
+    }),
+  ),
   handler: async (ctx, { adminSecret, loginOrEmail }) => {
     assertDataMigrationAdmin(adminSecret);
     const raw = loginOrEmail.trim();
@@ -135,9 +201,17 @@ export const repairPrimaryMembership = mutation({
       if (!orgDoc) orgId = undefined;
     }
     if (!orgId) {
-      const orgs = await ctx.db.query("organizations").collect();
-      orgs.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-      orgId = orgs[0]?._id;
+      try {
+        const orgs = await ctx.db.query("organizations").collect();
+        orgs.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+        orgId = orgs[0]?._id;
+      } catch {
+        orgId = PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID;
+        const primary = await ctx.db.get(orgId);
+        if (!primary) {
+          return { ok: false as const, reason: "no_organization" as const };
+        }
+      }
     }
     if (!orgId) {
       return { ok: false as const, reason: "no_organization" as const };

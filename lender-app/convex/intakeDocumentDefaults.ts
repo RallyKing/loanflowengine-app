@@ -1,18 +1,35 @@
-const DEFAULT_WORKFLOW: { label: string; done: boolean }[] = [
-  { label: "Intro Email", done: false },
-  { label: "EDU Emails", done: false },
-  { label: "Scenario Email", done: false },
-  { label: "Needs List Email", done: false },
-  { label: "OL & PD", done: false },
-  { label: "Velocify", done: false },
-  { label: "Property Profile", done: false },
-  { label: "Intake Attached", done: false },
-  { label: "DTI Calculator", done: false },
-  { label: "Declarations", done: false },
-  { label: "FNMA 3.2 & PCF", done: false },
-  { label: "Credit Report", done: false },
-  { label: "PDF Proposal", done: false },
-];
+function legacyWorkflowId(label: string, index: number): string {
+  const slug = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return slug ? `iwf_legacy_${slug}` : `iwf_legacy_${index}`;
+}
+
+const DEFAULT_WORKFLOW_LABELS = [
+  "Intro Email",
+  "EDU Emails",
+  "Scenario Email",
+  "Needs List Email",
+  "OL & PD",
+  "Velocify",
+  "Property Profile",
+  "Intake Attached",
+  "DTI Calculator",
+  "Declarations",
+  "FNMA 3.2 & PCF",
+  "Credit Report",
+  "PDF Proposal",
+] as const;
+
+const DEFAULT_WORKFLOW: { id: string; label: string; done: boolean }[] =
+  DEFAULT_WORKFLOW_LABELS.map((label, index) => ({
+    id: legacyWorkflowId(label, index),
+    label,
+    done: false,
+  }));
 
 /**
  * New intake-shaped document (matches `intakeSheets` insert body) for
@@ -61,6 +78,7 @@ export function buildInitialIntakeDocument(args: {
       { description: "Cable / Internet" },
     ],
     workflow: DEFAULT_WORKFLOW,
+    workflowTemplateId: "builtin:default-broker",
     subjectProperty: {},
     primaryProperty: {},
 

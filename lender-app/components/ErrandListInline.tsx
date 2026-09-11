@@ -24,6 +24,20 @@ export function defaultErrandListStartsExpanded(t: Doc<"tasks">): boolean {
   return stores <= 3 && items <= 12;
 }
 
+/**
+ * Expand/collapse UI is local row state. Reset only when the row's task
+ * identity or type changes — not when Convex returns a new doc after a
+ * checkbox / rename patch (that was collapsing grocery runs on mobile).
+ */
+export function shouldReseedErrandExpandUi(args: {
+  prevId: string;
+  prevType: string;
+  nextId: string;
+  nextType: string;
+}): boolean {
+  return args.prevId !== args.nextId || args.prevType !== args.nextType;
+}
+
 const COMPACT_MAX_STORES = 2;
 const COMPACT_MAX_ITEMS_PER_STORE = 3;
 
@@ -66,11 +80,10 @@ export const ErrandListInline = memo(function ErrandListInline({
     [locations]
   );
 
-  const truncated = useMemo(() => {
-    if (expanded) return false;
+  const benefitsFromCompact = useMemo(() => {
     if (locations.length > COMPACT_MAX_STORES) return true;
     return locations.some((l) => l.items.length > COMPACT_MAX_ITEMS_PER_STORE);
-  }, [expanded, locations]);
+  }, [locations]);
 
   const visibleStoreIndices = useMemo(() => {
     if (expanded) return locations.map((_, i) => i);
@@ -224,7 +237,7 @@ export const ErrandListInline = memo(function ErrandListInline({
                   {expanded && onToggleStoreCollapse ? (
                     <button
                       type="button"
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent text-muted-foreground hover:bg-muted"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-transparent text-muted-foreground hover:bg-muted"
                       onClick={() => onToggleStoreCollapse(loc.id)}
                       aria-expanded={!storeCollapsed}
                       aria-label={
@@ -274,13 +287,13 @@ export const ErrandListInline = memo(function ErrandListInline({
                   {visibleItemEntries.map(({ it, ii }) => (
                     <li
                       key={it.id}
-                      className="flex items-start gap-2 rounded-sm py-0.5 hover:bg-muted/50"
+                      className="flex items-center gap-2 rounded-sm py-0.5 hover:bg-muted/50"
                       title={it.note?.trim() ? it.note.trim() : undefined}
                     >
-                      <label className="flex cursor-pointer items-start gap-2 pt-0.5">
+                      <label className="flex min-h-10 min-w-10 cursor-pointer items-center justify-center rounded-md">
                         <input
                           type="checkbox"
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-input accent-primary"
+                          className="h-4 w-4 shrink-0 rounded border-input accent-primary"
                           checked={it.completed}
                           disabled={disabled}
                           onChange={(e) =>
@@ -375,7 +388,7 @@ export const ErrandListInline = memo(function ErrandListInline({
             </p>
           )}
 
-          {truncated && onExpandedChange && (
+          {onExpandedChange && benefitsFromCompact && (
             <div className="flex flex-wrap items-center gap-2 border-t border-border/30 pt-2">
               <p className="text-[10px] text-muted-foreground">
                 {totalItems} item{totalItems === 1 ? "" : "s"} total
@@ -386,7 +399,7 @@ export const ErrandListInline = memo(function ErrandListInline({
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-7 text-xs"
+                  className="h-9 min-h-9 text-xs"
                   onClick={() => onExpandedChange(true)}
                 >
                   Show all stores & items
@@ -396,7 +409,7 @@ export const ErrandListInline = memo(function ErrandListInline({
                   type="button"
                   size="sm"
                   variant="ghost"
-                  className="h-7 text-xs text-muted-foreground"
+                  className="h-9 min-h-9 text-xs text-muted-foreground"
                   onClick={() => onExpandedChange(false)}
                 >
                   Compact view

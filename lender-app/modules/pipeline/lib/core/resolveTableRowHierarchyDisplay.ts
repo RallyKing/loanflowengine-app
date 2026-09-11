@@ -1,9 +1,16 @@
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import type { PipelineRowGraphLinks } from "@/convex/pipelineGraphPreviewLinks";
 import {
   legacyClientProjectFromDealData,
   type ResolvedFileHierarchy,
 } from "@/lib/pipelineHierarchy";
+import {
+  dealBorrowersFromPreviewPayload,
+  dealBusinessFromPreviewPayload,
+  resolveEntityDisplayNameForClientTitle,
+  resolveFileHeaderPrimaryBorrowerLabel,
+  type FileHeaderBorrowerContactLite,
+} from "@/lib/pipeline/resolveFileHeaderPrimaryBorrowerLabel";
 
 function trimStr(v: unknown): string {
   if (v == null) return "";
@@ -52,7 +59,8 @@ function graphProjectLabel(graphLinks?: PipelineRowGraphLinks): string {
 
 /**
  * Phase 26.4 — canonical client label for pipeline table/board rows.
- * Never relies on a single FK field; merges hierarchy, junction, graph, and deal payload.
+ * Live primary borrower entity + individual win over create-time hierarchy
+ * snapshots (`clients.displayName` / `dealData.clientName`).
  */
 export function resolveTableRowClientDisplayName(args: {
   hierarchy: ResolvedFileHierarchy;
@@ -61,7 +69,29 @@ export function resolveTableRowClientDisplayName(args: {
   graphLinks?: PipelineRowGraphLinks;
   /** Direct `clients` row when `pipeline.clientId` is set (optional batch lookup). */
   clientRecordLabel?: string;
+  /** `clients.entityType` when the primary hierarchy client is a business entity. */
+  clientRecordEntityType?: string | null;
+  primaryBorrowerLinks?: Doc<"contactFileLinks">[] | null;
+  contactsById?: ReadonlyMap<
+    Id<"contacts">,
+    FileHeaderBorrowerContactLite
+  > | null;
 }): string {
+  const entityDisplayName = resolveEntityDisplayNameForClientTitle({
+    linkedClients: args.hierarchy.linkedClients,
+    clientRecordLabel: args.clientRecordLabel,
+    clientRecordEntityType: args.clientRecordEntityType,
+    dealBusiness: dealBusinessFromPreviewPayload(args.intake, args.pipeline),
+  });
+  const live = resolveFileHeaderPrimaryBorrowerLabel({
+    links: args.primaryBorrowerLinks,
+    contactsById: args.contactsById,
+    dealBorrowers: dealBorrowersFromPreviewPayload(args.intake, args.pipeline),
+    entityDisplayName,
+    fallbackClientDisplayName: "",
+  });
+  if (live.fromPrimaryBorrower) return live.label;
+
   const fromRecord = args.clientRecordLabel?.trim();
   if (fromRecord) return fromRecord;
 

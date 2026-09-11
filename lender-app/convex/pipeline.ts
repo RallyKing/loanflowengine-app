@@ -1,9 +1,10 @@
-import { mutation, query, type MutationCtx } from "./_generated/server";
-import { v } from "convex/values";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import {
   derivePrimaryFundingAmountFromDealPayload,
+  dealPatchIsNoOp,
   intakeRowToDealPayload,
   mergePartialCoverOnPatch,
   mergePartialSubjectPropertyOnPatch,
@@ -27,9 +28,16 @@ import { parseClientMomentum } from "../lib/clientMomentum";
 import type { PipelineListRow } from "../lib/pipelineListRow";
 import { syncPipelineStatusFromStage, assertPipelineStageBelongsToOrg } from "./organizationPipelineStagesHelpers";
 import { insertCollaborationActivityEvent } from "./activityEvents";
-import { isCurrentlySnoozed as pipelineIsCurrentlySnoozed } from "../lib/pipelineSnooze";
+import {
+  autoArchiveFieldsForActivity,
+  computeAutoArchiveAfterAt,
+  lastPipelineActivityAt,
+  normalizeAutoArchiveInactivityDays,
+} from "../lib/pipelineAutoArchive";
+import { applyPipelineSoftArchive } from "./pipelineArchiveApply";
 import { resolvePipelineTableFundingAmount } from "../lib/pipeline/resolvePipelineTableFundingAmount";
 import { resolvePrimaryTableLender } from "../lib/pipeline/resolvePrimaryTableLender";
+import { buildPipelineDealPartySearchBlob } from "../lib/pipeline/pipelineDealPartySearch";
 import {
   normalizePipelineDrawerLayout,
   type PipelineDrawerLayoutV1,
@@ -64,7 +72,6 @@ import { collectPipelineWatcherUserKeys } from "./notificationRecipients";
 import { dispatchUserNotification } from "./notifications";
 import {
   assertCanMutatePipelineRow,
-  assertCanReadPipelineRow,
   assertLenderAttachableToPipeline,
   assertOrgMember,
   assertOrgScopeArgs,
@@ -72,10 +79,12 @@ import {
   assertCanManagePipelineDrawerLayout,
   filterPipelineByOrgScope,
   filterPipelineRowsForMember,
+  pipelineFileReadable,
   resolveMemberUserKey,
   resolveOrgPipelineFileAccessLevel,
   sessionKeyIsGlobalAdmin,
 } from "./organizationAccess";
+import { PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID } from "./auth/platformGodMode";
 import {
   pipelineHierarchyFkArgs,
   resolvePipelineHierarchyForCreate,
@@ -118,6 +127,8 @@ import {
 } from "./organizationPlan";
 import { assertCanAddOrgPipelineFile } from "./orgPlanLimits";
 import { refreshPipelineGlobalSearchText } from "./globalSearchSync";
+import { syncPfsInstancesToAssignedContacts } from "./pfsContactSync";
+import { syncSimplePlInstancesToAssignedContacts } from "./simplePlContactSync";
 import {
   detachLenderFromFile,
   findFileLenderEdge,
@@ -164,12 +175,29 @@ const preferencesAccountIdArg = {
    * When omitted, new files use only the global new-file template (system default).
    */
   preferencesAccountId: v.optional(v.string()),
+  /**
+   * Hub bulk actions historically pass `memberUserKey` (same identity as
+   * `preferencesAccountId`). Accept both so ArgumentValidationError does not
+   * mask deletes behind a generic “Couldn't save” client message.
+   */
+  memberUserKey: v.optional(v.string()),
 };
 
 /** Same id as preferences; required for org-scoped rows when mutating via some endpoints. */
 const memberUserKeyArg = {
   memberUserKey: v.optional(v.string()),
 };
+
+/** Prefer preferencesAccountId; fall back to memberUserKey alias. */
+function resolvePipelineActorKey(args: {
+  preferencesAccountId?: string;
+  memberUserKey?: string;
+}): string | undefined {
+  const fromPrefs = args.preferencesAccountId?.trim();
+  if (fromPrefs) return fromPrefs;
+  const fromMember = args.memberUserKey?.trim();
+  return fromMember || undefined;
+}
 
 const orgListScopeArgs = {
   organizationId: v.id("organizations"),
@@ -185,7 +213,11 @@ export const getDetail = query({
   handler: async (ctx, { id, memberUserKey }) => {
     const p = await ctx.db.get(id);
     if (!p) return null;
-    await assertCanReadPipelineRow(ctx, p, memberUserKey);
+    // Return null (not throw) for missing access — client already renders
+    // "Pipeline file not found" for `detail === null`; throws crash the page.
+    if (!(await pipelineFileReadable(ctx, p, memberUserKey))) {
+      return null;
+    }
     const board = resolvePipelineLenderBoard(p);
     const resolved: Array<Doc<"lenders">> = [];
     const primaryLender = board.primaryLenderId
@@ -410,6 +442,56 @@ async function tryInsertLedgerWhenMarkedPaid(
 // ---------- Queries ----------
 
 /**
+ * Hard cap on rows pulled by an org-scoped pipeline list scan. A single
+ * organization's pipeline is far below this; the cap only prevents a
+ * pathological org from turning a list subscription into an effectively
+ * unbounded read (see docs/governance/resource-consumption-policy.md). Mirrors
+ * `TASKS_GET_ALL_MAX_ROWS` in `tasks.ts`.
+ */
+const PIPELINE_LIST_MAX_ROWS = 20_000;
+
+/**
+ * Org-scoped pipeline rows for list/table surfaces, newest-first by
+ * `_creationTime` — identical ordering to the previous
+ * `ctx.db.query("pipeline").order("desc").collect()` full-table scan, but read
+ * through the `by_organization_createdAt` index so a hub subscription only
+ * touches the requesting org's rows instead of every organization's rows.
+ *
+ * Legacy rows with no `organizationId` belong to the primary workspace
+ * (`rowBelongsToOrganizationScope`), so they are folded in only for the primary
+ * default org — preserving `filterPipelineByOrgScope` semantics exactly.
+ *
+ * Callers still run `filterPipelineRowsForMember` afterward for owner/share/
+ * hierarchy ACL, which also re-applies org scoping (idempotent here).
+ */
+async function collectOrgScopedPipelineRows(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+): Promise<Doc<"pipeline">[]> {
+  const scoped = await ctx.db
+    .query("pipeline")
+    .withIndex("by_organization_createdAt", (q) =>
+      q.eq("organizationId", organizationId),
+    )
+    .order("desc")
+    .take(PIPELINE_LIST_MAX_ROWS);
+  const rows =
+    organizationId === PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID
+      ? scoped.concat(
+          await ctx.db
+            .query("pipeline")
+            .withIndex("by_organization_createdAt", (q) =>
+              q.eq("organizationId", undefined),
+            )
+            .order("desc")
+            .take(PIPELINE_LIST_MAX_ROWS),
+        )
+      : scoped;
+  rows.sort((a, b) => b._creationTime - a._creationTime);
+  return rows;
+}
+
+/**
  * All pipeline rows, newest first. Archived rows are hidden by default —
  * pass `includeArchived: true` to surface them (e.g. the "Show archived"
  * toggle on the pipeline page).
@@ -421,18 +503,26 @@ export const getAll = query({
   },
   handler: async (ctx, { includeArchived, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
-    let out = includeArchived ? rows : rows.filter((r) => r.archivedAt == null);
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
-    out = god ? out : filterPipelineByOrgScope(out, organizationId);
-    out = await filterPipelineRowsForMember(ctx, out, organizationId, memberUserKey);
-    return out;
+    const rows = await collectOrgScopedPipelineRows(ctx, organizationId);
+    const out = includeArchived
+      ? rows
+      : rows.filter((r) => r.archivedAt == null);
+    return await filterPipelineRowsForMember(
+      ctx,
+      out,
+      organizationId,
+      memberUserKey,
+    );
   },
 });
 
+/**
+ * Row projection for list surfaces. Deliberately clock-free: `snoozedUntil` is
+ * passed through raw and "is this file snoozed right now" is derived by the caller
+ * (`isCurrentlySnoozed` from `lib/pipelineSnooze`). Reading the clock here made
+ * every list query non-deterministic and therefore uncacheable by Convex.
+ */
 function projectListLight(p: Doc<"pipeline">): PipelineListRow {
-  const now = Date.now();
-  const isSnoozed = pipelineIsCurrentlySnoozed(p.snoozedUntil, now);
   const fundingAmount =
     typeof p.fundingAmount === "number" && Number.isFinite(p.fundingAmount)
       ? p.fundingAmount
@@ -459,7 +549,8 @@ function projectListLight(p: Doc<"pipeline">): PipelineListRow {
     updatedAt: p.updatedAt,
     archivedAt: p.archivedAt,
     snoozedUntil: p.snoozedUntil,
-    isSnoozed,
+    autoArchiveInactivityDays: p.autoArchiveInactivityDays,
+    autoArchiveAfterAt: p.autoArchiveAfterAt,
     lenders: p.lenders,
     assigneeId: p.assigneeId,
     projectIntoLedger: p.projectIntoLedger,
@@ -486,14 +577,13 @@ export const listLight = query({
   },
   handler: async (ctx, { includeArchived, organizationId, memberUserKey, maxRows }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
+    const rows = await collectOrgScopedPipelineRows(ctx, organizationId);
     const filtered = includeArchived
       ? rows
       : rows.filter((r) => r.archivedAt == null);
-    const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
     const visible = await filterPipelineRowsForMember(
       ctx,
-      orgScoped,
+      filtered,
       organizationId,
       memberUserKey,
     );
@@ -628,6 +718,7 @@ function buildPurchaseRefiDisplay(
  * | Column / cell | Source |
  * |---------------|--------|
  * | File name | `pipeline.fileName` (synced from `dealData.fileName` when embedded) |
+ * | Client | Live primary borrower entity + individual (`resolveTableRowClientDisplayName` → `Entity · Individual`); not a create-time snapshot |
  * | Stage | `pipeline.status` |
  * | Source | `buildSourceLabel` → deal `sourceType` (+ borrower / business context) |
  * | Subject address | `buildSubjectAddressDisplay` → `subjectProperty`, `cover.subjectProperty`, `primaryProperty`, `propertyAddress`, `scenario.propertyAddress` |
@@ -697,6 +788,7 @@ function buildTablePreviewRow(
     p.fileName,
     p.status,
     buildSourceLabel(intake),
+    buildPipelineDealPartySearchBlob(intake),
     subjectAddressDisplay,
     fundingTypeDisplay,
     fundingProgramDisplay,
@@ -754,42 +846,47 @@ function buildTablePreviewRow(
 export const listTablePreview = query({
   args: {
     includeArchived: v.optional(v.boolean()),
+    /**
+     * @deprecated Ignored. Snooze is a wall-clock comparison, and evaluating it here
+     * made the hub's heaviest subscription uncacheable. Rows now always include
+     * snoozed files with their raw `snoozedUntil`; the caller hides them (see
+     * `PipelinePageClient`). Retained in the validator so browser tabs running the
+     * previous bundle keep working across a deploy.
+     */
     includeSnoozed: v.optional(v.boolean()),
     ...orgListScopeArgs,
   },
-  handler: async (ctx, { includeArchived, includeSnoozed, organizationId, memberUserKey }) => {
+  handler: async (ctx, { includeArchived, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const now = Date.now();
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
-    const filtered = rows.filter((r) => {
-      if (!includeArchived && r.archivedAt != null) return false;
-      if (!includeSnoozed && pipelineIsCurrentlySnoozed(r.snoozedUntil, now)) {
-        return false;
-      }
-      return true;
-    });
-    const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
+    const rows = await collectOrgScopedPipelineRows(ctx, organizationId);
+    const filtered = rows.filter(
+      (r) => includeArchived || r.archivedAt == null,
+    );
     const visible = await filterPipelineRowsForMember(
       ctx,
-      orgScoped,
+      filtered,
       organizationId,
       memberUserKey,
     );
     const intakeIds = new Set<Id<"intakeSheets">>();
     const lenderIds = new Set<Id<"lenders">>();
     const fileIdSet = new Set(visible.map((r) => String(r._id)));
-    const orgStr = String(organizationId);
     for (const r of visible) {
       if (r.intakeSheetId) intakeIds.add(r.intakeSheetId);
       if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
       for (const lid of r.lenders ?? []) lenderIds.add(lid);
     }
     const fileLenderEdgesByFile = new Map<string, Doc<"fileLenders">[]>();
-    const allFileLenders = (await ctx.db.query("fileLenders").collect()).filter(
-      (edge) =>
-        fileIdSet.has(String(edge.fileId)) &&
-        String(edge.organizationId) === orgStr,
-    );
+    // Org-scoped via `by_org_entity` (prefix on organizationId) instead of a
+    // full-table scan of every org's edges. `fileLenders.organizationId` is
+    // required, so exact-org matches the prior `String(...) === orgStr` filter.
+    const allFileLenders = (
+      await ctx.db
+        .query("fileLenders")
+        .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
+        // bounded: one organization's file↔lender edges (files × lenders), not the whole table
+        .collect()
+    ).filter((edge) => fileIdSet.has(String(edge.fileId)));
     for (const edge of allFileLenders) {
       const key = String(edge.fileId);
       const bucket = fileLenderEdgesByFile.get(key) ?? [];
@@ -865,6 +962,7 @@ export const listTablePreview = query({
       }),
     );
     const clientLabelById = new Map<string, string>();
+    const clientEntityTypeById = new Map<string, string>();
     await Promise.all(
       clientIds.map(async (cid) => {
         const client = await ctx.db.get(cid);
@@ -876,6 +974,36 @@ export const listTablePreview = query({
           client.normalizedName?.trim() ||
           "";
         if (label) clientLabelById.set(String(cid), label);
+        if (client.entityType) {
+          clientEntityTypeById.set(String(cid), client.entityType);
+        }
+      }),
+    );
+    const contactLinksByFile = new Map<string, Doc<"contactFileLinks">[]>();
+    const contactIdsForTitle = new Set<Id<"contacts">>();
+    await Promise.all(
+      visible.map(async (p) => {
+        const links = await ctx.db
+          .query("contactFileLinks")
+          .withIndex("by_file", (q) => q.eq("fileId", p._id))
+          .collect();
+        contactLinksByFile.set(String(p._id), links);
+        for (const link of links) contactIdsForTitle.add(link.contactId);
+      }),
+    );
+    const contactsById = new Map<
+      Id<"contacts">,
+      Pick<Doc<"contacts">, "_id" | "name" | "companyName">
+    >();
+    await Promise.all(
+      [...contactIdsForTitle].map(async (cid) => {
+        const contact = await ctx.db.get(cid);
+        if (!contact) return;
+        contactsById.set(contact._id, {
+          _id: contact._id,
+          name: contact.name,
+          companyName: contact.companyName,
+        });
       }),
     );
     const capitalRollupByProject = await batchCapitalRollupsForProjects(
@@ -917,6 +1045,11 @@ export const listTablePreview = query({
         clientRecordLabel: p.clientId
           ? clientLabelById.get(String(p.clientId))
           : undefined,
+        clientRecordEntityType: p.clientId
+          ? (clientEntityTypeById.get(String(p.clientId)) ?? null)
+          : null,
+        primaryBorrowerLinks: contactLinksByFile.get(String(p._id)) ?? [],
+        contactsById,
       });
       const projectDisplayTitle = resolveTableRowProjectDisplayTitle({
         hierarchy: h,
@@ -945,6 +1078,7 @@ export const listTablePreview = query({
           previewCore.searchText,
           clientDisplayName,
           projectDisplayTitle,
+          ...h.linkedClients.map((c) => c.displayName),
         ]
           .filter(Boolean)
           .join(" ")
@@ -1001,7 +1135,9 @@ export const getById = query({
   handler: async (ctx, { id, memberUserKey }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
-    await assertCanReadPipelineRow(ctx, row, memberUserKey);
+    if (!(await pipelineFileReadable(ctx, row, memberUserKey))) {
+      return null;
+    }
     return row;
   },
 });
@@ -1019,7 +1155,9 @@ export const getDealForEditor = query({
   handler: async (ctx, { fileId, memberUserKey }) => {
     const p = await ctx.db.get(fileId);
     if (!p) return null;
-    await assertCanReadPipelineRow(ctx, p, memberUserKey);
+    if (!(await pipelineFileReadable(ctx, p, memberUserKey))) {
+      return null;
+    }
     const linked =
       p.intakeSheetId != null ? await ctx.db.get(p.intakeSheetId) : null;
     const embedded = embeddedDealPayloadIsSubstantive(p.dealData)
@@ -1139,6 +1277,10 @@ export const patchDeal = mutation({
       );
       if (mergedSp !== undefined) cleaned.subjectProperty = mergedSp;
     }
+    /** Skip DB write / activity / updatedAt bump when values are unchanged. */
+    if (dealPatchIsNoOp(deal, cleaned)) {
+      return { ok: true as const };
+    }
     const mergedDeal = mergePatchIntoDeal(deal, {
       ...cleaned,
       updatedAt: Date.now(),
@@ -1149,6 +1291,7 @@ export const patchDeal = mutation({
     const patchBody: Partial<Doc<"pipeline">> = {
       dealData: mergedDeal as Doc<"pipeline">["dealData"],
       updatedAt: now,
+      ...autoArchiveFieldsForActivity(p, now),
       ...(trimmedDealFileName ? { fileName: trimmedDealFileName } : {}),
     };
     const derivedLoan = derivePrimaryFundingAmountFromDealPayload(mergedDeal);
@@ -1256,6 +1399,32 @@ export const patchDeal = mutation({
     }
 
     await refreshPipelineGlobalSearchText(ctx, fileId);
+    if (
+      afterDeal &&
+      (cleaned.pfsInstances !== undefined || cleaned.pfs !== undefined)
+    ) {
+      await syncPfsInstancesToAssignedContacts(
+        ctx,
+        afterDeal,
+        cleaned.pfsInstances ??
+          (afterDeal.dealData as { pfsInstances?: unknown } | undefined)
+            ?.pfsInstances,
+        preferencesAccountId?.trim() || undefined,
+      );
+    }
+    if (
+      afterDeal &&
+      (cleaned.simplePlInstances !== undefined || cleaned.simplePl !== undefined)
+    ) {
+      await syncSimplePlInstancesToAssignedContacts(
+        ctx,
+        afterDeal,
+        cleaned.simplePlInstances ??
+          (afterDeal.dealData as { simplePlInstances?: unknown } | undefined)
+            ?.simplePlInstances,
+        preferencesAccountId?.trim() || undefined,
+      );
+    }
     const fundingTouched =
       coverFundingKeysTouched ||
       (derivedLoan != null &&
@@ -1268,6 +1437,161 @@ export const patchDeal = mutation({
     return { ok: true as const };
   },
 });
+
+export type InsertPipelineFileWithDealArgs = {
+  fileName: string;
+  status: string;
+  fundingAmount: number;
+  rate: number;
+  term: string;
+  propertyAddress?: string;
+  lenders: Id<"lenders">[];
+  contacts: Array<{
+    name: string;
+    email?: string;
+    phone?: string;
+    company?: string;
+  }>;
+  clientName: string;
+  projectName: string;
+  organizationId?: Id<"organizations">;
+  catalogFileTemplateId?: string;
+  userPipelineFileTemplateId?: Id<"pipelineFileUserTemplates">;
+  clientId?: Id<"clients">;
+  projectId?: Id<"projects">;
+  allowLegacyHierarchyBypass?: boolean;
+  preferencesAccountId?: string;
+};
+
+/**
+ * Shared insert used by `createFileWithDeal` and REO “bring into new file”.
+ * Keeps drawer layout, hierarchy FKs, ownership, and file-created activity identical.
+ */
+export async function insertPipelineFileWithDeal(
+  ctx: MutationCtx,
+  args: InsertPipelineFileWithDealArgs,
+): Promise<{ id: Id<"pipeline"> }> {
+  const trimmedClient = args.clientName.trim();
+  const trimmedProject = args.projectName.trim();
+  if (!trimmedClient) throw new Error("Client name is required");
+  if (!trimmedProject) throw new Error("Project name is required");
+  const resolvedFunding = args.fundingAmount;
+  if (!Number.isFinite(resolvedFunding) || resolvedFunding < 0) {
+    throw new Error("Provide a non-negative fundingAmount.");
+  }
+  if (args.organizationId) {
+    const key = args.preferencesAccountId?.trim();
+    if (!key) {
+      throw new Error(
+        "preferencesAccountId is required when creating an organization-scoped file.",
+      );
+    }
+    await assertOrgMember(ctx, args.organizationId, key);
+  }
+  await assertCanAddOrgPipelineFile(ctx, args.organizationId);
+  const orgAttachFileStub = {
+    organizationId: args.organizationId,
+  } as Doc<"pipeline">;
+  for (const lid of args.lenders) {
+    const l = await ctx.db.get(lid);
+    if (!l) throw new Error(`Lender not found: ${lid}`);
+    assertLenderAttachableToPipeline(l, orgAttachFileStub);
+  }
+  const dealData = buildInitialIntakeDocument({
+    clientName: trimmedClient,
+    projectName: trimmedProject,
+    fileName: args.fileName.trim() || undefined,
+  });
+  const now = Date.now();
+  const body = normalizePipelineFields({
+    fileName: args.fileName.trim() || `${trimmedClient} – ${trimmedProject}`,
+    status: args.status,
+    fundingAmount: resolvedFunding,
+    rate: args.rate,
+    term: args.term,
+    propertyAddress: args.propertyAddress,
+    notes: undefined,
+    lenders: args.lenders,
+    contacts: args.contacts,
+  });
+  const metrics = buildNewFilePipelineMetricsContext({
+    body,
+    dealData,
+    intakeSheetId: undefined,
+  });
+  const drawerUnscoped = await resolveNewFileDrawerLayout(
+    ctx,
+    args.preferencesAccountId,
+    metrics,
+    {
+      catalogFileTemplateId: args.catalogFileTemplateId,
+      userPipelineFileTemplateId: args.userPipelineFileTemplateId,
+    },
+  );
+  const drawer = await finalizeDrawerLayoutRespectingOrgPlan(
+    ctx,
+    args.organizationId,
+    drawerUnscoped,
+  );
+  const hierarchyFks = await resolvePipelineHierarchyForCreate(ctx, {
+    organizationId: args.organizationId,
+    clientId: args.clientId,
+    projectId: args.projectId,
+    allowLegacyHierarchyBypass: args.allowLegacyHierarchyBypass,
+  });
+  const id = await ctx.db.insert("pipeline", {
+    ...body,
+    dealData,
+    intakeSheetId: undefined,
+    organizationId: args.organizationId,
+    ...hierarchyFks,
+    ...ownerFieldsForOrgCreate(args.organizationId, args.preferencesAccountId),
+    fileDrawerLayout: {
+      v: 1,
+      ...layoutToDbFields(drawer),
+    },
+    fileSharedState: serializeFileSharedStateStorage(
+      normalizeFileSharedStateFromPipeline({
+        fundingAmount: body.fundingAmount,
+        rate: body.rate,
+        term: body.term,
+        notes: body.notes,
+        updatedAt: now,
+        fileSharedState: undefined,
+      }),
+      now,
+    ),
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (hierarchyFks.clientId) {
+    const inserted = await ctx.db.get(id);
+    if (inserted) {
+      await ensurePrimaryLoanClientLink(ctx, inserted);
+    }
+  }
+  await appendPipelineFileActivity(ctx, {
+    fileId: id,
+    at: now,
+    kind: "file_created",
+    summary: clampActivitySummary(`Created “${body.fileName}”`),
+  });
+  await runUserSimpleWorkflows({
+    ctx,
+    accountId: args.preferencesAccountId,
+    fileId: id,
+    event: { type: "file_created" },
+    now,
+  });
+  await refreshPipelineGlobalSearchText(ctx, id);
+  scheduleOrgPipelineWebhook(
+    ctx,
+    args.organizationId,
+    "pipeline.file.created",
+    id,
+  );
+  return { id };
+}
 
 /**
  * Creates a pipeline file with embedded `dealData` (no separate intake row).
@@ -1295,128 +1619,7 @@ export const createFileWithDeal = mutation({
     ...preferencesAccountIdArg,
   },
   handler: async (ctx, args) => {
-    const trimmedClient = args.clientName.trim();
-    const trimmedProject = args.projectName.trim();
-    if (!trimmedClient) throw new Error("Client name is required");
-    if (!trimmedProject) throw new Error("Project name is required");
-    const resolvedFunding = args.fundingAmount;
-    if (!Number.isFinite(resolvedFunding) || resolvedFunding < 0) {
-      throw new Error("Provide a non-negative fundingAmount.");
-    }
-    if (args.organizationId) {
-      const key = args.preferencesAccountId?.trim();
-      if (!key) {
-        throw new Error(
-          "preferencesAccountId is required when creating an organization-scoped file.",
-        );
-      }
-      await assertOrgMember(ctx, args.organizationId, key);
-    }
-    await assertCanAddOrgPipelineFile(ctx, args.organizationId);
-    const orgAttachFileStub = {
-      organizationId: args.organizationId,
-    } as Doc<"pipeline">;
-    for (const lid of args.lenders) {
-      const l = await ctx.db.get(lid);
-      if (!l) throw new Error(`Lender not found: ${lid}`);
-      assertLenderAttachableToPipeline(l, orgAttachFileStub);
-    }
-    const dealData = buildInitialIntakeDocument({
-      clientName: trimmedClient,
-      projectName: trimmedProject,
-      fileName: args.fileName.trim() || undefined,
-    });
-    const now = Date.now();
-    const body = normalizePipelineFields({
-      fileName: args.fileName.trim() || `${trimmedClient} – ${trimmedProject}`,
-      status: args.status,
-      fundingAmount: resolvedFunding,
-      rate: args.rate,
-      term: args.term,
-      propertyAddress: args.propertyAddress,
-      notes: undefined,
-      lenders: args.lenders,
-      contacts: args.contacts,
-    });
-    const metrics = buildNewFilePipelineMetricsContext({
-      body,
-      dealData,
-      intakeSheetId: undefined,
-    });
-    const drawerUnscoped = await resolveNewFileDrawerLayout(
-      ctx,
-      args.preferencesAccountId,
-      metrics,
-      {
-        catalogFileTemplateId: args.catalogFileTemplateId,
-        userPipelineFileTemplateId: args.userPipelineFileTemplateId,
-      },
-    );
-    const drawer = await finalizeDrawerLayoutRespectingOrgPlan(
-      ctx,
-      args.organizationId,
-      drawerUnscoped,
-    );
-    const hierarchyFks = await resolvePipelineHierarchyForCreate(ctx, {
-      organizationId: args.organizationId,
-      clientId: args.clientId,
-      projectId: args.projectId,
-      allowLegacyHierarchyBypass: args.allowLegacyHierarchyBypass,
-    });
-    const id = await ctx.db.insert("pipeline", {
-      ...body,
-      dealData,
-      intakeSheetId: undefined,
-      organizationId: args.organizationId,
-      ...hierarchyFks,
-      ...ownerFieldsForOrgCreate(args.organizationId, args.preferencesAccountId),
-      fileDrawerLayout: {
-        v: 1,
-        ...layoutToDbFields(drawer),
-      },
-      fileSharedState: serializeFileSharedStateStorage(
-        normalizeFileSharedStateFromPipeline({
-          fundingAmount: body.fundingAmount,
-          rate: body.rate,
-          term: body.term,
-          notes: body.notes,
-          updatedAt: now,
-          fileSharedState: undefined,
-        }),
-        now
-      ),
-      createdAt: now,
-      updatedAt: now,
-    });
-    if (hierarchyFks.clientId) {
-      // Bidirectional integrity: mirror the FK into the loanClients junction
-      // so the client workspace tree picks the file up immediately.
-      const inserted = await ctx.db.get(id);
-      if (inserted) {
-        await ensurePrimaryLoanClientLink(ctx, inserted);
-      }
-    }
-    await appendPipelineFileActivity(ctx, {
-      fileId: id,
-      at: now,
-      kind: "file_created",
-      summary: clampActivitySummary(`Created “${body.fileName}”`),
-    });
-    await runUserSimpleWorkflows({
-      ctx,
-      accountId: args.preferencesAccountId,
-      fileId: id,
-      event: { type: "file_created" },
-      now,
-    });
-    await refreshPipelineGlobalSearchText(ctx, id);
-    scheduleOrgPipelineWebhook(
-      ctx,
-      args.organizationId,
-      "pipeline.file.created",
-      id,
-    );
-    return { id };
+    return await insertPipelineFileWithDeal(ctx, args);
   },
 });
 
@@ -2057,18 +2260,36 @@ export const patch = mutation({
     ...preferencesAccountIdArg,
   },
   handler: async (ctx, args) => {
-    const { id, preferencesAccountId, expectedUpdatedAt, ...rest } = args;
+    const {
+      id,
+      preferencesAccountId,
+      memberUserKey,
+      expectedUpdatedAt,
+      ...rest
+    } = args;
+    const actorKey = resolvePipelineActorKey({
+      preferencesAccountId,
+      memberUserKey,
+    });
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error("Pipeline not found");
     if (
       expectedUpdatedAt !== undefined &&
       existing.updatedAt !== expectedUpdatedAt
     ) {
-      throw new Error("CONFLICT_DATA_CHANGED");
+      // ConvexError preserves `data` on the client even when the message is
+      // redacted to "Server Error" — required for conflict retry detection.
+      throw new ConvexError({
+        code: "CONFLICT_DATA_CHANGED",
+        serverUpdatedAt: existing.updatedAt,
+      });
     }
-    await assertCanMutatePipelineRow(ctx, existing, preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, existing, actorKey);
     const now = Date.now();
-    const patchObj: Partial<Doc<"pipeline">> = { updatedAt: now };
+    const patchObj: Partial<Doc<"pipeline">> = {
+      updatedAt: now,
+      ...autoArchiveFieldsForActivity(existing, now),
+    };
     let nextStatusForLedger: string | null = null;
     let stageAssignmentChanged = false;
 
@@ -2397,7 +2618,7 @@ export const patch = mutation({
       await resyncFileTeamEdgesFromPipeline(
         ctx,
         teamRow,
-        preferencesAccountId,
+        actorKey,
       );
     }
 
@@ -2462,8 +2683,8 @@ export const patch = mutation({
 
     if (stageAssignmentChanged && existing.organizationId) {
       const freshStage = (await ctx.db.get(id))!;
-      const actorKey =
-        preferencesAccountId?.trim() ||
+      const stageActorKey =
+        actorKey?.trim() ||
         (await resolveMemberUserKey(ctx, undefined)) ||
         "__system__";
       await insertCollaborationActivityEvent(ctx, {
@@ -2471,7 +2692,7 @@ export const patch = mutation({
         eventType: "status_changed",
         visibility: "org_wide",
         pipelineFileId: id,
-        actorUserKey: actorKey,
+        actorUserKey: stageActorKey,
         summary: `Stage changed on “${existing.fileName.trim()}”`,
         delta: {
           previousStatus: existing.status,
@@ -2489,7 +2710,7 @@ export const patch = mutation({
       if (fresh) {
         const watchers = collectPipelineWatcherUserKeys(
           fresh,
-          preferencesAccountId,
+          actorKey,
         );
         const label = `Pipeline file updated: “${fresh.fileName.trim()}”`;
         const detail = auditKeys.slice(0, 20).join(", ");
@@ -2499,7 +2720,7 @@ export const patch = mutation({
             category: "file_update",
             summary: label,
             detail,
-            actorUserKey: preferencesAccountId,
+            actorUserKey: actorKey,
             fileId: id,
           });
         }
@@ -2514,7 +2735,7 @@ export const patch = mutation({
           userKey: h,
           category: "mention",
           summary: `You were mentioned in notes on “${existing.fileName.trim()}”`,
-          actorUserKey: preferencesAccountId,
+          actorUserKey: actorKey,
           fileId: id,
         });
       }
@@ -2561,7 +2782,10 @@ export const setClientMomentum = mutation({
       args.expectedUpdatedAt !== undefined &&
       existing.updatedAt !== args.expectedUpdatedAt
     ) {
-      throw new Error("CONFLICT_DATA_CHANGED");
+      throw new ConvexError({
+        code: "CONFLICT_DATA_CHANGED",
+        serverUpdatedAt: existing.updatedAt,
+      });
     }
     await assertCanMutatePipelineRow(ctx, existing, args.preferencesAccountId);
     const prev = parseClientMomentum(existing.clientMomentum);
@@ -2577,6 +2801,7 @@ export const setClientMomentum = mutation({
       clientMomentum: isClear ? undefined : nextStars,
       createdAt: existing.createdAt,
       updatedAt: now,
+      ...autoArchiveFieldsForActivity(existing, now),
     });
     const key = await resolveMemberUserKey(ctx, args.preferencesAccountId);
     const auth = await tryGetAuthUserByPermissionKey(ctx, key);
@@ -2632,10 +2857,12 @@ export const setProjected = mutation({
     const row = await ctx.db.get(id);
     if (!row) throw new Error("Pipeline not found");
     await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    const now = Date.now();
     await ctx.db.patch(id, {
       projectIntoLedger: projected ? true : undefined,
       createdAt: row.createdAt,
-      updatedAt: Date.now(),
+      updatedAt: now,
+      ...autoArchiveFieldsForActivity(row, now),
     });
     return { id, projected };
   },
@@ -2653,26 +2880,15 @@ export const setProjected = mutation({
  */
 export const archive = mutation({
   args: { id: v.id("pipeline"), ...preferencesAccountIdArg },
-  handler: async (ctx, { id, preferencesAccountId }) => {
+  handler: async (ctx, args) => {
+    const { id } = args;
+    const actorKey = resolvePipelineActorKey(args);
     const row = await ctx.db.get(id);
     if (!row) throw new Error("Pipeline not found");
-    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, row, actorKey);
     const now = Date.now();
-    await ctx.db.patch(id, {
-      archivedAt: now,
-      projectIntoLedger: undefined,
-      createdAt: row.createdAt,
-      updatedAt: now,
-    });
-    if (row.organizationId && row.archivedAt == null) {
-      scheduleOrgPipelineWebhook(
-        ctx,
-        row.organizationId,
-        "pipeline.file.archived",
-        id,
-      );
-    }
-    return { id, archivedAt: now };
+    const { archivedAt } = await applyPipelineSoftArchive(ctx, row, now);
+    return { id, archivedAt };
   },
 });
 
@@ -2682,10 +2898,12 @@ export const archive = mutation({
  */
 export const unarchive = mutation({
   args: { id: v.id("pipeline"), ...preferencesAccountIdArg },
-  handler: async (ctx, { id, preferencesAccountId }) => {
+  handler: async (ctx, args) => {
+    const { id } = args;
+    const actorKey = resolvePipelineActorKey(args);
     const row = await ctx.db.get(id);
     if (!row) throw new Error("Pipeline not found");
-    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    await assertCanMutatePipelineRow(ctx, row, actorKey);
     if (row.archivedAt == null) return { id, archivedAt: null };
     await ctx.db.patch(id, {
       archivedAt: undefined,
@@ -2728,16 +2946,12 @@ export const snooze = mutation({
     if (ms <= now) {
       await ctx.db.patch(id, {
         snoozedUntil: undefined,
-        createdAt: row.createdAt,
-        updatedAt: now,
       });
       return { id, snoozedUntil: null as null };
     }
     const stored = new Date(ms).toISOString();
     await ctx.db.patch(id, {
       snoozedUntil: stored,
-      createdAt: row.createdAt,
-      updatedAt: now,
     });
     return { id, snoozedUntil: stored };
   },
@@ -2755,10 +2969,98 @@ export const unsnooze = mutation({
     if (row.snoozedUntil == null) return { id, snoozedUntil: null };
     await ctx.db.patch(id, {
       snoozedUntil: undefined,
-      createdAt: row.createdAt,
-      updatedAt: Date.now(),
     });
     return { id, snoozedUntil: null };
+  },
+});
+
+/**
+ * Enable / disable auto-archive-on-inactivity. Separate from snooze.
+ * Does not bump `updatedAt` (configuring the timer is not file activity).
+ */
+export const setAutoArchiveOnInactivity = mutation({
+  args: {
+    id: v.id("pipeline"),
+    /** Whole days of inactivity, or `null` to turn the timer off. */
+    inactivityDays: v.union(v.number(), v.null()),
+    ...preferencesAccountIdArg,
+  },
+  handler: async (ctx, args) => {
+    const { id } = args;
+    const actorKey = resolvePipelineActorKey(args);
+    const row = await ctx.db.get(id);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, actorKey);
+    if (args.inactivityDays == null) {
+      if (
+        row.autoArchiveInactivityDays == null &&
+        row.autoArchiveAfterAt == null
+      ) {
+        return {
+          id,
+          autoArchiveInactivityDays: null as null,
+          autoArchiveAfterAt: null as null,
+        };
+      }
+      await ctx.db.patch(id, {
+        autoArchiveInactivityDays: undefined,
+        autoArchiveAfterAt: undefined,
+      });
+      return {
+        id,
+        autoArchiveInactivityDays: null as null,
+        autoArchiveAfterAt: null as null,
+      };
+    }
+    if (row.archivedAt != null) {
+      throw new Error("Archived files cannot use auto-archive on inactivity.");
+    }
+    const days = normalizeAutoArchiveInactivityDays(args.inactivityDays);
+    if (days == null) {
+      throw new Error("Inactivity period must be a whole number from 1 to 730 days.");
+    }
+    const lastActivityAt = lastPipelineActivityAt(row);
+    const autoArchiveAfterAt = computeAutoArchiveAfterAt(lastActivityAt, days);
+    if (autoArchiveAfterAt == null) {
+      throw new Error("Could not compute auto-archive deadline.");
+    }
+    await ctx.db.patch(id, {
+      autoArchiveInactivityDays: days,
+      autoArchiveAfterAt,
+    });
+    return { id, autoArchiveInactivityDays: days, autoArchiveAfterAt };
+  },
+});
+
+/**
+ * Per-file switch for 15-minute client-upload auto-review.
+ * Default ON when unset. Does not bump `updatedAt` (config only).
+ * Immediate per-upload alerts are unaffected.
+ */
+export const setClientUploadAutoReviewEnabled = mutation({
+  args: {
+    id: v.id("pipeline"),
+    enabled: v.boolean(),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.object({
+    id: v.id("pipeline"),
+    enabled: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const actorKey = resolvePipelineActorKey(args);
+    const row = await ctx.db.get(args.id);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, actorKey);
+    const current = row.clientUploadAutoReviewEnabled !== false;
+    if (current === args.enabled) {
+      return { id: args.id, enabled: args.enabled };
+    }
+    await ctx.db.patch(args.id, {
+      // Store explicit false; omit/undefined means ON. Persist true as true for clarity.
+      clientUploadAutoReviewEnabled: args.enabled,
+    });
+    return { id: args.id, enabled: args.enabled };
   },
 });
 
@@ -2810,6 +3112,7 @@ export const attachLender = mutation({
         lenders,
         createdAt: row.createdAt,
         updatedAt: now,
+        ...autoArchiveFieldsForActivity(row, now),
       });
     }
     const afterAttach = (await ctx.db.get(fileId))!;
@@ -3494,10 +3797,12 @@ export const clearOtherLenders = mutation({
  */
 export const remove = mutation({
   args: { id: v.id("pipeline"), ...preferencesAccountIdArg },
-  handler: async (ctx, { id, preferencesAccountId }) => {
+  handler: async (ctx, args) => {
+    const { id } = args;
+    const actorKey = resolvePipelineActorKey(args);
     const row = await ctx.db.get(id);
     if (!row) return { ok: false as const };
-    await assertCanDeletePipelineRow(ctx, row, preferencesAccountId);
+    await assertCanDeletePipelineRow(ctx, row, actorKey);
     await deletePipelineGraph(ctx, id);
     return { ok: true as const };
   },

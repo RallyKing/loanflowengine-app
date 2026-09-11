@@ -13,8 +13,40 @@ These instructions apply to **every** Composer window, chat, and AI-assisted edi
 6. **`docs/deployment-rules.md`** — build → gate → Vercel CLI deploy → prod smoke  
 7. **`docs/ui-ux-rules.md`** — mobile-first UX, Material alignment, overlays  
 8. **`docs/performance-rules.md`** — rerenders, virtualization, scroll perf  
+9. **`docs/governance/resource-consumption-policy.md`** — **Convex resource & cost safety** (polling bans, query-arg stability, pagination, scheduler stop conditions, cron registry, load-test gate)  
+10. **`docs/governance/convex-reactivity-policy.md`** — **Convex reactivity & React correctness** (push vs pull, data-access table, exhaustive-deps, no query mirrors, mutation retry-safety). Not a second copy of the cost policy.  
 
-Always Apply rule summary: `.cursor/rules/project-rules.mdc` + `.cursor/rules/governance-hub.mdc`.
+Always Apply rule summary: `.cursor/rules/project-rules.mdc` + `.cursor/rules/governance-hub.mdc` + `.cursor/rules/test-before-deploy.mdc` (implement → verify → deploy) + **`.cursor/rules/resource-safety.mdc`** (cost/loop hard bans) + **`.cursor/rules/convex-reactivity.mdc`** (push-based Convex + React correctness).
+
+## Resource & cost safety (mandatory — read before any Convex or data-fetching change)
+
+On **2026-08-17** production Convex usage blew past the account spend cap. The cause was **loops, not load**: a 30-minute cron plus an idle `runAfter(0, self)` chain (**1.3M calls**), a live `useQuery` whose args embedded `Date.now()` (**637k calls**, plus `Date.now()` inside the query and a full-table `.collect()`), and a cleanup effect keyed on the `updatedAt` it wrote (**36k**). **Convex cost tracks function-call count and DB bandwidth, not user count.**
+
+Full policy: **`docs/governance/resource-consumption-policy.md`**. Enforced by **`npm run verify:resource-safety`** (runs inside `npm run build`).
+
+Hard bans — no exception without an entry in that policy's §8 **and** a `// resource-safety-allow:` annotation:
+
+- **No polling.** No `setInterval`/`setTimeout` loops calling Convex, no `refetchInterval`, no manual refresh timers, no SWR/React-Query polling. Convex `useQuery` is push-based.
+- **No unstable query args.** Never `Date.now()`, `new Date()`, or freshly-built objects/arrays inside `useQuery` args — use `useMemo` over primitive deps, `"skip"`, or the quantized `TriageClockProvider` clock.
+- **No effect-driven write loops.** An effect that mutates must not depend on server fields that mutation writes. Cleanup flushes are unmount-only or dirty-guarded with value equality.
+- **No heavy subscriptions in the shell.** Nothing expensive in `app/layout.tsx`, `AppChrome`, or providers — subscribe from the owning route; heavy analytics load on explicit user action.
+- **No unbounded reads.** `withIndex` + `.paginate()` / `.take(N)` on growth tables; `.collect()` only on a provably bounded set with a `// bounded: <why>` comment; never org-wide.
+- **No `Date.now()` inside query handlers** (defeats Convex caching) — pass time as an arg.
+- **No idle scheduler pumps.** `runAfter(0, self)` only when work provably remains (`dataBackup.executeBackupPass` is the reference shape). Every background job needs a bounded page, max attempts + backoff, and a stop condition. Schedule `internal*` only.
+- **No cron under 15 minutes**, no `seconds` intervals. Adding or changing a cron **requires** updating the cron registry table in the policy in the same change.
+- **Idempotency required** for outbound HTTP/email/SMS/payments and inbound webhooks — stable keys, dedupe by external id, capped retries.
+
+**Load-check gate (blocking):** any new or modified Convex-touching feature is exercised on a **local dev backend first** — perform the flow once, count calls in the `npx convex dev` log, then sit idle 60s and confirm **zero** new calls; check `window.__dlcConvexCostReport()` for zero duplicate subscriptions and near-zero arg churn. **Never load-test in production.** Order stays implement → verify → load-check → deploy. After shipping cron/subscription/write changes, check Convex **Insights → top functions**; a dollar cap does not hard-stop production in real time.
+
+## Convex reactivity & React correctness (mandatory — not a second cost policy)
+
+Convex `useQuery` is a **WebSocket subscription**: the server pushes when data changes. Polling, refetch, invalidate, cache-bust, and remount-`key` hacks are a **misuse of the technology**, not merely expensive. Cost/loop bans stay in the section above and **`resource-consumption-policy.md`**. Full architectural rules: **`docs/governance/convex-reactivity-policy.md`**. Enforced by **`npm run verify:convex-reactivity`** (runs at the end of `verify:resource-safety`).
+
+- **Decision table:** live read → `useQuery` (`convex/react`); write → `useMutation`; 3rd-party side effect → `action`; external event → webhook mutation; expensive aggregate → user-triggered `convex.query` (`AnalyticsPageClient`); SSR → `preloadQuery`. If you think you need to poll Convex, you don't.
+- **React:** exhaustive `useEffect` deps — no lying, no `eslint-disable` of `react-hooks/exhaustive-deps` without `// reactivity-allow: <reason>`. Never mutate server state from an effect that depends on that same state (`saveBorrowerIdentityDualWrite` ~36k: cleanup on `updatedAt`). Do not mirror `useQuery` into `useState` to render. Stable `useMemo`/`useCallback` args. One clock: `TriageClockProvider`. One presence: `hooks/usePresence.ts`.
+- **Mutations are retry-safe:** value-equality skip before `patch` (`dealPatchIsNoOp`, `jsonStableEqual` in `applyBorrowersDealPatch`); stable create-if-missing keys; in-flight submit guards. Canonical client flush: unmount-only + refs in `lib/contacts/borrowerTabWriteAdapter.ts`.
+- **State:** Convex owns server documents; React state is ephemeral UI; `localStorage` is for **preferences** (drawer width), not an online cache of rows.
+- **Validate on a local dev backend** (never production): no repeat invocations, no subscription storms on interaction, effects once per meaningful change, no-op writes skipped — extends the load-check above and `test-before-deploy.mdc`.
 
 ## Session discipline
 
@@ -26,10 +58,14 @@ Always Apply rule summary: `.cursor/rules/project-rules.mdc` + `.cursor/rules/go
 
 - `npm run qa:governance` — automated pre-complete gate (build + mobile core + Chromium smoke)  
 - `npm run verify:governance:docs` — verify policy files exist  
+- `npm run verify:resource-safety` — Convex cost/loop static gate (cron floor, polling bans, query-arg stability, `.collect()` ratchet; also runs `verify:convex-reactivity`)  
+- `npm run verify:convex-reactivity` — architectural ratchet (undocumented `exhaustive-deps` disables, cache-buster identifiers)  
 - `npm run deploy:prod` — build + Vercel production deploy (CLI; do not rely on GitHub-only deploy discipline)
 
 ## Enforcement checklist
 
 - `docs/testing/governance-qa-checklist.md`
 - `docs/governance/feature-completion-checklist.md`
+- `docs/governance/resource-consumption-policy.md` (§7 review checklist — Convex cost/loop safety)
+- `docs/governance/convex-reactivity-policy.md` (§8 review checklist — push vs pull, React deps, mutation retry-safety)
 - `docs/governance/MANIFEST.json` (artifact list — verified by `npm run verify:governance:docs`)

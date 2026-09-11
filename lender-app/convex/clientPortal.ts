@@ -46,6 +46,7 @@ import {
   portalSharedDocumentDto,
   portalUploadDto,
 } from "./portalPublicDtos";
+import { vaultDocumentOutboundFileName } from "../lib/library/vaultOutboundFileName";
 import {
   folderPortalPath,
   portalRequestGroupHeading,
@@ -427,7 +428,7 @@ export const getSharedDocumentDownloadUrl = query({
     return {
       status: "ok" as const,
       url,
-      fileName: doc.latestFileName ?? doc.title,
+      fileName: vaultDocumentOutboundFileName(doc),
       contentType: doc.latestContentType,
     };
   },

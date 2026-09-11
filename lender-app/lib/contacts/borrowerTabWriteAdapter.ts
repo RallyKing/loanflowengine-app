@@ -18,9 +18,12 @@ import { traceConvexMutation } from "@/lib/convexWriteStormGovernance";
 
 import { isPatchDealConflictResult } from "@/lib/pipeline/patchDealResult";
 
-import { useUserSettings } from "@/lib/userSettingsContext";
+import { useUserSettingsOptional } from "@/lib/userSettingsContext";
 
 import { intakeAutosaveDelayMs } from "@/lib/userSettingsStorage";
+import { sanitizeDealReoRows } from "@/lib/reo/scheduleOfReoModel";
+import { sanitizeDealBusinessDebtRows } from "@/lib/businessDebt/scheduleOfBusinessDebtModel";
+import { showOperationalToast } from "@/lib/ui/operationalToast";
 
 
 
@@ -66,7 +69,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
   const offline = useOfflineSync();
 
-  const { settings } = useUserSettings();
+  const { settings } = useUserSettingsOptional();
 
   const {
 
@@ -87,6 +90,11 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
     preferencesAccountId,
 
   } = useDealWorkspaceEditor();
+
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const unblockServerMergeForKeysRef = useRef(unblockServerMergeForKeys);
+  unblockServerMergeForKeysRef.current = unblockServerMergeForKeys;
 
 
 
@@ -161,9 +169,19 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
   const pendingPfsRef = useRef<PendingPfsPatch | null>(null);
 
-  const pendingReoRef = useRef<Sheet["reo"] | null>(null);
+  type PendingReoPatch = {
+    reo?: NonNullable<Sheet["reo"]>;
+    reoMeta?: Sheet["reoMeta"];
+  };
 
-  const pendingBusinessDebtRef = useRef<Sheet["weightedInterest"] | null>(null);
+  const pendingReoRef = useRef<PendingReoPatch | null>(null);
+
+  type PendingBusinessDebtPatch = {
+    weightedInterest?: NonNullable<Sheet["weightedInterest"]>;
+    businessDebtMeta?: Sheet["businessDebtMeta"];
+  };
+
+  const pendingBusinessDebtRef = useRef<PendingBusinessDebtPatch | null>(null);
 
   type PendingHouseholdPatch = {
     dependentsCount?: string;
@@ -255,7 +273,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       setBorrowerSavedAt(Date.now());
 
       if (!pendingBorrowersRef.current) {
-        unblockServerMergeForKeys(["borrowers"]);
+        unblockServerMergeForKeysRef.current(["borrowers"]);
       }
 
     } catch {
@@ -335,7 +353,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       setGuarantorSavedAt(Date.now());
 
       if (!pendingGuarantorsRef.current) {
-        unblockServerMergeForKeys(["guarantors"]);
+        unblockServerMergeForKeysRef.current(["guarantors"]);
       }
 
     } catch {
@@ -415,7 +433,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       setIncomeSavedAt(Date.now());
 
       if (!pendingIncomeRowsRef.current) {
-        unblockServerMergeForKeys(["incomeRows"]);
+        unblockServerMergeForKeysRef.current(["incomeRows"]);
       }
 
     } catch {
@@ -513,7 +531,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       setAssetsSavedAt(Date.now());
 
       if (!pendingPfsRef.current) {
-        unblockServerMergeForKeys(["assets", "liabilities"]);
+        unblockServerMergeForKeysRef.current(["assets", "liabilities"]);
       }
 
     } catch {
@@ -550,9 +568,9 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
   const flushReo = useCallback(async () => {
 
-    const reo = pendingReoRef.current;
+    const pending = pendingReoRef.current;
 
-    if (!reo) return;
+    if (!pending?.reo) return;
 
     pendingReoRef.current = null;
 
@@ -566,7 +584,9 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
         fileId,
 
-        reo,
+        reo: sanitizeDealReoRows(pending.reo),
+
+        ...(pending.reoMeta !== undefined ? { reoMeta: pending.reoMeta } : {}),
 
         ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}),
 
@@ -590,7 +610,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
         );
 
-        pendingReoRef.current = reo;
+        if (!pendingReoRef.current) pendingReoRef.current = pending;
 
         return;
 
@@ -599,12 +619,22 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       setReoSavedAt(Date.now());
 
       if (!pendingReoRef.current) {
-        unblockServerMergeForKeys(["reo"]);
+        unblockServerMergeForKeysRef.current(["reo", "reoMeta"]);
       }
 
-    } catch {
+    } catch (error) {
 
-      pendingReoRef.current = reo;
+      if (!pendingReoRef.current) pendingReoRef.current = pending;
+
+      showOperationalToast({
+        title: "Couldn't save Schedule of REO",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Check the property fields and try again.",
+        variant: "destructive",
+        durationMs: 6200,
+      });
 
     } finally {
 
@@ -630,9 +660,9 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
   const flushBusinessDebt = useCallback(async () => {
 
-    const weightedInterest = pendingBusinessDebtRef.current;
+    const pending = pendingBusinessDebtRef.current;
 
-    if (!weightedInterest) return;
+    if (!pending?.weightedInterest) return;
 
     pendingBusinessDebtRef.current = null;
 
@@ -646,7 +676,11 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
         fileId,
 
-        weightedInterest,
+        weightedInterest: sanitizeDealBusinessDebtRows(pending.weightedInterest),
+
+        ...(pending.businessDebtMeta !== undefined
+          ? { businessDebtMeta: pending.businessDebtMeta }
+          : {}),
 
         ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}),
 
@@ -670,7 +704,9 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
         );
 
-        pendingBusinessDebtRef.current = weightedInterest;
+        if (!pendingBusinessDebtRef.current) {
+          pendingBusinessDebtRef.current = pending;
+        }
 
         return;
 
@@ -679,12 +715,24 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       setBusinessDebtSavedAt(Date.now());
 
       if (!pendingBusinessDebtRef.current) {
-        unblockServerMergeForKeys(["weightedInterest"]);
+        unblockServerMergeForKeysRef.current(["weightedInterest", "businessDebtMeta"]);
       }
 
-    } catch {
+    } catch (error) {
 
-      pendingBusinessDebtRef.current = weightedInterest;
+      if (!pendingBusinessDebtRef.current) {
+        pendingBusinessDebtRef.current = pending;
+      }
+
+      showOperationalToast({
+        title: "Couldn't save Schedule of Business Debt",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Check the debt fields and try again.",
+        variant: "destructive",
+        durationMs: 6200,
+      });
 
     } finally {
 
@@ -781,7 +829,7 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
       setHouseholdSavedAt(Date.now());
 
       if (!pendingHouseholdRef.current) {
-        unblockServerMergeForKeys(["dependentsCount", "dependentsAges"]);
+        unblockServerMergeForKeysRef.current(["dependentsCount", "dependentsAges"]);
       }
 
     } catch {
@@ -938,11 +986,21 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
   const queueReoDualWrite = useCallback(
 
-    (reo: NonNullable<Sheet["reo"]>) => {
+    (patch: PendingReoPatch) => {
 
-      blockServerMergeForKeys(["reo"]);
+      blockServerMergeForKeys(["reo", "reoMeta"]);
 
-      pendingReoRef.current = reo;
+      pendingReoRef.current = {
+        reo: sanitizeDealReoRows(
+          patch.reo ??
+            pendingReoRef.current?.reo ??
+            draftRef.current?.reo,
+        ),
+        reoMeta:
+          patch.reoMeta !== undefined
+            ? patch.reoMeta
+            : pendingReoRef.current?.reoMeta ?? draftRef.current?.reoMeta,
+      };
 
       if (reoTimerRef.current) clearTimeout(reoTimerRef.current);
 
@@ -968,11 +1026,22 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
   const queueBusinessDebtDualWrite = useCallback(
 
-    (weightedInterest: NonNullable<Sheet["weightedInterest"]>) => {
+    (patch: PendingBusinessDebtPatch) => {
 
-      blockServerMergeForKeys(["weightedInterest"]);
+      blockServerMergeForKeys(["weightedInterest", "businessDebtMeta"]);
 
-      pendingBusinessDebtRef.current = weightedInterest;
+      pendingBusinessDebtRef.current = {
+        weightedInterest: sanitizeDealBusinessDebtRows(
+          patch.weightedInterest ??
+            pendingBusinessDebtRef.current?.weightedInterest ??
+            draftRef.current?.weightedInterest,
+        ),
+        businessDebtMeta:
+          patch.businessDebtMeta !== undefined
+            ? patch.businessDebtMeta
+            : pendingBusinessDebtRef.current?.businessDebtMeta ??
+              draftRef.current?.businessDebtMeta,
+      };
 
       if (businessDebtTimerRef.current) {
 
@@ -1030,75 +1099,57 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
 
 
+  const flushBorrowersRef = useRef(flushBorrowers);
+  flushBorrowersRef.current = flushBorrowers;
+  const flushGuarantorsRef = useRef(flushGuarantors);
+  flushGuarantorsRef.current = flushGuarantors;
+  const flushIncomeRef = useRef(flushIncome);
+  flushIncomeRef.current = flushIncome;
+  const flushPfsRef = useRef(flushPfs);
+  flushPfsRef.current = flushPfs;
+  const flushReoRef = useRef(flushReo);
+  flushReoRef.current = flushReo;
+  const flushBusinessDebtRef = useRef(flushBusinessDebt);
+  flushBusinessDebtRef.current = flushBusinessDebt;
+  const flushHouseholdRef = useRef(flushHousehold);
+  flushHouseholdRef.current = flushHousehold;
+  // Unmount only. flush* identities change when pipeline.updatedAt changes;
+  // putting them in effect deps re-ran cleanup (another dual-write) after every save.
+  // reactivity-allow: unmount-only flush; latest callbacks live in refs
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- latest flushes live in refs
   useEffect(() => {
-
     return () => {
-
       if (borrowerTimerRef.current) clearTimeout(borrowerTimerRef.current);
-
       if (guarantorTimerRef.current) clearTimeout(guarantorTimerRef.current);
-
       if (incomeTimerRef.current) clearTimeout(incomeTimerRef.current);
-
       if (pfsTimerRef.current) clearTimeout(pfsTimerRef.current);
-
       if (reoTimerRef.current) clearTimeout(reoTimerRef.current);
-
       if (businessDebtTimerRef.current) {
-
         clearTimeout(businessDebtTimerRef.current);
-
       }
-
       if (householdTimerRef.current) clearTimeout(householdTimerRef.current);
-
-      void flushBorrowers();
-
-      void flushGuarantors();
-
-      void flushIncome();
-
-      void flushPfs();
-
-      void flushReo();
-
-      void flushBusinessDebt();
-
-      void flushHousehold();
-
-      unblockServerMergeForKeys([
+      void flushBorrowersRef.current();
+      void flushGuarantorsRef.current();
+      void flushIncomeRef.current();
+      void flushPfsRef.current();
+      void flushReoRef.current();
+      void flushBusinessDebtRef.current();
+      void flushHouseholdRef.current();
+      unblockServerMergeForKeysRef.current([
         "borrowers",
         "guarantors",
         "incomeRows",
         "assets",
         "liabilities",
         "reo",
+        "reoMeta",
         "weightedInterest",
+        "businessDebtMeta",
         "dependentsCount",
         "dependentsAges",
       ]);
-
     };
-
-  }, [
-
-    flushBorrowers,
-
-    flushGuarantors,
-
-    flushIncome,
-
-    flushPfs,
-
-    flushReo,
-
-    flushBusinessDebt,
-
-    flushHousehold,
-
-    unblockServerMergeForKeys,
-
-  ]);
+  }, []);
 
 
 
@@ -1158,9 +1209,23 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
       if (key === "reo") {
 
-        updateDraftOnly("reo", value as Sheet["reo"]);
+        const sanitized = sanitizeDealReoRows(value as unknown[]);
 
-        queueReoDualWrite(value as NonNullable<Sheet["reo"]>);
+        updateDraftOnly("reo", sanitized as Sheet["reo"]);
+
+        queueReoDualWrite({ reo: sanitized });
+
+        return;
+
+      }
+
+      if (key === "reoMeta") {
+
+        updateDraftOnly("reoMeta", value as Sheet["reoMeta"]);
+
+        queueReoDualWrite({
+          reoMeta: value as Sheet["reoMeta"],
+        });
 
         return;
 
@@ -1168,19 +1233,34 @@ export function useContactFirstBorrowerUpdate(): ContactFirstBorrowerUpdate {
 
       if (key === "weightedInterest") {
 
+        const sanitized = sanitizeDealBusinessDebtRows(value as unknown[]);
+
         updateDraftOnly(
 
           "weightedInterest",
 
-          value as NonNullable<Sheet["weightedInterest"]>,
+          sanitized as NonNullable<Sheet["weightedInterest"]>,
 
         );
 
-        queueBusinessDebtDualWrite(
+        queueBusinessDebtDualWrite({
+          weightedInterest: sanitized,
+        });
 
-          value as NonNullable<Sheet["weightedInterest"]>,
+        return;
 
+      }
+
+      if (key === "businessDebtMeta") {
+
+        updateDraftOnly(
+          "businessDebtMeta",
+          value as Sheet["businessDebtMeta"],
         );
+
+        queueBusinessDebtDualWrite({
+          businessDebtMeta: value as Sheet["businessDebtMeta"],
+        });
 
         return;
 

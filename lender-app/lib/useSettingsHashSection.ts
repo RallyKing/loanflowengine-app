@@ -2,7 +2,8 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import {
-  isSettingsSectionId,
+  parseSettingsHashSection,
+  resolveCanonicalSettingsSection,
   type SettingsSectionId,
 } from "@/lib/settingsRegistry";
 
@@ -15,7 +16,7 @@ function subscribe(onStoreChange: () => void) {
 function getSnapshot(): SettingsSectionId | null {
   if (typeof window === "undefined") return null;
   const raw = window.location.hash.slice(1);
-  return isSettingsSectionId(raw) ? raw : null;
+  return parseSettingsHashSection(raw);
 }
 
 function getServerSnapshot(): SettingsSectionId | null {
@@ -24,7 +25,9 @@ function getServerSnapshot(): SettingsSectionId | null {
 
 /**
  * Current Settings deep-link section from `location.hash`, synced across
- * in-page `#…` navigation without a full reload.
+ * in-page `#…` navigation without a full reload. Includes legacy aliases
+ * (`appearance` → still returns `appearance` so callers can pick a tab;
+ * scroll targets use {@link resolveCanonicalSettingsSection}).
  */
 export function useSettingsHashSection(): SettingsSectionId | null {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
@@ -32,11 +35,12 @@ export function useSettingsHashSection(): SettingsSectionId | null {
 
 /** Scroll the matching settings `<section>` into view (respect hash on load). */
 export function useScrollSettingsSectionIntoView(
-  section: SettingsSectionId | null
+  section: SettingsSectionId | null,
 ) {
   useEffect(() => {
     if (!section) return;
-    const id = `settings-section-${section}`;
+    const canonical = resolveCanonicalSettingsSection(section);
+    const id = `settings-section-${canonical}`;
     const run = () => {
       const behavior: ScrollBehavior =
         typeof document !== "undefined" &&

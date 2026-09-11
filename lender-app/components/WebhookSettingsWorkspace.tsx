@@ -17,6 +17,7 @@ import {
   MAX_WEBHOOK_DELIVERY_ATTEMPTS,
   type NotificationEventType,
 } from "@/convex/notificationConstants";
+import { MerchantChannelNotificationSettings } from "@/components/MerchantChannelNotificationSettings";
 
 function deliveryStatusLabel(log: {
   status: string;
@@ -380,6 +381,8 @@ export function WebhookSettingsWorkspace() {
           </ul>
         )}
       </section>
+
+      <MerchantChannelNotificationSettings />
     </div>
   );
 }

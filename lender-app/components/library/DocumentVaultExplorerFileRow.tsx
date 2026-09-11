@@ -19,7 +19,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  Copy,
   Crop,
+  Download,
   Eye,
   EyeOff,
   FileText,
@@ -31,6 +33,7 @@ import {
   Link2,
   Loader2,
   MoreVertical,
+  AppWindow,
   Pencil,
   Trash2,
   UserPlus,
@@ -38,6 +41,11 @@ import {
 } from "lucide-react";
 import { LIBRARY_DOCUMENT_CATEGORY_LABELS } from "@/lib/library/documentVaultTaxonomy";
 import { VaultRegistryAssignMicroAction } from "@/components/library/VaultRegistryAssignMicroAction";
+import { DocumentVaultExplorerStarButton } from "@/components/library/DocumentVaultExplorerStarButton";
+import {
+  isCreatedVaultHtmlDocument,
+  isVaultImageDocument,
+} from "@/lib/library/vaultOutboundFileName";
 
 function formatDate(ts: number | undefined) {
   if (ts == null) return "—";
@@ -65,6 +73,8 @@ export type DocumentVaultExplorerFileRowProps = {
   canMutate: boolean;
   isBulkChecked: boolean;
   showBulkCheckbox: boolean;
+  isStarred?: boolean;
+  onToggleStar?: () => void;
   dragEnabled: boolean;
   busyDoc: Id<"libraryDocuments"> | null;
   isEditing: boolean;
@@ -77,12 +87,20 @@ export type DocumentVaultExplorerFileRowProps = {
   onCommitEdit: () => void;
   onCancelEdit: () => void;
   onPreview: () => void;
+  /** Float this document only (does not require floating the vault block). */
+  onOpenInWindow?: () => void;
   onToggleExpanded: () => void;
   onMoveDoc: () => void;
+  /** Move / copy this file to a sibling loan file in the same project. */
+  onMoveCopyToFile?: () => void;
+  crossFileTransferEnabled?: boolean;
   onOpenProperties: () => void;
   onSaveToContact: () => void;
   onAssignToRegistry: () => void;
+  onDownload: () => void;
   onDownloadAsPdf: () => void;
+  onDownloadOriginal?: () => void;
+  downloading?: boolean;
   exportingPdf?: boolean;
   onRemoveLink: () => void;
   onRejectDocument?: (reason: string) => void;
@@ -100,6 +118,8 @@ export function DocumentVaultExplorerFileRow({
   canMutate,
   isBulkChecked,
   showBulkCheckbox,
+  isStarred = false,
+  onToggleStar,
   dragEnabled,
   busyDoc,
   isEditing,
@@ -111,12 +131,18 @@ export function DocumentVaultExplorerFileRow({
   onCommitEdit,
   onCancelEdit,
   onPreview,
+  onOpenInWindow,
   onToggleExpanded,
   onMoveDoc,
+  onMoveCopyToFile,
+  crossFileTransferEnabled = false,
   onOpenProperties,
   onSaveToContact,
   onAssignToRegistry,
+  onDownload,
   onDownloadAsPdf,
+  onDownloadOriginal,
+  downloading = false,
   exportingPdf = false,
   onRemoveLink,
   onRejectDocument,
@@ -127,6 +153,10 @@ export function DocumentVaultExplorerFileRow({
   const [rejectOpen, setRejectOpen] = useState(false);
   const isCompact = density === "compact";
   const isRejected = row.reviewStatus === "rejected";
+  const isCreatedHtml = isCreatedVaultHtmlDocument(row);
+  const isVaultImage = isVaultImageDocument(row);
+  const downloadLabel = isCreatedHtml ? "Download PDF" : "Download";
+  const downloadBusy = downloading || (isCreatedHtml && exportingPdf);
   const showDragHandle =
     dragEnabled && row.linkScope === "pipeline" && canMutate && !isRejected;
 
@@ -149,7 +179,7 @@ export function DocumentVaultExplorerFileRow({
       <li style={dragStyle} className="min-w-0">
         <div
           className={cn(
-            "group/file flex min-h-7 min-w-0 items-center gap-0.5 border-b border-border/40 pr-1",
+            "group/file flex min-h-6 min-w-0 items-center gap-0.5 border-b border-border/40 py-0.5 pr-1",
             isSelected && "bg-primary/8",
             isHighlighted && "bg-amber-50/60 dark:bg-amber-950/20",
             isRejected && "bg-rose-50/50 dark:bg-rose-950/15",
@@ -162,7 +192,7 @@ export function DocumentVaultExplorerFileRow({
             <button
               ref={setNodeRef}
               type="button"
-              className="inline-flex h-6 w-4 shrink-0 cursor-grab items-center justify-center text-muted-foreground/60 hover:text-foreground active:cursor-grabbing"
+              className="inline-flex h-5 w-4 shrink-0 cursor-grab items-center justify-center text-muted-foreground/60 hover:text-foreground active:cursor-grabbing"
               style={{ touchAction: "none" }}
               aria-label={`Drag ${row.title}`}
               onClick={(e) => e.stopPropagation()}
@@ -172,8 +202,37 @@ export function DocumentVaultExplorerFileRow({
               <GripVertical className="h-3 w-3" aria-hidden />
             </button>
           ) : (
-            <span ref={setNodeRef} className="inline-block h-6 w-4 shrink-0" aria-hidden />
+            <span ref={setNodeRef} className="inline-block h-5 w-4 shrink-0" aria-hidden />
           )}
+
+          {/* bare + negative margin: ~40px hit without inflating dense row height */}
+          <div className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+            {showBulkCheckbox ? (
+              <label
+                className="relative -m-2.5 inline-flex cursor-pointer items-center justify-center p-2.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <OperationalCheckbox
+                  bare
+                  checked={isBulkChecked}
+                  onChange={onToggleBulkSelect}
+                  aria-label={`Select ${row.title}`}
+                />
+              </label>
+            ) : (
+              <span className="inline-block h-3.5 w-3.5" aria-hidden />
+            )}
+          </div>
+
+          {onToggleStar ? (
+            <DocumentVaultExplorerStarButton
+              starred={isStarred}
+              label={row.title}
+              onToggle={onToggleStar}
+              compact
+              testId={`document-vault-star-${row._id}`}
+            />
+          ) : null}
 
           <button
             type="button"
@@ -216,7 +275,7 @@ export function DocumentVaultExplorerFileRow({
           </button>
 
           <div
-            className="ml-auto flex shrink-0 items-center gap-1.5"
+            className="ml-auto flex shrink-0 items-center gap-1"
             onClick={(e) => e.stopPropagation()}
           >
             {canMutate && !isEditing ? (
@@ -237,6 +296,75 @@ export function DocumentVaultExplorerFileRow({
               >
                 <Eye className="h-2.5 w-2.5" aria-hidden />
                 View
+              </button>
+            ) : null}
+            {row.latestVersionNumber > 0 &&
+            row.latestVersionId &&
+            onOpenInWindow ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                onClick={onOpenInWindow}
+                title="Open in floating window"
+                aria-label={`Open ${row.title} in window`}
+                data-testid={`document-vault-window-${row._id}`}
+              >
+                <AppWindow className="h-2.5 w-2.5" aria-hidden />
+                Window
+              </button>
+            ) : null}
+            {row.latestVersionNumber > 0 && row.latestVersionId ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                onClick={onDownload}
+                disabled={downloadBusy}
+                title={downloadLabel}
+                aria-label={`${downloadLabel} ${row.title}`}
+                data-testid={`document-vault-download-${row._id}`}
+              >
+                {downloadBusy ? (
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
+                ) : (
+                  <Download className="h-2.5 w-2.5" aria-hidden />
+                )}
+                {isCreatedHtml ? "PDF" : "Download"}
+              </button>
+            ) : null}
+            {isVaultImage &&
+            row.latestVersionNumber > 0 &&
+            row.latestVersionId ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                onClick={onDownloadAsPdf}
+                disabled={exportingPdf}
+                title="Download PDF"
+                aria-label={`Download PDF ${row.title}`}
+                data-testid={`document-vault-download-pdf-${row._id}`}
+              >
+                {exportingPdf ? (
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
+                ) : (
+                  <FileDown className="h-2.5 w-2.5" aria-hidden />
+                )}
+                PDF
+              </button>
+            ) : null}
+            {canMutate &&
+            row.linkScope === "pipeline" &&
+            crossFileTransferEnabled &&
+            onMoveCopyToFile ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                onClick={onMoveCopyToFile}
+                title={`Move or copy ${row.title} to another file`}
+                aria-label={`Move or copy ${row.title} to another file`}
+                data-testid={`document-vault-file-move-copy-${row._id}`}
+              >
+                <Copy className="h-2.5 w-2.5" aria-hidden />
+                Move
               </button>
             ) : null}
             {canMutate && row.linkScope === "pipeline" ? (
@@ -290,13 +418,13 @@ export function DocumentVaultExplorerFileRow({
     <li style={dragStyle} className="min-w-0">
       <div
         className={cn(
-          "group/file flex min-h-10 min-w-0 items-center gap-1 rounded-dlc-sm border border-transparent pr-1 transition-colors duration-dlc-short ease-dlc-standard",
+          "group/file flex min-h-8 min-w-0 items-center gap-0.5 rounded-dlc-sm border border-transparent py-0.5 pr-1 transition-colors duration-dlc-short ease-dlc-standard",
           "hover:border-border/50 hover:bg-dlc-surface-high/80",
           isSelected && "border-primary/30 bg-primary/8",
           isHighlighted && "border-amber-400/50 bg-amber-50/70 dark:bg-amber-950/25",
           isRejected && "bg-rose-50/60 dark:bg-rose-950/20",
         )}
-        style={{ paddingLeft: `${depth * 14 + 28}px` }}
+        style={{ paddingLeft: `${depth * 12 + 20}px` }}
         data-testid={`document-vault-tree-document-${row._id}`}
         data-vault-document-id={row._id}
         onClick={isEditing ? undefined : onSelect}
@@ -317,7 +445,7 @@ export function DocumentVaultExplorerFileRow({
           <button
             ref={setNodeRef}
             type="button"
-            className="inline-flex h-7 w-5 shrink-0 cursor-grab items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/file:opacity-100 active:cursor-grabbing"
+            className="inline-flex h-6 w-4 shrink-0 cursor-grab items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/file:opacity-100 active:cursor-grabbing"
             style={{ touchAction: "none" }}
             aria-label={`Drag ${row.title}`}
             onClick={(e) => e.stopPropagation()}
@@ -327,27 +455,43 @@ export function DocumentVaultExplorerFileRow({
             <GripVertical className="h-3.5 w-3.5" aria-hidden />
           </button>
         ) : (
-          <span ref={setNodeRef} className="inline-block h-7 w-5 shrink-0" aria-hidden />
+          <span ref={setNodeRef} className="inline-block h-6 w-4 shrink-0" aria-hidden />
         )}
 
-        <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+        {/* bare + negative margin: ~40px hit without inflating row height */}
+        <div className="relative flex h-6 w-5 shrink-0 items-center justify-center">
           {showBulkCheckbox ? (
-            <OperationalCheckbox
-              checked={isBulkChecked}
-              onChange={onToggleBulkSelect}
-              aria-label={`Select ${row.title}`}
-            />
+            <label
+              className="relative -m-2.5 inline-flex cursor-pointer items-center justify-center p-2.5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <OperationalCheckbox
+                bare
+                checked={isBulkChecked}
+                onChange={onToggleBulkSelect}
+                aria-label={`Select ${row.title}`}
+              />
+            </label>
           ) : (
-            <span className="inline-block h-4 w-4" aria-hidden />
+            <span className="inline-block h-3.5 w-3.5" aria-hidden />
           )}
         </div>
+
+        {onToggleStar ? (
+          <DocumentVaultExplorerStarButton
+            starred={isStarred}
+            label={row.title}
+            onToggle={onToggleStar}
+            testId={`document-vault-star-${row._id}`}
+          />
+        ) : null}
 
         <FileText
           className="h-3.5 w-3.5 shrink-0 text-primary/70"
           aria-hidden
         />
 
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           {isEditing ? (
             <input
               type="text"
@@ -459,6 +603,20 @@ export function DocumentVaultExplorerFileRow({
               >
                 <Eye className="h-3.5 w-3.5" />
               </Button>
+              {onOpenInWindow ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  aria-label={`Open ${row.title} in window`}
+                  title="Open in floating window"
+                  data-testid={`document-vault-window-${row._id}`}
+                  onClick={onOpenInWindow}
+                >
+                  <AppWindow className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"
@@ -470,6 +628,42 @@ export function DocumentVaultExplorerFileRow({
               >
                 <Crop className="h-3.5 w-3.5" />
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                aria-label={`${downloadLabel} ${row.title}`}
+                title={downloadLabel}
+                data-testid={`document-vault-download-${row._id}`}
+                disabled={downloadBusy}
+                onClick={onDownload}
+              >
+                {downloadBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <Download className="h-3.5 w-3.5" aria-hidden />
+                )}
+              </Button>
+              {isVaultImage ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  aria-label={`Download PDF ${row.title}`}
+                  title="Download PDF"
+                  data-testid={`document-vault-download-pdf-${row._id}`}
+                  disabled={exportingPdf}
+                  onClick={onDownloadAsPdf}
+                >
+                  {exportingPdf ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <FileDown className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                </Button>
+              ) : null}
             </>
           ) : null}
           <Button
@@ -533,20 +727,55 @@ export function DocumentVaultExplorerFileRow({
               align="end"
             >
               <DropdownMenuItem
-                disabled={exportingPdf || !row.latestVersionId}
-                onClick={onDownloadAsPdf}
+                disabled={downloadBusy || !row.latestVersionId}
+                onClick={onDownload}
               >
-                {exportingPdf ? (
+                {downloadBusy ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                ) : (
+                ) : isCreatedHtml ? (
                   <FileDown className="h-4 w-4" aria-hidden />
+                ) : (
+                  <Download className="h-4 w-4" aria-hidden />
                 )}
-                Download as PDF
+                {downloadLabel}
               </DropdownMenuItem>
+              {isCreatedHtml && onDownloadOriginal ? (
+                <DropdownMenuItem
+                  disabled={downloading || !row.latestVersionId}
+                  onClick={onDownloadOriginal}
+                  data-testid={`document-vault-download-original-${row._id}`}
+                >
+                  {downloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Download className="h-4 w-4" aria-hidden />
+                  )}
+                  Download original (HTML)
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  disabled={exportingPdf || !row.latestVersionId}
+                  onClick={onDownloadAsPdf}
+                  data-testid={`document-vault-download-pdf-menu-${row._id}`}
+                >
+                  {exportingPdf ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <FileDown className="h-4 w-4" aria-hidden />
+                  )}
+                  {isVaultImage ? "Download PDF" : "Download as PDF"}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={onMoveDoc}>
                 <FolderInput className="h-4 w-4" aria-hidden />
                 Move to folder
               </DropdownMenuItem>
+              {crossFileTransferEnabled && onMoveCopyToFile ? (
+                <DropdownMenuItem onClick={onMoveCopyToFile}>
+                  <Copy className="h-4 w-4" aria-hidden />
+                  Move / copy to file…
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem onClick={onOpenProperties}>
                 <Info className="h-4 w-4" aria-hidden />
                 Properties

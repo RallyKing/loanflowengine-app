@@ -51,6 +51,39 @@ async function requireOrgSettingsAdmin(
   });
 }
 
+/**
+ * Settings admins can manage any playbook; lender editors can manage groups
+ * bound to a lender (profile Templates tab).
+ */
+async function requireTemplateLibraryWriter(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  memberUserKey: string | undefined,
+  opts?: { lenderBoundGroup?: Doc<"taskTemplateGroups"> | null; creatingForLenderId?: Id<"lenders"> },
+) {
+  await assertOrganizationId(ctx, organizationId);
+  try {
+    return await requireOrgMemberKey(ctx, organizationId, memberUserKey, {
+      permission: "settings.manage",
+      stage: "taskTemplateLibrary.requireOrgSettingsAdmin",
+    });
+  } catch {
+    const key = await requireOrgMemberKey(ctx, organizationId, memberUserKey, {
+      permission: "lenders.edit",
+      stage: "taskTemplateLibrary.requireLenderEditor",
+    });
+    if (opts?.creatingForLenderId) {
+      const lender = await ctx.db.get(opts.creatingForLenderId);
+      if (!lender) throw new Error("Lender not found");
+      return key;
+    }
+    if (opts?.lenderBoundGroup?.lenderId) {
+      return key;
+    }
+    throw new Error("Settings admin required to manage org-wide playbooks");
+  }
+}
+
 function safeAttachmentFileName(name: string) {
   const base = name.replace(/[/\\]/g, "").trim() || "file";
   return base.slice(0, TASK_FILE_MAX_NAME_LEN);
@@ -109,6 +142,53 @@ export const listTemplateGroups = query({
   },
 });
 
+/** Lender-profile playbooks only (by_lender index). */
+export const listGroupsForLender = query({
+  args: {
+    ...orgArgs,
+    lenderId: v.id("lenders"),
+  },
+  returns: v.array(
+    v.object({
+      _id: v.id("taskTemplateGroups"),
+      _creationTime: v.number(),
+      organizationId: v.id("organizations"),
+      name: v.string(),
+      description: v.optional(v.string()),
+      lenderId: v.optional(v.id("lenders")),
+      sortOrder: v.optional(v.number()),
+      updatedAt: v.number(),
+      updatedByUserKey: v.optional(v.string()),
+      templateCount: v.number(),
+    }),
+  ),
+  handler: async (ctx, { organizationId, memberUserKey, lenderId }) => {
+    await requireOrgReader(ctx, organizationId, memberUserKey);
+    const groups = await ctx.db
+      .query("taskTemplateGroups")
+      .withIndex("by_lender", (q) => q.eq("lenderId", lenderId))
+      .collect();
+    const scoped = groups.filter((g) => g.organizationId === organizationId);
+    scoped.sort(
+      (a, b) =>
+        (a.sortOrder ?? a._creationTime) - (b.sortOrder ?? b._creationTime) ||
+        a.name.localeCompare(b.name),
+    );
+    const out = [];
+    for (const group of scoped) {
+      const templates = await ctx.db
+        .query("taskTemplates")
+        .withIndex("by_group", (q) => q.eq("templateGroupId", group._id))
+        .collect();
+      out.push({
+        ...group,
+        templateCount: templates.length,
+      });
+    }
+    return out;
+  },
+});
+
 /** Templates in a group (ordered). */
 export const listTemplatesInGroup = query({
   args: {
@@ -146,19 +226,28 @@ export const upsertTemplateGroup = mutation({
     ctx,
     { organizationId, memberUserKey, groupId, name, description, lenderId },
   ) => {
-    const actor = await requireOrgSettingsAdmin(ctx, organizationId, memberUserKey);
     const trimmed = name.trim();
     if (!trimmed) throw new Error("Group name is required");
     if (lenderId) {
       const lender = await ctx.db.get(lenderId);
       if (!lender) throw new Error("Lender not found");
     }
+    const existing = groupId ? await ctx.db.get(groupId) : null;
+    if (groupId && (!existing || existing.organizationId !== organizationId)) {
+      throw new Error("Template group not found");
+    }
+    const actor = await requireTemplateLibraryWriter(
+      ctx,
+      organizationId,
+      memberUserKey,
+      {
+        lenderBoundGroup: existing,
+        creatingForLenderId:
+          !groupId && lenderId ? lenderId : existing?.lenderId,
+      },
+    );
     const now = Date.now();
-    if (groupId) {
-      const existing = await ctx.db.get(groupId);
-      if (!existing || existing.organizationId !== organizationId) {
-        throw new Error("Template group not found");
-      }
+    if (groupId && existing) {
       await ctx.db.patch(groupId, {
         name: trimmed,
         description: description?.trim() || undefined,
@@ -196,11 +285,6 @@ export const upsertTaskTemplate = mutation({
     clearAttachment: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const actor = await requireOrgSettingsAdmin(
-      ctx,
-      args.organizationId,
-      args.memberUserKey,
-    );
     const title = args.title.trim();
     if (!title) throw new Error("Template title is required");
 
@@ -208,6 +292,12 @@ export const upsertTaskTemplate = mutation({
     if (!group || group.organizationId !== args.organizationId) {
       throw new Error("Template group not found");
     }
+    const actor = await requireTemplateLibraryWriter(
+      ctx,
+      args.organizationId,
+      args.memberUserKey,
+      { lenderBoundGroup: group },
+    );
 
     if (args.triageLabelId) {
       const label = await ctx.db.get(args.triageLabelId);
@@ -285,11 +375,14 @@ export const deleteTaskTemplate = mutation({
     templateId: v.id("taskTemplates"),
   },
   handler: async (ctx, { organizationId, memberUserKey, templateId }) => {
-    await requireOrgSettingsAdmin(ctx, organizationId, memberUserKey);
     const row = await ctx.db.get(templateId);
     if (!row || row.organizationId !== organizationId) {
       throw new Error("Task template not found");
     }
+    const group = await ctx.db.get(row.templateGroupId);
+    await requireTemplateLibraryWriter(ctx, organizationId, memberUserKey, {
+      lenderBoundGroup: group,
+    });
     // Retain storage blobs — applied task attachments may reference the same id.
     await ctx.db.delete(templateId);
     return { ok: true as const };
@@ -302,11 +395,13 @@ export const deleteTemplateGroup = mutation({
     groupId: v.id("taskTemplateGroups"),
   },
   handler: async (ctx, { organizationId, memberUserKey, groupId }) => {
-    await requireOrgSettingsAdmin(ctx, organizationId, memberUserKey);
     const group = await ctx.db.get(groupId);
     if (!group || group.organizationId !== organizationId) {
       throw new Error("Template group not found");
     }
+    await requireTemplateLibraryWriter(ctx, organizationId, memberUserKey, {
+      lenderBoundGroup: group,
+    });
     const templates = await ctx.db
       .query("taskTemplates")
       .withIndex("by_group", (q) => q.eq("templateGroupId", groupId))
@@ -319,11 +414,21 @@ export const deleteTemplateGroup = mutation({
   },
 });
 
-/** Admin upload URL for template attachment blobs. */
+/** Admin / lender-editor upload URL for template attachment blobs. */
 export const generateTemplateAttachmentUploadUrl = mutation({
-  args: orgArgs,
-  handler: async (ctx, { organizationId, memberUserKey }) => {
-    await requireOrgSettingsAdmin(ctx, organizationId, memberUserKey);
+  args: {
+    ...orgArgs,
+    /** When set, lenders.edit may generate upload URLs for that lender's playbook. */
+    lenderId: v.optional(v.id("lenders")),
+  },
+  handler: async (ctx, { organizationId, memberUserKey, lenderId }) => {
+    if (lenderId) {
+      await requireTemplateLibraryWriter(ctx, organizationId, memberUserKey, {
+        creatingForLenderId: lenderId,
+      });
+    } else {
+      await requireOrgSettingsAdmin(ctx, organizationId, memberUserKey);
+    }
     return await ctx.storage.generateUploadUrl();
   },
 });

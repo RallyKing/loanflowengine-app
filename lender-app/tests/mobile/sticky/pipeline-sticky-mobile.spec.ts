@@ -45,6 +45,10 @@ describeOrSkip("Sticky — pipeline file chrome", () => {
       return;
     }
     await ensurePipelineHubListVisible(page);
+    if (await isPipelineHubDegraded(page).isVisible().catch(() => false)) {
+      testInfo.skip(true, "Pipeline hub unavailable (Convex/org scope)");
+      return;
+    }
 
     if (envId) {
       await page.goto(`/pipeline/${encodeURIComponent(envId)}`, {

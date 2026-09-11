@@ -14,10 +14,23 @@ import { cn } from "@/lib/cn";
 import { APP_DISPLAY_NAME } from "@/lib/brandIdentity";
 import { overlaySurfaceClass } from "@/lib/ui/layering";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
+import {
+  notificationDeepLinkHref,
+  type NotificationRow,
+} from "@/lib/notifications/notificationDeepLink";
+import { deriveAssigneeAttentionRows } from "@/lib/notifications/assigneeAttention";
+import {
+  TriageClockProvider,
+  useTriageClockTime,
+} from "@/components/providers/TriageClockProvider";
+import { formatRelativeTimestamp } from "@/lib/formatRelativeTimestamp";
 
 type AttentionPreview = FunctionReturnType<
   typeof api.tasks.assigneeAttentionPreview
 >;
+
+/** Rows rendered in the "Due & reminders" section after client-side classification. */
+const ATTENTION_MAX_ROWS = 10;
 
 function categoryLabel(c: Doc<"userNotifications">["category"]): string {
   switch (c) {
@@ -54,12 +67,28 @@ type UserNotificationsBellProps = {
   className?: string;
 };
 
-export function UserNotificationsBell({
+/**
+ * The bell's Convex queries are clock-free so Convex can cache them (see
+ * `notifications.listUnreadForUser` and `tasks.assigneeAttentionPreview`). Snooze
+ * and overdue/due-soon are therefore evaluated here, against the canonical
+ * minute-bucket clock — the same provider the pipeline triage surfaces use, scoped
+ * to this subtree so its tick re-renders the bell only, and never issues a query.
+ */
+export function UserNotificationsBell(props: UserNotificationsBellProps) {
+  return (
+    <TriageClockProvider>
+      <UserNotificationsBellInner {...props} />
+    </TriageClockProvider>
+  );
+}
+
+function UserNotificationsBellInner({
   userKey,
   onOpenTask,
   className,
 }: UserNotificationsBellProps) {
   const router = useRouter();
+  const nowBucket = useTriageClockTime();
   const { isLoaded: authLoaded, isSignedIn, userId } = useAuth();
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
   const k = sessionKey || (userKey?.trim() ?? "");
@@ -88,7 +117,7 @@ export function UserNotificationsBell({
     if (ready && activeOrganizationId) {
       q.attention = {
         query: api.tasks.assigneeAttentionPreview,
-        args: { organizationId: activeOrganizationId, maxRows: 10 },
+        args: { organizationId: activeOrganizationId, maxRows: ATTENTION_MAX_ROWS },
       };
     }
     return q;
@@ -99,18 +128,42 @@ export function UserNotificationsBell({
   const unread =
     unreadRaw instanceof Error ? 0 : (unreadRaw ?? 0);
   const itemsRaw = ready ? notificationResults.items : undefined;
-  const items: Doc<"userNotifications">[] | undefined =
+  const allItems: NotificationRow[] | undefined =
     itemsRaw instanceof Error
       ? undefined
-      : (itemsRaw as Doc<"userNotifications">[] | undefined);
+      : (itemsRaw as NotificationRow[] | undefined);
   const attentionRaw =
     ready && activeOrganizationId
       ? notificationResults.attention
       : undefined;
-  const attention: AttentionPreview | undefined =
+  const attentionCandidates: AttentionPreview | undefined =
     attentionRaw instanceof Error
       ? undefined
       : (attentionRaw as AttentionPreview | undefined);
+
+  const items = useMemo(
+    () =>
+      allItems?.filter(
+        (row) => row.snoozedUntil == null || row.snoozedUntil <= nowBucket,
+      ),
+    [allItems, nowBucket],
+  );
+
+  /**
+   * `unreadCountForUser` counts unread rows without applying snooze, so discount the
+   * still-snoozed rows visible in this page. Nothing in the product snoozes a
+   * notification today, which makes this a no-op in practice.
+   */
+  const snoozedHidden = (allItems?.length ?? 0) - (items?.length ?? 0);
+
+  const attention = useMemo(
+    () =>
+      deriveAssigneeAttentionRows(attentionCandidates, {
+        now: nowBucket,
+        maxRows: ATTENTION_MAX_ROWS,
+      }),
+    [attentionCandidates, nowBucket],
+  );
 
   const markRead = useMutation(api.notifications.markRead);
   const markAllRead = useMutation(api.notifications.markAllReadForUser);
@@ -141,21 +194,26 @@ export function UserNotificationsBell({
 
   if (!ready) return null;
 
-  const count = unread ?? 0;
+  const count = Math.max((unread ?? 0) - snoozedHidden, 0);
 
-  const openRow = async (row: Doc<"userNotifications">) => {
+  const openRow = async (row: NotificationRow) => {
     await markRead({ id: row._id, memberUserKey: k });
-    if (row.taskId) {
-      if (onOpenTask) onOpenTask(row.taskId);
-      else router.push(`/tasks?task=${row.taskId}`);
-    } else if (row.fileId) {
-      router.push("/pipeline");
+    if (row.taskId && onOpenTask) {
+      onOpenTask(row.taskId);
+      setOpen(false);
+      return;
     }
+    const href = notificationDeepLinkHref(row);
+    if (href) router.push(href);
     setOpen(false);
   };
 
   return (
-    <div ref={rootRef} className={cn("relative", className)}>
+    <div
+      ref={rootRef}
+      className={cn("relative", className)}
+      data-portal-overlay-trigger
+    >
       <Button
         type="button"
         variant="outline"
@@ -187,7 +245,7 @@ export function UserNotificationsBell({
         open={open}
         onClose={() => setOpen(false)}
         position={panelPos}
-        layer="DROPDOWN"
+        layer="CHROME_MENU"
         className="p-3"
         aria-label="Notifications"
         data-testid="notifications-inbox-panel"
@@ -220,28 +278,57 @@ export function UserNotificationsBell({
                 </p>
               ) : (
                 <ul className="space-y-1">
-                  {items.map((row) => (
-                    <li key={row._id}>
-                      <button
-                        type="button"
-                        className="w-full rounded-md border border-transparent px-2 py-1.5 text-left text-sm transition-colors hover:border-border hover:bg-muted/60"
-                        onClick={() => void openRow(row)}
-                      >
-                        <span className="line-clamp-2">{row.summary}</span>
-                        <span className="mt-0.5 block text-[10px] text-muted-foreground">
-                          {categoryLabel(row.category)}
-                          {"actorDisplayUsername" in row &&
-                          typeof row.actorDisplayUsername === "string" &&
-                          row.actorDisplayUsername.trim() ? (
-                            <>
-                              {" "}
-                              · {row.actorDisplayUsername}
-                            </>
+                  {items.map((row) => {
+                    const href = notificationDeepLinkHref(row);
+                    const fileName = row.contextFileName?.trim();
+                    const contactName = row.contextContactName?.trim();
+                    const stageLabel = row.contextStageLabel?.trim();
+                    const actor =
+                      !contactName && row.actorDisplayUsername?.trim()
+                        ? row.actorDisplayUsername.trim()
+                        : null;
+                    const metaBits = [
+                      categoryLabel(row.category),
+                      stageLabel,
+                      formatRelativeTimestamp(row.createdAt),
+                    ].filter(Boolean);
+                    return (
+                      <li key={row._id}>
+                        <button
+                          type="button"
+                          className="flex w-full min-h-10 items-start gap-2 rounded-md border border-transparent px-2 py-2 text-left text-sm transition-colors hover:border-border hover:bg-muted/60"
+                          onClick={() => void openRow(row)}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="line-clamp-2 font-medium">
+                              {row.summary}
+                            </span>
+                            {fileName ? (
+                              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                                {fileName}
+                              </span>
+                            ) : null}
+                            {contactName || actor ? (
+                              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                                {contactName ?? actor}
+                              </span>
+                            ) : null}
+                            <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                              {metaBits.join(" · ")}
+                            </span>
+                          </span>
+                          {href ? (
+                            <span
+                              className="shrink-0 pt-0.5 text-[10px] font-medium text-muted-foreground"
+                              aria-hidden
+                            >
+                              Open
+                            </span>
                           ) : null}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </section>

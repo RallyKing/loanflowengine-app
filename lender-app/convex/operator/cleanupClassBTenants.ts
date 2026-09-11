@@ -195,6 +195,27 @@ async function deleteOrgScopedRows(
       .collect(),
   );
   await del(
+    "dueDiligenceRuns",
+    await ctx.db
+      .query("dueDiligenceRuns")
+      .withIndex("by_organization_created", (q) => q.eq("organizationId", orgId))
+      .collect(),
+  );
+  await del(
+    "dueDiligencePrompts",
+    await ctx.db
+      .query("dueDiligencePrompts")
+      .withIndex("by_organization", (q) => q.eq("organizationId", orgId))
+      .collect(),
+  );
+  await del(
+    "orgAiProviders",
+    await ctx.db
+      .query("orgAiProviders")
+      .withIndex("by_organization", (q) => q.eq("organizationId", orgId))
+      .collect(),
+  );
+  await del(
     "integrationApiKeys",
     await ctx.db
       .query("integrationApiKeys")

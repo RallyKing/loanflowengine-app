@@ -110,7 +110,7 @@ export type ProductReleasePost = {
   slug: string;
   title: string;
   summary: string;
-  /** Plain-language paragraphs for the feed. */
+  /** Plain-language paragraphs for the feed (shown when the user expands details). */
   body: string[];
   changeType: ProductReleaseChangeType;
   affectedPersonas: string[];
@@ -118,6 +118,8 @@ export type ProductReleasePost = {
   learnMoreSlug?: string;
   status: ProductReleasePostStatus;
   publishedAt?: number;
+  /** Optional Vercel deployment id (e.g. dpl_…) for ship traceability. */
+  deploymentId?: string;
   visibility?: ProductKnowledgeVisibilityRule;
 };
 

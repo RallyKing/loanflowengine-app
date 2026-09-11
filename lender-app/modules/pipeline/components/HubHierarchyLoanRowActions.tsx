@@ -5,6 +5,7 @@ import { useMutation } from "convex/react";
 import {
   Copy,
   ExternalLink,
+  LogOut,
   Pencil,
   Share2,
   Trash2,
@@ -16,6 +17,8 @@ import { Input } from "@/components/ui/Input";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
 import { traceDeleteExecution } from "@/lib/ui/deleteExecutionTrace";
 import { withOperationalTimeout } from "@/lib/ui/operationalAsync";
+import { showOperationalToast } from "@/lib/ui/operationalToast";
+import { convexClientErrorMessage } from "@/lib/ui/convexErrorMessage";
 import {
   HubIconButton,
   HubModalShell,
@@ -25,12 +28,8 @@ import { cn } from "@/lib/cn";
 import { hubLoanFileActionCapabilities } from "@/lib/pipeline/hubLoanFileActions";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
 
-function convexMutationErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "data" in error) {
-    const data = (error as { data: unknown }).data;
-    if (typeof data === "string" && data.trim()) return data;
-  }
-  return error instanceof Error ? error.message : String(error);
+function mutationErrorMessage(error: unknown): string {
+  return convexClientErrorMessage(error);
 }
 
 export function HubHierarchyLoanRowActions({
@@ -39,17 +38,24 @@ export function HubHierarchyLoanRowActions({
   memberUserKey,
   onOpen,
   onDuplicated,
+  compactMobile = false,
 }: {
   row: PipelineTablePreviewRow;
   organizationId: Id<"organizations">;
   memberUserKey: string;
   onOpen: () => void;
   onDuplicated?: (fileId: Id<"pipeline">) => void;
+  /**
+   * Mobile hub cards: natural-width rail, hide redundant Open (title already opens).
+   * Desktop keeps the fixed 9.25rem hover rail.
+   */
+  compactMobile?: boolean;
 }) {
   const { confirm } = useOperationalConfirm();
   const caps = hubLoanFileActionCapabilities(row);
   const patchPipeline = useMutation(api.pipeline.patch);
   const deleteFile = useMutation(api.hierarchyCrudMutations.deletePipelineFile);
+  const leaveShare = useMutation(api.pipelineFileShares.leaveShare);
   const createFileWithDeal = useMutation(api.pipeline.createFileWithDeal);
 
   const [renameOpen, setRenameOpen] = useState(false);
@@ -75,10 +81,50 @@ export function HubHierarchyLoanRowActions({
       });
       setRenameOpen(false);
     } catch (e) {
-      setError(convexMutationErrorMessage(e));
+      setError(mutationErrorMessage(e));
     } finally {
       setSaving(false);
     }
+  };
+
+  const openLeaveShareConfirm = () => {
+    void (async () => {
+      await confirm({
+        variant: "delete",
+        title: "Leave shared loan file",
+        entityName: row.fileName,
+        impact:
+          "You will lose access to this file. The owner and other collaborators keep their access.",
+        confirmLabel: "Leave share",
+        cascade: [
+          {
+            text: "This does not delete the owner’s loan file.",
+          },
+        ],
+        testId: "hub-loan-leave-share-modal",
+        onConfirm: async () => {
+          const result = await withOperationalTimeout(
+            leaveShare({
+              fileId: row._id,
+              memberUserKey,
+            }),
+            {
+              timeoutMs: 25_000,
+              message:
+                "Leave is taking longer than expected. Check your connection, then try again.",
+            },
+          );
+          if (!result.ok) {
+            throw new Error(result.message);
+          }
+          showOperationalToast({
+            title: "Left share",
+            description: `“${row.fileName}” was removed from your pipeline.`,
+            variant: "success",
+          });
+        },
+      });
+    })();
   };
 
   const openDeleteConfirm = () => {
@@ -161,7 +207,7 @@ export function HubHierarchyLoanRowActions({
       });
       onDuplicated?.(id);
     } catch (e) {
-      setError(convexMutationErrorMessage(e));
+      setError(mutationErrorMessage(e));
     } finally {
       setDuplicating(false);
     }
@@ -171,19 +217,34 @@ export function HubHierarchyLoanRowActions({
     <>
       <div
         className={cn(
-          "hub-row-action-rail flex w-[9.25rem] min-w-[9.25rem] max-w-[9.25rem] shrink-0 grow-0 basis-[9.25rem] flex-none flex-nowrap items-center justify-end gap-0.5",
+          "hub-row-action-rail flex flex-none flex-nowrap items-center justify-end gap-0.5",
+          compactMobile
+            ? "w-auto min-w-0 max-w-none shrink-0 max-md:w-auto max-md:min-w-0 max-md:max-w-none md:w-[9.25rem] md:min-w-[9.25rem] md:max-w-[9.25rem] md:basis-[9.25rem]"
+            : "w-[9.25rem] min-w-[9.25rem] max-w-[9.25rem] shrink-0 grow-0 basis-[9.25rem]",
           "opacity-100 md:opacity-0 md:transition-opacity md:group-hover/loan-row:opacity-100 md:focus-within:opacity-100",
         )}
         data-testid="hub-loan-row-actions"
         onClick={(e) => e.stopPropagation()}
       >
-        <HubIconButton
-          testId="hub-loan-open"
-          tooltip="Open loan file"
-          onClick={() => onOpen()}
-        >
-          <ExternalLink className="h-4 w-4" aria-hidden />
-        </HubIconButton>
+        {compactMobile ? (
+          <span className="hidden md:contents">
+            <HubIconButton
+              testId="hub-loan-open"
+              tooltip="Open loan file"
+              onClick={() => onOpen()}
+            >
+              <ExternalLink className="h-4 w-4" aria-hidden />
+            </HubIconButton>
+          </span>
+        ) : (
+          <HubIconButton
+            testId="hub-loan-open"
+            tooltip="Open loan file"
+            onClick={() => onOpen()}
+          >
+            <ExternalLink className="h-4 w-4" aria-hidden />
+          </HubIconButton>
+        )}
         <HubIconButton
           testId="hub-loan-edit"
           tooltip="Rename loan file"
@@ -213,15 +274,26 @@ export function HubHierarchyLoanRowActions({
         >
           <Share2 className="h-4 w-4" aria-hidden />
         </HubIconButton>
-        <HubIconButton
-          testId="hub-loan-delete"
-          tooltip="Delete loan file"
-          destructive
-          disabled={!caps.canDelete}
-          onClick={openDeleteConfirm}
-        >
-          <Trash2 className="h-4 w-4" aria-hidden />
-        </HubIconButton>
+        {caps.canLeaveShare ? (
+          <HubIconButton
+            testId="hub-loan-leave-share"
+            tooltip="Leave share"
+            destructive
+            onClick={openLeaveShareConfirm}
+          >
+            <LogOut className="h-4 w-4" aria-hidden />
+          </HubIconButton>
+        ) : (
+          <HubIconButton
+            testId="hub-loan-delete"
+            tooltip="Delete loan file"
+            destructive
+            disabled={!caps.canDelete}
+            onClick={openDeleteConfirm}
+          >
+            <Trash2 className="h-4 w-4" aria-hidden />
+          </HubIconButton>
+        )}
       </div>
 
       {renameOpen ? (

@@ -76,11 +76,18 @@ async function deletePipelineFileSatellites(
       .collect()) {
       await ctx.db.delete(thread._id);
     }
-  }
 
-  for (const outbound of await ctx.db.query("outboundMessages").collect()) {
-    if (outbound.relatedPipelineFileId !== fileId) continue;
-    await ctx.db.patch(outbound._id, { relatedPipelineFileId: undefined });
+    // Indexed detach — never full-table-scan outboundMessages (read-limit bomb).
+    for (const outbound of await ctx.db
+      .query("outboundMessages")
+      .withIndex("by_org_file", (q) =>
+        q
+          .eq("organizationId", organizationId)
+          .eq("relatedPipelineFileId", fileId),
+      )
+      .collect()) {
+      await ctx.db.patch(outbound._id, { relatedPipelineFileId: undefined });
+    }
   }
 
   for (const audit of await ctx.db
@@ -88,6 +95,96 @@ async function deletePipelineFileSatellites(
     .withIndex("by_file_at", (q) => q.eq("pipelineFileId", fileId))
     .collect()) {
     await ctx.db.patch(audit._id, { pipelineFileId: undefined });
+  }
+}
+
+/**
+ * Document Vault + portal-link rows scoped to a pipeline file.
+ * Uses by_pipeline / by_file indexes only (no org-wide table scans).
+ */
+async function deletePipelineDocumentVaultGraph(
+  ctx: MutationCtx,
+  fileId: Id<"pipeline">,
+): Promise<void> {
+  const fileTasks = await ctx.db
+    .query("documentVaultFileTasks")
+    .withIndex("by_pipeline_sort", (q) => q.eq("pipelineFileId", fileId))
+    .collect();
+
+  for (const task of fileTasks) {
+    const uploadTokens = await ctx.db
+      .query("documentVaultFileTaskUploadTokens")
+      .withIndex("by_fileTask", (q) => q.eq("fileTaskId", task._id))
+      .collect();
+    for (const tok of uploadTokens) {
+      await ctx.db.delete(tok._id);
+    }
+  }
+
+  for (const folder of await ctx.db
+    .query("documentFolders")
+    .withIndex("by_pipeline", (q) => q.eq("pipelineFileId", fileId))
+    .collect()) {
+    await ctx.db.delete(folder._id);
+  }
+
+  for (const task of fileTasks) {
+    await ctx.db.delete(task._id);
+  }
+
+  for (const token of await ctx.db
+    .query("documentVaultClientBundleTokens")
+    .withIndex("by_pipeline", (q) => q.eq("pipelineFileId", fileId))
+    .collect()) {
+    await ctx.db.delete(token._id);
+  }
+
+  for (const link of await ctx.db
+    .query("clientPortalLinks")
+    .withIndex("by_pipeline_created", (q) => q.eq("pipelineFileId", fileId))
+    .collect()) {
+    await ctx.db.delete(link._id);
+  }
+
+  for (const snap of await ctx.db
+    .query("pipelineBlockSnapshots")
+    .withIndex("by_pipeline_block", (q) => q.eq("pipelineFileId", fileId))
+    .collect()) {
+    await ctx.db.delete(snap._id);
+  }
+
+  for (const note of await ctx.db
+    .query("pipelineFileNotes")
+    .withIndex("by_file", (q) => q.eq("pipelineFileId", fileId))
+    .collect()) {
+    for (const link of await ctx.db
+      .query("pipelineFileNoteLinks")
+      .withIndex("by_note", (q) => q.eq("noteId", note._id))
+      .collect()) {
+      await ctx.db.delete(link._id);
+    }
+    await ctx.db.delete(note._id);
+  }
+
+  for (const line of await ctx.db
+    .query("constructionBudgetLines")
+    .withIndex("by_file", (q) => q.eq("fileId", fileId))
+    .collect()) {
+    await ctx.db.delete(line._id);
+  }
+
+  for (const sheet of await ctx.db
+    .query("constructionBudgetSheets")
+    .withIndex("by_file", (q) => q.eq("fileId", fileId))
+    .collect()) {
+    await ctx.db.delete(sheet._id);
+  }
+
+  for (const run of await ctx.db
+    .query("dueDiligenceRuns")
+    .withIndex("by_pipeline_created", (q) => q.eq("pipelineFileId", fileId))
+    .collect()) {
+    await ctx.db.delete(run._id);
   }
 }
 
@@ -185,7 +282,6 @@ export async function deletePipelineGraph(
     .query("clientPortalGrants")
     .withIndex("by_file", (q) => q.eq("pipelineFileId", fileId))
     .collect();
-  const deadGrantIds = new Set(portalGrants.map((g) => g._id));
 
   for (const g of portalGrants) {
     for (const u of await ctx.db
@@ -213,24 +309,11 @@ export async function deletePipelineGraph(
     }
     await ctx.db.delete(g._id);
   }
-
-  if (deadGrantIds.size > 0) {
-    for (const m of await ctx.db.query("clientPortalMagicLinks").collect()) {
-      if (m.grantIds.some((id) => deadGrantIds.has(id))) {
-        await ctx.db.delete(m._id);
-      }
-    }
-    for (const s of await ctx.db.query("clientPortalSessions").collect()) {
-      const remaining = s.grantIds.filter((id) => !deadGrantIds.has(id));
-      if (remaining.length === 0) {
-        await ctx.db.delete(s._id);
-      } else if (remaining.length !== s.grantIds.length) {
-        await ctx.db.patch(s._id, { grantIds: remaining });
-      }
-    }
-  }
+  // Intentionally skip full-table scans of clientPortalMagicLinks / sessions.
+  // Dead grant IDs in those rows are ignored at runtime; sessions expire.
 
   await removeAllLibraryLinksForPipelineFile(ctx, fileId);
+  await deletePipelineDocumentVaultGraph(ctx, fileId);
 
   await deleteIndexedGraphEdgesForFile(ctx, fileId);
   await deleteResourceSharesForEntity(ctx, "pipeline", String(fileId));

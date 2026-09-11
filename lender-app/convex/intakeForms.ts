@@ -11,6 +11,13 @@ import {
   dealPartyFieldByRegistryKey,
   isKnownDealPartyRegistryKey,
 } from "../lib/intake/dealPartyFieldRegistry";
+import {
+  findPfsInstance,
+  normalizePfsInstances,
+  pfsDealPatchFromInstances,
+  replacePfsInstanceData,
+} from "../lib/pfs/pfsInstances";
+import { pfsInstanceNameFromFormTitle } from "../lib/pfs/pfsFormAssociation";
 import { buildInitialIntakeDocument } from "./intakeDocumentDefaults";
 import {
   mergePatchIntoDeal,
@@ -205,6 +212,12 @@ export const updateForm = mutation({
       patch.referralPartnerContactId = args.referralPartnerContactId;
     }
     await ctx.db.patch(args.formId, patch);
+    if (patch.name && form.fileId && form.sourceKind === "pfs_instance") {
+      const file = await ctx.db.get(form.fileId);
+      if (file) {
+        await syncLinkedPfsInstanceNameFromForm(ctx, file, form, patch.name);
+      }
+    }
     return { ok: true as const };
   },
 });
@@ -424,6 +437,47 @@ async function upsertReferralPartnerLink(
   });
 }
 
+async function syncLinkedPfsInstanceNameFromForm(
+  ctx: MutationCtx,
+  file: Doc<"pipeline">,
+  form: Doc<"intakeForms">,
+  formName: string,
+): Promise<void> {
+  const deal = await resolveDealBaseForPipelinePatch(ctx, file);
+  const instances = normalizePfsInstances(deal);
+  const target =
+    (form.sourceKind === "pfs_instance"
+      ? findPfsInstance(instances, form.sourceInstanceId)
+      : undefined) ??
+    instances.find((inst) => inst.intakeFormId === String(form._id));
+  if (!target) return;
+  const nextName = pfsInstanceNameFromFormTitle(formName);
+  if (target.name === nextName) return;
+  const nextInstances = instances.map((inst) =>
+    inst.id === target.id ? { ...inst, name: nextName } : inst,
+  );
+  const { pfsInstances, pfs } = pfsDealPatchFromInstances(nextInstances);
+  const now = Date.now();
+  await ctx.db.patch(file._id, {
+    dealData: mergePatchIntoDeal(deal, {
+      pfsInstances,
+      pfs,
+      updatedAt: now,
+    }) as Doc<"pipeline">["dealData"],
+    updatedAt: now,
+  });
+  if (file.intakeSheetId) {
+    const intakeRow = await ctx.db.get(file.intakeSheetId);
+    if (intakeRow) {
+      await ctx.db.patch(file.intakeSheetId, {
+        pfsInstances,
+        pfs,
+        updatedAt: now,
+      });
+    }
+  }
+}
+
 function buildDealPatchesFromValues(values: SubmissionValues) {
   const borrowerPatch: Record<string, unknown> = {};
   const guarantorPatch: Record<string, unknown> = {};
@@ -510,11 +564,36 @@ async function hydrateDealFromSubmission(
     pfs = { ...(pfs ?? {}), ...pfsPatch };
   }
 
+  let pfsInstancesPatch: ReturnType<typeof pfsDealPatchFromInstances> | undefined;
+  if (Object.keys(pfsPatch).length > 0) {
+    const instances = normalizePfsInstances(deal);
+    const target =
+      (form.sourceKind === "pfs_instance"
+        ? findPfsInstance(instances, form.sourceInstanceId)
+        : undefined) ??
+      instances.find((inst) => inst.intakeFormId === String(form._id)) ??
+      (instances.length === 1 ? instances[0] : undefined);
+    if (target) {
+      const nextData = {
+        ...(target.data as Record<string, unknown>),
+        ...pfsPatch,
+      };
+      const nextInstances = replacePfsInstanceData(
+        instances,
+        target.id,
+        nextData as never,
+      );
+      pfsInstancesPatch = pfsDealPatchFromInstances(nextInstances);
+      pfs = pfsInstancesPatch.pfs as Record<string, unknown>;
+    }
+  }
+
   const mergedDeal = mergePatchIntoDeal(deal, {
     borrowers,
     ...(guarantors.length > 0 ? { guarantors } : {}),
     ...(business ? { business } : {}),
     ...(pfs ? { pfs } : {}),
+    ...(pfsInstancesPatch ? { pfsInstances: pfsInstancesPatch.pfsInstances } : {}),
     sourceType: form.formType === "referral" ? "referral" : deal.sourceType,
     updatedAt: Date.now(),
   }) as Record<string, unknown>;

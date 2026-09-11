@@ -9,6 +9,7 @@ import {
   Info,
   Loader2,
   Maximize2,
+  AppWindow,
   Merge,
   Minimize2,
   RotateCcw,
@@ -52,6 +53,8 @@ export type DocumentManipulationToolbarProps = {
   onClosePreview?: () => void;
   onToggleFullscreen?: () => void;
   previewFullscreen?: boolean;
+  /** Float the current document (closes modal when provided by parent). */
+  onOpenInWindow?: () => void;
   onOpenProperties?: () => void;
   fileName?: string;
   className?: string;
@@ -80,6 +83,7 @@ export function DocumentManipulationToolbar({
   onClosePreview,
   onToggleFullscreen,
   previewFullscreen = false,
+  onOpenInWindow,
   onOpenProperties,
   fileName,
   className,
@@ -90,6 +94,7 @@ export function DocumentManipulationToolbar({
   const chromeActions =
     onClosePreview ||
     onToggleFullscreen ||
+    onOpenInWindow ||
     onOpenProperties ||
     onEnterEditMode ||
     onCancelEditMode ? (
@@ -130,6 +135,21 @@ export function DocumentManipulationToolbar({
             title="Properties"
           >
             <Info className="h-4 w-4" />
+          </Button>
+        ) : null}
+        {onOpenInWindow ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1 px-2 text-xs"
+            onClick={onOpenInWindow}
+            aria-label="Open in floating window"
+            title="Open in floating window"
+            data-testid="document-vault-open-in-window"
+          >
+            <AppWindow className="h-3.5 w-3.5" aria-hidden />
+            <span className="hidden sm:inline">Window</span>
           </Button>
         ) : null}
         {onToggleFullscreen ? (
@@ -303,7 +323,7 @@ export function DocumentManipulationToolbar({
               <label className="inline-flex h-8 items-center gap-1 rounded-dlc-sm border border-input bg-background px-2 text-xs">
                 <Merge className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <select
-                  className="max-w-[8rem] bg-transparent text-xs outline-none"
+                  className="max-w-[8rem] bg-transparent text-base outline-none md:text-xs"
                   defaultValue=""
                   disabled={busy}
                   onChange={(e) => {

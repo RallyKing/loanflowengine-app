@@ -2,6 +2,36 @@
 
 The app is **Direct Lending Connection** (this repo or parent folder on disk may still be named e.g. “Lender List”).
 
+## Product Updates (required on user-facing ships)
+
+After shipping user-facing work, **publish a Product Updates entry** in the same session so the masterpage **Updates** bell shows what changed.
+
+- **UI:** `components/ProductUpdatesBell.tsx` (title + summary + expandable details)
+- **Table:** `productReleasePosts` via `productKnowledge:operatorPublishReleasePost` (operator-gated; stable `slug` = idempotent) or Settings → Product knowledge
+- **Session seed file:** `lib/product-knowledge/sessionReleasePosts.json` — append entries, then publish
+- Each entry needs **title**, **summary**, and **body** paragraphs (full description). Only list confirmed shipped work.
+
+See `lib/product-knowledge/README.md`.
+
+## Clean clone / CI typecheck (no interactive Convex login)
+
+`convex/_generated/` is **gitignored** (project convention — do not commit generated types or `.env.local`). A fresh clone cannot `tsc` / `next build` until codegen runs.
+
+From `lender-app/`:
+
+```bash
+npm ci
+npm run convex:codegen
+```
+
+`npm run convex:codegen` wraps `convex codegen --typecheck disable` and is safe for CI/agents:
+
+- If `CONVEX_DEPLOY_KEY` or `CONVEX_DEPLOYMENT` is already set, the CLI uses that deployment.
+- Otherwise it sets `CONVEX_AGENT_MODE=anonymous`, runs `convex init`, and sets **non-secret** JWT placeholders (`CONVEX_JWT_APPLICATION_ID` / issuer / JWKS URL) on that anonymous backend so `auth.config.ts` can codegen.
+- Never commit secrets or `.env.local`. Prefer this script over checking in `_generated/`.
+
+If codegen still fails in a locked-down environment (no network, no Convex CLI backend), typecheck/build cannot run until a human provides a deploy key or runs `npx convex dev` locally.
+
 ## Convex backend sync
 
 After you edit anything under `convex/` (new or renamed `tasks:*`, `lenders:*`, schema, etc.), the **running deployment** must include those functions or the client will error (e.g. “Could not find public function”).

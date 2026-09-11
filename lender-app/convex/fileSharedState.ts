@@ -8,6 +8,7 @@ import {
   materializeFileSharedStateOnPatch,
   normalizeFileSharedStateFromPipeline,
   type FileSharedNumericFieldKey,
+  type FileSharedStateStorage,
   type PipelineFileSharedSource,
 } from "../lib/fileSharedFields";
 import { clampActivitySummary } from "../lib/pipelineFileActivityModel";
@@ -173,15 +174,14 @@ export const patchShared = mutation({
       throw new Error("netRevenue must be a non-negative number");
     }
 
-    const patchObj: Partial<Doc<"pipeline">> = {
-      updatedAt: now,
-      fundingAmount: nextFunding,
-      rate: nextRate,
-      term: nextTerm,
-      notes: nextNotes ? nextNotes : undefined,
-      commission: nextCommission,
-      netRevenue: nextNetRevenue,
-    };
+    /** Only touch top-level mirrors the caller provided — avoid rewriting others. */
+    const patchObj: Partial<Doc<"pipeline">> = { updatedAt: now };
+    if (fundingAmount !== undefined) patchObj.fundingAmount = nextFunding;
+    if (interestRate !== undefined) patchObj.rate = nextRate;
+    if (term !== undefined) patchObj.term = nextTerm;
+    if (notes !== undefined) patchObj.notes = nextNotes ? nextNotes : undefined;
+    if (commission !== undefined) patchObj.commission = nextCommission;
+    if (netRevenue !== undefined) patchObj.netRevenue = nextNetRevenue;
 
     const changedKeys: SharedBusFieldKey[] = [];
     if (fundingAmount !== undefined && nextFunding !== prev.fundingAmount) {
@@ -218,12 +218,40 @@ export const patchShared = mutation({
       });
     }
 
-    const merged = { ...existing, ...patchObj } as Doc<"pipeline">;
+    /** Rematerialize bus from the full next shared snapshot (not a partial patch). */
+    const busMaterialize: {
+      fundingAmount: number;
+      rate: number;
+      term: string;
+      notes: string;
+      commission: number;
+      netRevenue: number;
+      fileSharedState?: FileSharedStateStorage;
+    } = {
+      fundingAmount: nextFunding,
+      rate: nextRate,
+      term: nextTerm,
+      notes: nextNotes,
+      commission: nextCommission,
+      netRevenue: nextNetRevenue,
+    };
     materializeFileSharedStateOnPatch(
-      patchObj,
-      merged as unknown as PipelineFileSharedSource,
-      now
+      busMaterialize,
+      {
+        ...(existing as unknown as PipelineFileSharedSource),
+        fundingAmount: nextFunding,
+        rate: nextRate,
+        term: nextTerm,
+        notes: nextNotes,
+        commission: nextCommission,
+        netRevenue: nextNetRevenue,
+        fileSharedState: undefined,
+      },
+      now,
     );
+    if (busMaterialize.fileSharedState) {
+      patchObj.fileSharedState = busMaterialize.fileSharedState;
+    }
 
     const undoKeys = patchKeysForUndo(patchObj as unknown as Record<string, unknown>);
     const allowUndo = undoKeys.length > 0 && undoKeys.length <= 48;

@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { assertOrgPermission } from "./organizationRbac";
 import { assertOrganizationId } from "./organizationValidators";
 import { resolveMemberUserKey } from "./organizationAccess";
+import { resolveTriageEvaluationTime } from "../lib/triageClock";
 
 /**
  * Aggregated org snapshot for `/operations` nerve-center (Phase 10).
@@ -11,20 +12,23 @@ export const operationsSnapshot = query({
   args: {
     memberUserKey: v.optional(v.string()),
     organizationId: v.id("organizations"),
+    /** Minute bucket from `TriageClockProvider` — never Date.now() in this query. */
+    nowBucket: v.optional(v.number()),
   },
-  handler: async (ctx, { memberUserKey, organizationId }) => {
+  handler: async (ctx, { memberUserKey, organizationId, nowBucket }) => {
     const key = await resolveMemberUserKey(ctx, memberUserKey);
     const { id: orgId } = await assertOrganizationId(ctx, organizationId);
     await assertOrgPermission(ctx, orgId, key, "files.view");
 
-    const now = Date.now();
-    const presenceRows = await ctx.db
+    const now = resolveTriageEvaluationTime(nowBucket);
+    const presenceCandidates = await ctx.db
       .query("memberPresence")
       .withIndex("by_org_expires", (q) =>
         q.eq("organizationId", organizationId),
       )
-      .filter((q) => q.gt(q.field("expiresAt"), now))
+      .order("desc")
       .take(250);
+    const presenceRows = presenceCandidates.filter((r) => r.expiresAt > now);
 
     const activeUsers = new Set(presenceRows.map((r) => r.userKey)).size;
     const occupiedFiles = new Set(

@@ -5,10 +5,11 @@ test.describe("Portal link verification gateway", () => {
     page,
   }) => {
     await page.goto("/public/verify-access/invalid-token-abc123?returnTo=%2F");
-    await expect(page.getByTestId("portal-verify-access")).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Invalid Link" })).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByText("Invalid Link")).toBeVisible();
+    await expect(page.getByText("This secure link is not valid.")).toBeVisible();
+    await expect(page.getByTestId("portal-verify-access")).toBeVisible();
     await expect(page.getByText("Lender Data Room")).toHaveCount(0);
   });
 });

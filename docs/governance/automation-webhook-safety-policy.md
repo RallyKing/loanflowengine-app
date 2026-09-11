@@ -13,6 +13,7 @@
 | **Loop-safe** | Trigger graphs cannot self-trigger unbounded loops without explicit guardrails. |
 | **Observable** | Structured logs + error classification; see `observability-policy.md`. |
 | **Rate limited** | Protect Convex, third parties, and tenants from stampedes. |
+| **Bounded** | Every scheduled/queued job has a bounded page size, capped attempts with backoff, and a real stop condition. `scheduler.runAfter(0, self)` only while work provably remains — **never an idle pump**. Crons no more frequent than 15 minutes and registered in the cron table. Binding: **`resource-consumption-policy.md`** §B.5, §C. |
 | **Tenant-scoped** | Org/account context validated on every path; see `tenant-isolation-policy.md`. |
 
 ---
@@ -27,5 +28,6 @@
 
 ## Related
 
+- **`resource-consumption-policy.md`** — scheduler stop conditions, cron floor + registry, idempotency requirements
 - `integration-architecture-policy.md`
 - `observability-map.md`

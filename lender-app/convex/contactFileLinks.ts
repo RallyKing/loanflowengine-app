@@ -23,6 +23,7 @@ import {
   effectiveContactRoleIdFromDoc,
 } from "../lib/contact/contactRoles";
 import { appendMasterContactRoleId } from "./lib/contactRoleMasterSync";
+import { syncFileClientTitleFromPrimaryParties } from "./pipelineClientTitleSync";
 
 function normalizeRole(role: string): string {
   return role.trim().replace(/\s+/g, " ");
@@ -399,6 +400,7 @@ export const upsert = mutation({
         relatedFileId: fileId,
         at: now,
       });
+      await syncFileClientTitleFromPrimaryParties(ctx, fileId);
       return existing._id;
     }
 
@@ -476,6 +478,7 @@ export const upsert = mutation({
       });
     }
 
+    await syncFileClientTitleFromPrimaryParties(ctx, fileId);
     return newId;
   },
 });
@@ -534,6 +537,7 @@ export const remove = mutation({
       expectPost: "unlinked" as const,
     });
     await ctx.db.delete(id);
+    await syncFileClientTitleFromPrimaryParties(ctx, row.fileId);
   },
 });
 
@@ -598,6 +602,7 @@ export const removeByContactAndFile = mutation({
       expectPost: "unlinked" as const,
     });
     await ctx.db.delete(existing._id);
+    await syncFileClientTitleFromPrimaryParties(ctx, fileId);
     return existing._id;
   },
 });

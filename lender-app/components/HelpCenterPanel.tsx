@@ -180,13 +180,18 @@ function ArticleDetail({
 
 export function HelpCenterPanel() {
   const { isGlobalAdmin } = useAuth();
-  const { articles, categories } = useHelpArticles();
   const {
     isOpen,
     closeHelp,
     initialQuery,
     initialArticleId,
   } = useHelpSupport();
+  /**
+   * Only subscribe to published help articles while the panel is open. When
+   * closed the panel renders `null`, so the always-on full-table article
+   * `.collect()` was pure shell overhead on every page.
+   */
+  const { articles, categories } = useHelpArticles(isOpen);
   const [q, setQ] = useState("");
   const [category, setCategory] = useState<HelpCategory | "all">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -251,7 +256,7 @@ export function HelpCenterPanel() {
   return (
     <div
       className={cn(
-        "fixed inset-0 flex justify-end backdrop-blur-[1px]",
+        "fixed inset-0 flex justify-end",
         overlayScrimClass(),
       )}
       style={layerZIndexStyle("HELP")}
@@ -268,10 +273,11 @@ export function HelpCenterPanel() {
       <aside
         className={cn(
           "relative flex h-full w-full max-w-xl flex-col border-l border-border bg-background shadow-2xl",
+          "max-md:pb-[env(safe-area-inset-bottom,0px)]",
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3 sm:px-5">
+        <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3 sm:px-5 max-md:pt-[max(0.75rem,env(safe-area-inset-top,0px))]">
           <div className="mt-0.5 rounded-lg bg-primary/10 p-2 text-primary">
             <BookOpen className="h-5 w-5" aria-hidden />
           </div>

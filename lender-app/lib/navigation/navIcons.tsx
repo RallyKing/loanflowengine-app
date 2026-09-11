@@ -11,8 +11,10 @@ import {
   LayoutPanelTop,
   Settings,
   Share2,
+  Sparkles,
   Users,
   Wallet,
+  Zap,
 } from "lucide-react";
 import type { NavIconKey } from "./navigationCatalog";
 
@@ -28,6 +30,8 @@ const ICONS: Record<NavIconKey, LucideIcon> = {
   panelTop: LayoutPanelTop,
   building: Building2,
   share: Share2,
+  sparkles: Sparkles,
+  zap: Zap,
 };
 
 export function navIconForKey(key: NavIconKey): LucideIcon {

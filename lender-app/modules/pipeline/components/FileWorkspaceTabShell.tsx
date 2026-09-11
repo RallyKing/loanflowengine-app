@@ -193,6 +193,7 @@ export function FileWorkspaceTabNav({
             className={cn(
               hubDetailStyles.tabList,
               "w-max min-w-full flex-nowrap sm:w-full sm:flex-wrap",
+              "max-md:gap-0.5 max-md:rounded-dlc-md max-md:p-0.5",
             )}
             role="tablist"
           >
@@ -211,7 +212,10 @@ export function FileWorkspaceTabNav({
                   onClick={() => onActiveTabChange(tabId)}
                   className={cn(
                     hubDetailStyles.tabButton(selected),
-                    "relative min-h-9 shrink-0 whitespace-nowrap sm:flex-1 sm:shrink",
+                    "relative shrink-0 whitespace-nowrap sm:flex-1 sm:shrink",
+                    /* Dense file chrome on phone — keep ≥32px; primary tabs stay tappable. */
+                    "max-md:min-h-8 max-md:px-2 max-md:py-1 max-md:text-xs",
+                    "min-h-9 sm:min-h-10",
                   )}
                 >
                   {TAB_LABELS[tabId]}

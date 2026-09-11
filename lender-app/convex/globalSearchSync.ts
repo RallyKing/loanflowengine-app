@@ -8,6 +8,7 @@ import {
 } from "../lib/globalSearchText";
 import { linkedClientDisplayNamesForPipeline } from "./pipelineMultiClientLinks";
 import { primaryEntityDisplayNameForContact } from "./contactPrimaryEntity";
+import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 
 export async function refreshPipelineGlobalSearchText(
   ctx: MutationCtx,
@@ -67,10 +68,12 @@ export function globalSearchTextForNewTask(row: Doc<"tasks">): string {
  */
 export const rebuildPipelineGlobalSearchPage = mutation({
   args: {
+    adminSecret: v.string(),
     limit: v.optional(v.number()),
     cursor: v.optional(v.union(v.string(), v.null())),
   },
-  handler: async (ctx, { limit, cursor }) => {
+  handler: async (ctx, { adminSecret, limit, cursor }) => {
+    assertDataMigrationAdmin(adminSecret);
     const pageSize = Math.min(Math.max(1, limit ?? 500), 2000);
     const startCursor = cursor === undefined || cursor === null ? null : cursor;
     const { page, isDone, continueCursor } = await ctx.db
@@ -97,10 +100,12 @@ export const rebuildPipelineGlobalSearchPage = mutation({
 
 export const rebuildContactGlobalSearchPage = mutation({
   args: {
+    adminSecret: v.string(),
     limit: v.optional(v.number()),
     cursor: v.optional(v.union(v.string(), v.null())),
   },
-  handler: async (ctx, { limit, cursor }) => {
+  handler: async (ctx, { adminSecret, limit, cursor }) => {
+    assertDataMigrationAdmin(adminSecret);
     const pageSize = Math.min(Math.max(1, limit ?? 500), 2000);
     const startCursor = cursor === undefined || cursor === null ? null : cursor;
     const { page, isDone, continueCursor } = await ctx.db
@@ -126,10 +131,12 @@ export const rebuildContactGlobalSearchPage = mutation({
 
 export const rebuildTaskGlobalSearchPage = mutation({
   args: {
+    adminSecret: v.string(),
     limit: v.optional(v.number()),
     cursor: v.optional(v.union(v.string(), v.null())),
   },
-  handler: async (ctx, { limit, cursor }) => {
+  handler: async (ctx, { adminSecret, limit, cursor }) => {
+    assertDataMigrationAdmin(adminSecret);
     const pageSize = Math.min(Math.max(1, limit ?? 500), 2000);
     const startCursor = cursor === undefined || cursor === null ? null : cursor;
     const { page, isDone, continueCursor } = await ctx.db

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -7,26 +8,54 @@ import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { PageErrorBoundary } from "@/components/PageErrorBoundary";
 import { ActivityTimeline } from "@/components/collaboration/ActivityTimeline";
+import {
+  TriageClockProvider,
+  useTriageClockTime,
+} from "@/components/providers/TriageClockProvider";
 import { cn } from "@/lib/cn";
 import { BarChart3, Users } from "lucide-react";
 
 export default function OperationsPage() {
+  return (
+    <TriageClockProvider>
+      <OperationsPageBody />
+    </TriageClockProvider>
+  );
+}
+
+function OperationsPageBody() {
   const { accountId } = useUserPreferences();
   const { activeOrganizationId } = useOrgPermissions();
   const memberKey = accountId.trim();
+  const nowBucket = useTriageClockTime();
+
+  const snapshotArgs = useMemo(
+    () =>
+      activeOrganizationId && memberKey
+        ? {
+            organizationId: activeOrganizationId,
+            memberUserKey: memberKey,
+            nowBucket,
+          }
+        : ("skip" as const),
+    [activeOrganizationId, memberKey, nowBucket],
+  );
+  const workloadArgs = useMemo(
+    () =>
+      activeOrganizationId && memberKey
+        ? { organizationId: activeOrganizationId, memberUserKey: memberKey }
+        : ("skip" as const),
+    [activeOrganizationId, memberKey],
+  );
 
   const snapshot = useQuery(
     api.operationalIntelligence.operationsSnapshot,
-    activeOrganizationId && memberKey
-      ? { organizationId: activeOrganizationId, memberUserKey: memberKey }
-      : "skip",
+    snapshotArgs,
   );
 
   const workload = useQuery(
     api.taskAssigneeIntelligence.teamWorkloadSummary,
-    activeOrganizationId && memberKey
-      ? { organizationId: activeOrganizationId, memberUserKey: memberKey }
-      : "skip",
+    workloadArgs,
   );
 
   return (

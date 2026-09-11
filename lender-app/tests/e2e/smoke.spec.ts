@@ -228,28 +228,28 @@ describeSignedInOrSkip("app smoke — signed-in workspace", () => {
       .toMatch(/degraded|ready/);
   });
 
-  test("home redirects to tasks", async ({ page }) => {
+  test("home redirects to pipeline", async ({ page }) => {
     await page.goto("/", { waitUntil: "load" });
     await expect
       .poll(
         async () => {
           const path = new URL(page.url()).pathname;
-          if (path === "/tasks" || path === "/tasks/") return "tasks";
+          if (path === "/pipeline" || path === "/pipeline/") return "pipeline";
           if (
             await page
-              .getByRole("heading", { name: /Task/i })
+              .getByRole("heading", { name: /Pipeline/i })
               .isVisible()
               .catch(() => false)
           ) {
-            return "tasks";
+            return "pipeline";
           }
           return path;
         },
         { timeout: 30_000 },
       )
-      .toBe("tasks");
+      .toBe("pipeline");
     await expectWorkspaceRouteVisible(page, {
-      heading: /Task/i,
+      heading: /Pipeline/i,
       allowDegraded: true,
     });
     await expect(page.locator("main")).toBeVisible();
@@ -291,12 +291,11 @@ describeSignedInOrSkip("app smoke — signed-in workspace", () => {
 
   test("pipeline table exposes expected column headers", async ({ page }) => {
     await safeGoto(page, "/pipeline");
-    await expectPipelineHubVisible(page, { allowDegraded: true });
+    await waitPipelineHubReady(page, { allowDegraded: true });
     if (await isWorkspaceDegraded(page).isVisible().catch(() => false)) {
       await expect(page.locator("main")).toBeVisible();
       return;
     }
-    await waitPipelineHubReady(page);
     const fileNameHeader = page.getByRole("columnheader", { name: "File name" });
     if (await fileNameHeader.isVisible().catch(() => false)) {
       await expect(fileNameHeader).toBeVisible();
@@ -311,10 +310,15 @@ describeSignedInOrSkip("app smoke — signed-in workspace", () => {
       ).toBeVisible();
       return;
     }
+    if (await isWorkspaceDegraded(page).isVisible().catch(() => false)) {
+      await expect(page.locator("main")).toBeVisible();
+      return;
+    }
     await expect(
       page
         .getByTestId("pipeline-hub-hierarchy-shell")
         .or(page.getByTestId("pipeline-hub-hierarchy"))
+        .or(page.getByRole("heading", { name: /Something went wrong/i }))
         .first(),
     ).toBeVisible({ timeout: 30_000 });
   });

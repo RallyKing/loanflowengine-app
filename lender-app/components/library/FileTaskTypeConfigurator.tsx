@@ -2,6 +2,7 @@
 
 import { Input } from "@/components/ui/Input";
 import { FileTaskAtomicBlockBuilder } from "@/components/library/FileTaskAtomicBlockBuilder";
+import { FileTaskClientTemplateAttach } from "@/components/library/FileTaskClientTemplateAttach";
 import { RelativeDueOffsetInput } from "@/components/library/RelativeDueOffsetInput";
 import { TaskTemplateFolderEditor } from "@/components/library/TaskTemplateFolderEditor";
 import {
@@ -14,6 +15,8 @@ import {
   type FileTaskPriority,
   type FileTaskType,
 } from "@/lib/documentVaultTaskTypes";
+import type { FileTaskClientTemplateAttachment } from "@/lib/fileTaskClientTemplates";
+import { taskTypeAllowsClientTemplates } from "@/lib/fileTaskClientTemplates";
 import type { FolderTemplateNode } from "@/lib/library/folderTemplateTypes";
 import { cn } from "@/lib/cn";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -30,7 +33,13 @@ export type FileTaskTypeConfiguratorProps = {
   folderTemplateNodes?: FolderTemplateNode[];
   onFolderTemplateNodesChange?: (nodes: FolderTemplateNode[]) => void;
   pipelineFileId?: Id<"pipeline">;
+  /** Org Manage Templates — enables client template upload without a pipeline file. */
+  organizationId?: Id<"organizations">;
   memberUserKey?: string;
+  clientTemplateAttachments?: FileTaskClientTemplateAttachment[];
+  onClientTemplateAttachmentsChange?: (
+    next: FileTaskClientTemplateAttachment[],
+  ) => void;
   isRequired?: boolean;
   onRequiredChange?: (value: boolean) => void;
   isPortalVisible?: boolean;
@@ -62,7 +71,10 @@ export function FileTaskTypeConfigurator({
   folderTemplateNodes = [],
   onFolderTemplateNodesChange,
   pipelineFileId,
+  organizationId,
   memberUserKey,
+  clientTemplateAttachments = [],
+  onClientTemplateAttachmentsChange,
   isRequired = true,
   onRequiredChange,
   isPortalVisible = true,
@@ -82,6 +94,21 @@ export function FileTaskTypeConfigurator({
 }: FileTaskTypeConfiguratorProps) {
   const isFull = variant === "full";
   const visibilityLocked = taskType === "internal_task";
+  const showClientTemplates =
+    Boolean(onClientTemplateAttachmentsChange) &&
+    taskTypeAllowsClientTemplates(taskType) &&
+    Boolean(pipelineFileId || organizationId);
+
+  const clientTemplateAttach = showClientTemplates ? (
+    <FileTaskClientTemplateAttach
+      pipelineFileId={pipelineFileId}
+      organizationId={organizationId}
+      memberUserKey={memberUserKey}
+      value={clientTemplateAttachments}
+      onChange={onClientTemplateAttachmentsChange!}
+      disabled={disabled}
+    />
+  ) : null;
 
   if (isFull) {
     return (
@@ -246,6 +273,7 @@ export function FileTaskTypeConfigurator({
                   disabled={disabled}
                 />
               ) : null}
+              {clientTemplateAttach}
             </div>
           ) : null}
 
@@ -289,6 +317,7 @@ export function FileTaskTypeConfigurator({
                   onChange={(e) => onClientInstructionTextChange(e.target.value)}
                 />
               </div>
+              {clientTemplateAttach}
             </div>
           ) : null}
 

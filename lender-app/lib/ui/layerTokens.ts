@@ -25,10 +25,15 @@ export const SHELL_Z = {
   header: Z_LAYER.HEADER,
   contextualTip: 26,
   stickyDock: 28,
-  /** Below mobile slideout (`SIDEBAR` / drawer at 50); above page content. */
+  /**
+   * Below mobile slideout / menu scrim (`sidebar` 45, drawer `modal` 50).
+   * Must stay strictly below those tiers — equal z with menu scrim lets the
+   * white dock paint over the dimmer (visible hamburger strip).
+   */
   bottomNav: 40,
   tooltip: Z_LAYER.POPOVER,
-  overlay: Z_LAYER.SHEET,
+  /** Dimmer behind mobile SaaS drawer — above bottom nav, below drawer panel. */
+  overlay: Z_LAYER.SIDEBAR,
   sidebar: Z_LAYER.SIDEBAR,
   drawer: Z_LAYER.INSPECTOR,
   sheet: OVERLAY_Z_BASE.sheet,

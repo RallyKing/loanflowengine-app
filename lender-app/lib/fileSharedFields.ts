@@ -59,6 +59,42 @@ function finiteNonNegative(v: unknown, fallback: number): number {
 }
 
 /**
+ * Prefer defined bus values, but heal the desync where `fileSharedState` stayed
+ * at 0 after a top-level mirror write (stale materialize). Non-zero bus still wins.
+ */
+function coalesceSharedNonNegative(
+  busVal: number | undefined,
+  topVal: number | null | undefined,
+  fallback: number,
+): number {
+  const top =
+    topVal !== undefined && topVal !== null && Number.isFinite(topVal)
+      ? topVal < 0
+        ? 0
+        : topVal
+      : undefined;
+  if (busVal !== undefined && Number.isFinite(busVal)) {
+    const bus = busVal < 0 ? 0 : busVal;
+    if (bus === 0 && top !== undefined && top > 0) return top;
+    return bus;
+  }
+  if (top !== undefined) return top;
+  return fallback;
+}
+
+function coalesceSharedText(
+  busVal: string | undefined,
+  topVal: string | null | undefined,
+): string {
+  const top = typeof topVal === "string" ? topVal : "";
+  if (busVal !== undefined) {
+    if (busVal === "" && top.trim().length > 0) return top;
+    return busVal;
+  }
+  return top;
+}
+
+/**
  * Single read model: merges `pipeline.fileSharedState` with top-level mirrors.
  * Never returns undefined for core keys — use **0**, **""**, or **updatedAt** defaults.
  */
@@ -67,49 +103,37 @@ export function normalizeFileSharedStateFromPipeline(
 ): FileSharedState {
   const bus = row.fileSharedState;
 
-  const fundingAmount = finiteNonNegative(
-    bus?.fundingAmount !== undefined
-      ? bus.fundingAmount
-      : row.fundingAmount !== undefined && row.fundingAmount !== null
-        ? row.fundingAmount
-        : undefined,
-    0
-  );
-
-  const interestRate = finiteNonNegative(
-    bus?.interestRate !== undefined ? bus.interestRate : row.rate,
-    0
-  );
-
-  const term =
-    bus?.term !== undefined
-      ? String(bus.term)
-      : typeof row.term === "string"
-        ? row.term
-        : "";
-
-  const notes =
-    bus?.notes !== undefined
-      ? String(bus.notes)
-      : typeof row.notes === "string"
-        ? row.notes
-        : "";
-
-  const commission = finiteNonNegative(
-    bus?.commission !== undefined
-      ? bus.commission
-      : row.commission !== undefined && row.commission !== null
-        ? row.commission
-        : undefined,
+  const fundingAmount = coalesceSharedNonNegative(
+    bus?.fundingAmount,
+    row.fundingAmount,
     0,
   );
 
-  const netRevenue = finiteNonNegative(
-    bus?.netRevenue !== undefined
-      ? bus.netRevenue
-      : row.netRevenue !== undefined && row.netRevenue !== null
-        ? row.netRevenue
-        : undefined,
+  const interestRate = coalesceSharedNonNegative(
+    bus?.interestRate,
+    row.rate,
+    0,
+  );
+
+  const term = coalesceSharedText(
+    bus?.term !== undefined ? String(bus.term) : undefined,
+    typeof row.term === "string" ? row.term : "",
+  );
+
+  const notes = coalesceSharedText(
+    bus?.notes !== undefined ? String(bus.notes) : undefined,
+    typeof row.notes === "string" ? row.notes : "",
+  );
+
+  const commission = coalesceSharedNonNegative(
+    bus?.commission,
+    row.commission,
+    0,
+  );
+
+  const netRevenue = coalesceSharedNonNegative(
+    bus?.netRevenue,
+    row.netRevenue,
     0,
   );
 
@@ -145,14 +169,65 @@ export function serializeFileSharedStateStorage(
   };
 }
 
-/** Writes normalized shared state onto an in-flight Convex patch object. */
+/**
+ * Writes normalized shared state onto an in-flight Convex patch object.
+ *
+ * Callers set top-level mirrors on `patch` / `merged` (`fundingAmount`, `rate`,
+ * …) while the previous `fileSharedState` object is still on `merged`. Prefer
+ * those in-flight mirrors when rematerializing — otherwise normalize would
+ * keep stale bus values (e.g. rate stuck at 0 after a successful top-level
+ * write) and File Details “funding (normalized)” / rate would never update.
+ */
 export function materializeFileSharedStateOnPatch(
-  patch: { fileSharedState?: FileSharedStateStorage },
+  patch: {
+    fileSharedState?: FileSharedStateStorage;
+    fundingAmount?: number;
+    rate?: number;
+    term?: string;
+    notes?: string | null;
+    commission?: number;
+    netRevenue?: number;
+  },
   merged: PipelineFileSharedSource,
   now: number
 ): void {
+  const prev = merged.fileSharedState;
+  const hasOverlay =
+    patch.fundingAmount !== undefined ||
+    patch.rate !== undefined ||
+    patch.term !== undefined ||
+    patch.notes !== undefined ||
+    patch.commission !== undefined ||
+    patch.netRevenue !== undefined;
+
+  const busForNormalize: FileSharedStateStorage | undefined = hasOverlay
+    ? {
+        ...(prev ?? { updatedAt: now }),
+        ...(patch.fundingAmount !== undefined
+          ? { fundingAmount: patch.fundingAmount }
+          : {}),
+        ...(patch.rate !== undefined ? { interestRate: patch.rate } : {}),
+        ...(patch.term !== undefined ? { term: patch.term } : {}),
+        ...(patch.notes !== undefined
+          ? { notes: patch.notes == null ? "" : String(patch.notes) }
+          : {}),
+        ...(patch.commission !== undefined
+          ? { commission: patch.commission }
+          : {}),
+        ...(patch.netRevenue !== undefined
+          ? { netRevenue: patch.netRevenue }
+          : {}),
+        updatedAt: now,
+      }
+    : prev ?? undefined;
+
+  const source: PipelineFileSharedSource = {
+    ...merged,
+    fileSharedState: busForNormalize,
+  };
+
   patch.fileSharedState = serializeFileSharedStateStorage(
-    normalizeFileSharedStateFromPipeline(merged),
+    normalizeFileSharedStateFromPipeline(source),
     now
   );
 }

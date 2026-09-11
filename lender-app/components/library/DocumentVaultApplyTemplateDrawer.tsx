@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { Loader2, Settings2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
+import { SearchField } from "@/components/ui/SearchField";
 import {
   RecordInspectorBody,
   RecordInspectorFooter,
@@ -16,6 +17,18 @@ import {
 import { cn } from "@/lib/cn";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 import { TaskTemplateManager } from "@/components/library/TaskTemplateManager";
+import { DocumentVaultExplorerStarButton } from "@/components/library/DocumentVaultExplorerStarButton";
+import {
+  filterStacksByQuery,
+  filterTemplatesByQuery,
+  normalizeApplyTemplateQuery,
+  sortIndividualTemplatesByFavorites,
+  templateStackLabel,
+} from "@/lib/library/partitionDocumentTaskTemplates";
+import {
+  readCachedTemplateFavoriteIds,
+  writeCachedTemplateFavoriteIds,
+} from "@/lib/library/documentTaskTemplateFavoritesCache";
 
 export type DocumentVaultApplyTemplateDrawerProps = {
   open: boolean;
@@ -39,16 +52,20 @@ export function DocumentVaultApplyTemplateDrawer({
   onError,
 }: DocumentVaultApplyTemplateDrawerProps) {
   const [tab, setTab] = useState<TabId>("stacks");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedStacks, setSelectedStacks] = useState<Set<string>>(new Set());
   const [selectedTemplates, setSelectedTemplates] = useState<Set<string>>(
     new Set(),
   );
   const [busy, setBusy] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(() => new Set());
+  const [favoriteBusyId, setFavoriteBusyId] = useState<string | null>(null);
 
   const seedStarter = useMutation(api.seedTemplates.seedDocumentTaskTemplates);
   const seedLegacy = useMutation(api.documentTaskTemplates.seedStarterTemplates);
   const inject = useMutation(api.documentTaskTemplates.injectTemplates);
+  const toggleFavorite = useMutation(api.documentTaskTemplateFavorites.toggle);
 
   const library = useQuery(
     api.documentTaskTemplates.listStacksWithTemplates,
@@ -56,6 +73,13 @@ export function DocumentVaultApplyTemplateDrawer({
       ? memberUserKey
         ? { organizationId, memberUserKey }
         : { organizationId }
+      : "skip",
+  );
+
+  const serverFavorites = useQuery(
+    api.documentTaskTemplateFavorites.listForOrg,
+    open && organizationId && memberUserKey
+      ? { organizationId, memberUserKey }
       : "skip",
   );
 
@@ -67,6 +91,56 @@ export function DocumentVaultApplyTemplateDrawer({
       });
     });
   }, [open, organizationId, memberUserKey, seedStarter, seedLegacy]);
+
+  // Clear search when the drawer closes so the next open starts fresh.
+  useEffect(() => {
+    if (!open) setSearchQuery("");
+  }, [open]);
+
+  // Seed optimistic cache on open; prefer server when it arrives.
+  // Skip while a toggle is in flight so a stale query snapshot cannot wipe it.
+  useEffect(() => {
+    if (!open || !organizationId || !memberUserKey) return;
+    if (favoriteBusyId) return;
+    if (serverFavorites) {
+      const ids = serverFavorites.templateIds.map(String);
+      setFavoriteIds(new Set(ids));
+      writeCachedTemplateFavoriteIds(String(organizationId), memberUserKey, ids);
+      return;
+    }
+    const cached = readCachedTemplateFavoriteIds(
+      String(organizationId),
+      memberUserKey,
+    );
+    if (cached.length > 0) {
+      setFavoriteIds(new Set(cached));
+    }
+  }, [open, organizationId, memberUserKey, serverFavorites, favoriteBusyId]);
+
+  const individualSorted = useMemo(() => {
+    if (!library) return [];
+    return sortIndividualTemplatesByFavorites(
+      library.individualTemplates,
+      favoriteIds,
+    );
+  }, [library, favoriteIds]);
+
+  const filteredStacks = useMemo(() => {
+    if (!library) return [];
+    return filterStacksByQuery(library.stacks, searchQuery);
+  }, [library, searchQuery]);
+
+  const filteredIndividuals = useMemo(() => {
+    if (!library) return [];
+    return filterTemplatesByQuery(individualSorted, searchQuery, (tpl) =>
+      templateStackLabel(
+        tpl.stackId ? String(tpl.stackId) : undefined,
+        library.stacks,
+      ),
+    );
+  }, [library, individualSorted, searchQuery]);
+
+  const hasActiveSearch = normalizeApplyTemplateQuery(searchQuery).length > 0;
 
   const toggleStack = (id: string) => {
     setSelectedStacks((prev) => {
@@ -84,6 +158,45 @@ export function DocumentVaultApplyTemplateDrawer({
       else next.add(id);
       return next;
     });
+  };
+
+  const handleToggleFavorite = async (templateId: string) => {
+    if (!memberUserKey || favoriteBusyId) return;
+    const wasFavorite = favoriteIds.has(templateId);
+    const next = new Set(favoriteIds);
+    if (wasFavorite) next.delete(templateId);
+    else next.add(templateId);
+    setFavoriteIds(next);
+    writeCachedTemplateFavoriteIds(
+      String(organizationId),
+      memberUserKey,
+      next,
+    );
+    setFavoriteBusyId(templateId);
+    try {
+      await toggleFavorite({
+        organizationId,
+        templateId: templateId as Id<"documentTaskTemplates">,
+        memberUserKey,
+      });
+    } catch (e) {
+      setFavoriteIds(favoriteIds);
+      writeCachedTemplateFavoriteIds(
+        String(organizationId),
+        memberUserKey,
+        favoriteIds,
+      );
+      const message =
+        e instanceof Error ? e.message : "Could not update favorite.";
+      onError(message);
+      showOperationalToast({
+        title: "Favorite failed",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setFavoriteBusyId(null);
+    }
   };
 
   const handleInject = async () => {
@@ -165,11 +278,22 @@ export function DocumentVaultApplyTemplateDrawer({
         </div>
       </RecordInspectorHeader>
       <RecordInspectorBody className="space-y-4">
-        <div className="flex gap-1 rounded-dlc-md border border-border/70 p-0.5">
+        <div
+          className="flex gap-1 rounded-dlc-md border border-border/70 p-0.5"
+          role="tablist"
+          aria-label="Apply template source"
+        >
           {(["stacks", "individual"] as const).map((id) => (
             <button
               key={id}
               type="button"
+              role="tab"
+              aria-selected={tab === id}
+              data-testid={
+                id === "stacks"
+                  ? "apply-template-tab-stacks"
+                  : "apply-template-tab-individual"
+              }
               className={cn(
                 "flex-1 rounded-dlc-sm px-2 py-1.5 text-xs font-medium transition-colors",
                 tab === id
@@ -183,18 +307,44 @@ export function DocumentVaultApplyTemplateDrawer({
           ))}
         </div>
 
+        <SearchField
+          compact
+          containerClassName="w-full"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onClear={() => setSearchQuery("")}
+          placeholder={
+            tab === "stacks"
+              ? "Search stacks and tasks…"
+              : "Search individual tasks…"
+          }
+          aria-label={
+            tab === "stacks"
+              ? "Search template stacks"
+              : "Search individual tasks"
+          }
+          data-testid="apply-template-search"
+        />
+
         {library === undefined ? (
           <div className="flex items-center justify-center py-8 text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
           </div>
         ) : tab === "stacks" ? (
-          <ul className="space-y-2">
+          <ul className="space-y-2" data-testid="apply-template-stacks-list">
             {library.stacks.length === 0 ? (
               <li className="text-xs text-muted-foreground">
                 No template stacks yet.
               </li>
+            ) : filteredStacks.length === 0 && hasActiveSearch ? (
+              <li
+                className="text-xs text-muted-foreground"
+                data-testid="apply-template-search-empty"
+              >
+                No stacks match “{normalizeApplyTemplateQuery(searchQuery)}”.
+              </li>
             ) : (
-              library.stacks.map((stack) => (
+              filteredStacks.map((stack) => (
                 <li key={stack._id}>
                   <label className="flex cursor-pointer items-start gap-2 rounded-dlc-md border border-border/60 px-3 py-2 hover:bg-muted/30">
                     <input
@@ -223,27 +373,88 @@ export function DocumentVaultApplyTemplateDrawer({
             )}
           </ul>
         ) : (
-          <ul className="space-y-1">
-            {library.individualTemplates.length === 0 ? (
+          <ul className="space-y-1" data-testid="apply-template-individual-list">
+            {individualSorted.length === 0 ? (
               <li className="text-xs text-muted-foreground">
-                No individual templates. Use stacks or add templates in settings.
+                No task templates yet. Add templates in Manage Templates.
+              </li>
+            ) : filteredIndividuals.length === 0 && hasActiveSearch ? (
+              <li
+                className="text-xs text-muted-foreground"
+                data-testid="apply-template-search-empty"
+              >
+                No tasks match “{normalizeApplyTemplateQuery(searchQuery)}”.
               </li>
             ) : (
-              library.individualTemplates.map((tpl) => (
-                <li key={tpl._id}>
-                  <label className="flex cursor-pointer items-center gap-2 rounded-dlc-sm px-2 py-1.5 hover:bg-muted/30">
-                    <input
-                      type="checkbox"
-                      checked={selectedTemplates.has(String(tpl._id))}
-                      onChange={() => toggleTemplate(String(tpl._id))}
-                    />
-                    <span className="text-sm">{tpl.title}</span>
-                    {tpl.isRequired ? (
-                      <span className="text-[10px] text-amber-700">Required</span>
+              filteredIndividuals.map((tpl, index) => {
+                const id = String(tpl._id);
+                const isFavorite = favoriteIds.has(id);
+                const prevIsFavorite =
+                  index > 0 &&
+                  favoriteIds.has(String(filteredIndividuals[index - 1]!._id));
+                const showFavoritesHeader = isFavorite && index === 0;
+                const showLibraryDivider =
+                  !isFavorite && (index === 0 || prevIsFavorite);
+                const stackLabel = templateStackLabel(
+                  tpl.stackId ? String(tpl.stackId) : undefined,
+                  library.stacks,
+                );
+                return (
+                  <li key={tpl._id}>
+                    {showFavoritesHeader ? (
+                      <div className="mb-1 px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Favorites
+                      </div>
                     ) : null}
-                  </label>
-                </li>
-              ))
+                    {showLibraryDivider ? (
+                      <div className="mb-1 mt-2 px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        All tasks
+                      </div>
+                    ) : null}
+                    <div className="flex items-center gap-1 rounded-dlc-sm px-2 py-1.5 hover:bg-muted/30">
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedTemplates.has(id)}
+                          onChange={() => toggleTemplate(id)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm">{tpl.title}</span>
+                          {stackLabel ? (
+                            <span className="block text-[10px] text-muted-foreground">
+                              In stack: {stackLabel}
+                            </span>
+                          ) : (
+                            <span className="block text-[10px] text-muted-foreground">
+                              Standalone
+                            </span>
+                          )}
+                        </span>
+                        {(tpl.clientTemplateAttachments?.length ?? 0) > 0 ? (
+                          <span className="text-[10px] text-muted-foreground">
+                            Template file
+                            {tpl.clientTemplateAttachments!.length === 1
+                              ? ""
+                              : "s"}
+                          </span>
+                        ) : null}
+                        {tpl.isRequired ? (
+                          <span className="text-[10px] text-amber-700">
+                            Required
+                          </span>
+                        ) : null}
+                      </label>
+                      <DocumentVaultExplorerStarButton
+                        starred={isFavorite}
+                        label={tpl.title}
+                        disabled={!memberUserKey || favoriteBusyId === id}
+                        onToggle={() => void handleToggleFavorite(id)}
+                        testId={`apply-template-favorite-${id}`}
+                      />
+                    </div>
+                  </li>
+                );
+              })
             )}
           </ul>
         )}

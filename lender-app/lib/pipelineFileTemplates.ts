@@ -10,6 +10,7 @@ import {
 } from "./pipelineBlockRegistry";
 import {
   DEFAULT_PIPELINE_DRAWER_ORDER,
+  OPTIONAL_PIPELINE_DRAWER_BLOCK_IDS,
   normalizePipelineDrawerLayout,
   type PipelineDrawerLayoutV1,
 } from "./pipelineDrawerLayoutStorage";
@@ -244,6 +245,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "constructionBudget",
       "investorExperience",
       "pfs",
+      "trackRecord",
       "people",
       "archive",
       "dangerZone",
@@ -254,6 +256,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "constructionBudget",
       "investorExperience",
       "pfs",
+      "trackRecord",
       "scenarioMatch",
       "generateTerms",
       "lenders",
@@ -267,7 +270,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "dangerZone",
     ],
     defaultSettings: { fileNotes: { rows: 6 } },
-    favoriteBlockIds: ["constructionBudget", "pfs", "tasks"],
+    favoriteBlockIds: ["constructionBudget", "pfs", "trackRecord", "tasks"],
     portalRequestChecklist: checklistItems("construction-fix-flip"),
   },
   {
@@ -288,6 +291,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "tasks",
       "constructionBudget",
       "investorExperience",
+      "trackRecord",
       "people",
       "archive",
       "dangerZone",
@@ -297,6 +301,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "dealWorkspace",
       "investorExperience",
       "constructionBudget",
+      "trackRecord",
       "scenarioMatch",
       "generateTerms",
       "lenders",
@@ -310,7 +315,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "dangerZone",
     ],
     defaultSettings: { fileNotes: { rows: 5 } },
-    favoriteBlockIds: ["constructionBudget", "investorExperience"],
+    favoriteBlockIds: ["constructionBudget", "investorExperience", "trackRecord"],
     portalRequestChecklist: checklistItems("construction-fix-flip"),
   },
   {
@@ -350,7 +355,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
     templateId: "working-capital",
     name: "Working Capital",
     description:
-      "Business cash-flow lending: bank statements, PFS, and lender shopping without RE blocks.",
+      "Business cash-flow lending: bank statements, PFS, Simple P&L, and lender shopping without RE blocks.",
     includedBlocks: [
       "fileDetails",
       "fileNotes",
@@ -360,6 +365,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "feesSplits",
       "tasks",
       "pfs",
+      "simplePl",
       "people",
       "archive",
       "dangerZone",
@@ -369,6 +375,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "dealWorkspace",
       "contacts",
       "pfs",
+      "simplePl",
       "lenders",
       "feesSplits",
       "fileNotes",
@@ -378,7 +385,7 @@ export const PIPELINE_FILE_TEMPLATES: readonly PipelineFileTemplate[] = [
       "dangerZone",
     ],
     defaultSettings: { fileNotes: { rows: 5 } },
-    favoriteBlockIds: ["tasks", "pfs"],
+    favoriteBlockIds: ["tasks", "pfs", "simplePl"],
     portalRequestChecklist: checklistItems("working-capital"),
   },
   {
@@ -461,13 +468,19 @@ export function applyPipelineFileTemplatePayloadToLayout(
     visible.add(id);
   }
 
-  /** Full drawer order (visible + hidden); `hidden` marks blocks not in `includedBlocks`. */
+  /**
+   * Full drawer order (visible + hidden). Include optional registry blocks so
+   * `normalizePipelineDrawerLayout` does not force-hide ones listed in
+   * `includedBlocks` (older bug: optionals missing from `blockOrder` were always
+   * appended as hidden, so PFS never appeared even when the template included it).
+   */
   const order = mergeBlockOrder(
     [...template.blockOrder],
-    [...DEFAULT_PIPELINE_DRAWER_ORDER],
+    [...DEFAULT_PIPELINE_DRAWER_ORDER, ...OPTIONAL_PIPELINE_DRAWER_BLOCK_IDS],
   );
 
-  const hidden = DEFAULT_PIPELINE_DRAWER_ORDER.filter((id) => !visible.has(id));
+  /** Hide every registry block not in the template (or effective mandatory) set. */
+  const hidden = PIPELINE_BLOCK_IDS.filter((id) => !visible.has(id));
 
   let settingsOut: PipelineDrawerLayoutV1["settings"] = undefined;
   if (base.settings && Object.keys(base.settings).length > 0) {

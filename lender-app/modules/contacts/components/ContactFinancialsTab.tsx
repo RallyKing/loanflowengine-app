@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +12,9 @@ import { hubDetailStyles } from "@/components/contacts/hub/hubDetailStyles";
 import { maskSsn, formatSsnDisplay } from "@/lib/contacts/maskPii";
 import { contactPiiMutationArgs } from "@/lib/contacts/contactHubDraft";
 import { cn } from "@/lib/cn";
+import { reoListingHref } from "@/lib/reo/zillowUrl";
+import { ContactFicoHistoryField } from "@/components/contacts/ContactFicoHistoryField";
+import type { FicoHistoryEntry } from "@/lib/contacts/ficoHistory";
 
 export type ContactFinancialsTabProps = {
   contactId: Id<"contacts">;
@@ -172,30 +175,28 @@ export function ContactFinancialsTab({
             Credit profile saved to CRM.
           </p>
         ) : null}
-        <div className="mt-6 grid gap-4 sm:grid-cols-3">
-          <Label htmlFor="financials-fico">
-            FICO
-            <Input
-              id="financials-fico"
-              className="mt-1.5"
-              inputMode="numeric"
-              value={fico}
-              onChange={(e) => setFico(e.currentTarget.value)}
-              placeholder="e.g. 720"
-            />
-          </Label>
-          <Label htmlFor="financials-dob">
-            Date of birth
-            <Input
-              id="financials-dob"
-              className="mt-1.5"
-              type="date"
-              value={dob}
-              onChange={(e) => setDob(e.currentTarget.value)}
-            />
-          </Label>
-          <div>
-            <Label htmlFor="financials-ssn" className="flex items-center gap-2">
+        <div className="mt-6 space-y-4">
+          <ContactFicoHistoryField
+            contactId={contactId}
+            memberUserKey={memberUserKey}
+            currentFico={contact.fico}
+            history={contact.ficoHistory as FicoHistoryEntry[] | undefined}
+            fallbackRecordedAt={contact.updatedAt ?? contact.createdAt}
+            onCurrentScoreChange={setFico}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label htmlFor="financials-dob">
+              Date of birth
+              <Input
+                id="financials-dob"
+                className="mt-1.5"
+                type="date"
+                value={dob}
+                onChange={(e) => setDob(e.currentTarget.value)}
+              />
+            </Label>
+            <div>
+              <Label htmlFor="financials-ssn" className="flex items-center gap-2">
               SSN
               <button
                 type="button"
@@ -224,6 +225,7 @@ export function ContactFinancialsTab({
               onFocus={() => setSsnRevealed(true)}
               placeholder="•••-••-••••"
             />
+          </div>
           </div>
         </div>
       </section>
@@ -263,9 +265,28 @@ export function ContactFinancialsTab({
             {
               id: "value",
               header: "Market value",
-              render: (row) => (
-                <span className="tabular-nums">{formatCurrency(row.marketValue)}</span>
-              ),
+              render: (row) => {
+                const listingHref = reoListingHref(row.zillowUrl);
+                return (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="tabular-nums">
+                      {formatCurrency(row.marketValue)}
+                    </span>
+                    {listingHref ? (
+                      <a
+                        href={listingHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-dlc-sm text-primary hover:bg-muted/80"
+                        aria-label="Open listing"
+                        title="Open listing"
+                      >
+                        <ExternalLink className="h-4 w-4" aria-hidden />
+                      </a>
+                    ) : null}
+                  </span>
+                );
+              },
             },
             {
               id: "mortgage",

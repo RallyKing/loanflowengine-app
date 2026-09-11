@@ -30,12 +30,12 @@ export function TaskRollupBadge({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+        "inline-flex shrink-0 items-center gap-1 rounded-dlc-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums shadow-dlc-1",
         hasOverdue
-          ? "border-red-300 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-300"
+          ? "border-red-300/80 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-300"
           : counts.topStatus === "in_progress"
-            ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300"
-            : "border-border bg-dlc-surface text-muted-foreground",
+            ? "border-blue-300/80 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300"
+            : "border-border/55 bg-dlc-surface-high text-muted-foreground",
         className,
       )}
       title={title}
@@ -63,9 +63,9 @@ export function HubTriageHighlightBadge({
   return (
     <span
       className={cn(
-        "inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5",
-        "text-[10px] font-semibold shadow-sm",
-        "max-md:max-w-none md:max-w-[12rem] md:shrink-0",
+        "inline-flex max-w-full shrink-0 items-center gap-1 rounded-dlc-full px-2 py-0.5",
+        "text-[10px] font-semibold shadow-dlc-1",
+        "max-md:max-w-[min(100%,18rem)] md:max-w-[12rem]",
         className,
       )}
       style={{
@@ -77,18 +77,20 @@ export function HubTriageHighlightBadge({
       data-testid="hub-triage-highlight-badge"
     >
       <span
-        className="h-2 w-2 shrink-0 rounded-full"
+        className="h-2 w-2 shrink-0 rounded-dlc-full shadow-dlc-1"
         style={{ backgroundColor: highlight.hexCode }}
         aria-hidden
       />
-      <span className="max-md:break-words max-md:whitespace-normal md:truncate">
-        {highlight.label}
-      </span>
+      <span className="min-w-0 truncate">{highlight.label}</span>
     </span>
   );
 }
 
-/** 4px left border + optional top-right badge — does not paint full card background. */
+/**
+ * 4px left border + triage badge.
+ * Mobile: badge is in document flow (own row) so it never overlays titles.
+ * Desktop (md+): absolute top-right; callers reserve space with `md:pr-28`.
+ */
 export function HubTriageHighlightFrame({
   highlight,
   children,
@@ -98,6 +100,7 @@ export function HubTriageHighlightFrame({
   highlight?: HubTriageHighlightView | null;
   children: ReactNode;
   className?: string;
+  /** Desktop absolute offset only (e.g. `top-1.5`). Ignored on max-md flow badge. */
   badgeClassName?: string;
 }) {
   if (!highlight) {
@@ -115,7 +118,21 @@ export function HubTriageHighlightFrame({
       data-testid="hub-triage-highlight-frame"
       data-triage-color={highlight.hexCode}
     >
-      <div className={cn("absolute right-2 top-2 z-[2]", badgeClassName)}>
+      {/* Mobile: in-flow — never overlays title / project / ★ lines */}
+      <div
+        className="pointer-events-none flex w-full justify-end px-2.5 pb-0 pt-2 md:hidden"
+        data-testid="hub-triage-highlight-badge-slot-mobile"
+      >
+        <HubTriageHighlightBadge highlight={highlight} />
+      </div>
+      {/* Desktop: absolute top-right (pointer-events-none so stage pill stays clickable) */}
+      <div
+        className={cn(
+          "pointer-events-none absolute right-2 top-2 z-[2] hidden md:block",
+          badgeClassName,
+        )}
+        data-testid="hub-triage-highlight-badge-slot-desktop"
+      >
         <HubTriageHighlightBadge highlight={highlight} />
       </div>
       {children}

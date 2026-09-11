@@ -1,11 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import type { QueryCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { normalizeOrganizationPlan } from "../lib/orgPlanFeatures";
 import { sessionKeyIsGlobalAdmin } from "./organizationAccess";
 import { resolveAuthenticatedMemberKey } from "./callerAuth";
 import { isSuperAdmin } from "./authUtils";
+import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 import {
   productKnowledgeArticleBodyV,
   productKnowledgeArticleStatusV,
@@ -20,6 +21,7 @@ import {
   STATIC_PRODUCT_KNOWLEDGE_ARTICLE_SEEDS,
   STATIC_PRODUCT_RELEASE_POST_SEEDS,
 } from "../lib/product-knowledge/staticSeed";
+
 
 type Visibility = Doc<"productKnowledgeArticles">["visibility"];
 
@@ -224,6 +226,99 @@ export const adminListReleasePosts = query({
   },
 });
 
+function slugifyReleaseTitle(title: string, now: number): string {
+  const slugBase = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
+  return `${slugBase || "update"}-${now}`;
+}
+
+/** Reject 0 / epoch / junk so posts are not buried at the bottom of the feed. */
+function normalizeReleasePublishedAt(
+  ms: number | undefined,
+): number | undefined {
+  if (ms == null || !Number.isFinite(ms)) return undefined;
+  // Before 2020-01-01 UTC is treated as unset (covers publishedAt: 0).
+  if (ms < 1_577_836_800_000) return undefined;
+  return ms;
+}
+
+async function upsertPublishedReleasePost(
+  ctx: { db: MutationCtx["db"] },
+  args: {
+    slug?: string;
+    title: string;
+    summary: string;
+    body: string[];
+    changeType: Doc<"productReleasePosts">["changeType"];
+    affectedPersonas: string[];
+    affectedArticleSlugs: string[];
+    learnMoreSlug?: string;
+    visibility?: Doc<"productReleasePosts">["visibility"];
+    deploymentId?: string;
+    publishedAt?: number;
+  },
+): Promise<Id<"productReleasePosts">> {
+  const now = Date.now();
+  const slug =
+    args.slug?.trim() || slugifyReleaseTitle(args.title, now);
+  const existing = await ctx.db
+    .query("productReleasePosts")
+    .withIndex("by_slug", (q) => q.eq("slug", slug))
+    .first();
+  const requestedPublishedAt = normalizeReleasePublishedAt(args.publishedAt);
+  const existingPublishedAt = normalizeReleasePublishedAt(
+    existing?.publishedAt,
+  );
+  // Prefer a valid existing stamp; never persist 0 / epoch from seed files.
+  const publishedAt =
+    requestedPublishedAt ?? existingPublishedAt ?? now;
+  const patch: {
+    slug: string;
+    title: string;
+    summary: string;
+    body: string[];
+    changeType: Doc<"productReleasePosts">["changeType"];
+    affectedPersonas: string[];
+    affectedArticleSlugs: string[];
+    status: "published";
+    publishedAt: number;
+    updatedAt: number;
+    learnMoreSlug?: string;
+    deploymentId?: string;
+    visibility?: Doc<"productReleasePosts">["visibility"];
+  } = {
+    slug,
+    title: args.title.trim().slice(0, 200),
+    summary: args.summary.trim().slice(0, 500),
+    body: args.body.map((p) => p.trim()).filter(Boolean).slice(0, 20),
+    changeType: args.changeType,
+    affectedPersonas: args.affectedPersonas.slice(0, 12),
+    affectedArticleSlugs: args.affectedArticleSlugs.slice(0, 24),
+    status: "published",
+    publishedAt,
+    updatedAt: now,
+  };
+  const learnMoreSlug = args.learnMoreSlug?.trim();
+  if (learnMoreSlug) patch.learnMoreSlug = learnMoreSlug;
+  const deploymentId =
+    args.deploymentId?.trim() || existing?.deploymentId || undefined;
+  if (deploymentId) patch.deploymentId = deploymentId;
+  if (args.visibility) patch.visibility = args.visibility;
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      ...patch,
+      ...(args.deploymentId?.trim()
+        ? { deploymentId: args.deploymentId.trim() }
+        : {}),
+    });
+    return existing._id;
+  }
+  return await ctx.db.insert("productReleasePosts", patch);
+}
+
 export const adminPublishReleasePost = mutation({
   args: {
     memberUserKey: v.string(),
@@ -235,32 +330,65 @@ export const adminPublishReleasePost = mutation({
     affectedArticleSlugs: v.array(v.string()),
     learnMoreSlug: v.optional(v.string()),
     visibility: v.optional(productKnowledgeVisibilityRuleV),
+    slug: v.optional(v.string()),
+    deploymentId: v.optional(v.string()),
+    publishedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     await assertGlobalAdmin(ctx, args.memberUserKey);
-    const now = Date.now();
-    const slugBase = args.title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 48);
-    const slug = `${slugBase}-${now}`;
-    return await ctx.db.insert("productReleasePosts", {
-      slug,
-      title: args.title.trim().slice(0, 200),
-      summary: args.summary.trim().slice(0, 500),
-      body: args.body.map((p) => p.trim()).filter(Boolean).slice(0, 20),
+    return await upsertPublishedReleasePost(ctx, {
+      slug: args.slug,
+      title: args.title,
+      summary: args.summary,
+      body: args.body,
       changeType: args.changeType,
-      affectedPersonas: args.affectedPersonas.slice(0, 12),
-      affectedArticleSlugs: args.affectedArticleSlugs.slice(0, 24),
-      learnMoreSlug: args.learnMoreSlug?.trim() || undefined,
-      status: "published",
-      publishedAt: now,
-      updatedAt: now,
+      affectedPersonas: args.affectedPersonas,
+      affectedArticleSlugs: args.affectedArticleSlugs,
+      learnMoreSlug: args.learnMoreSlug,
       visibility: args.visibility,
+      deploymentId: args.deploymentId,
+      publishedAt: args.publishedAt,
     });
   },
 });
+
+/**
+ * Operator/CLI publish — gated by DATA_MIGRATION_ADMIN_SECRET.
+ * Prefer a stable `slug` so re-runs are idempotent (agents can append ship notes safely).
+ */
+export const operatorPublishReleasePost = mutation({
+  args: {
+    operatorSecret: v.string(),
+    title: v.string(),
+    summary: v.string(),
+    body: v.array(v.string()),
+    changeType: productReleaseChangeTypeV,
+    affectedPersonas: v.optional(v.array(v.string())),
+    affectedArticleSlugs: v.optional(v.array(v.string())),
+    learnMoreSlug: v.optional(v.string()),
+    visibility: v.optional(productKnowledgeVisibilityRuleV),
+    slug: v.optional(v.string()),
+    deploymentId: v.optional(v.string()),
+    publishedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertDataMigrationAdmin(args.operatorSecret);
+    return await upsertPublishedReleasePost(ctx, {
+      slug: args.slug,
+      title: args.title,
+      summary: args.summary,
+      body: args.body,
+      changeType: args.changeType,
+      affectedPersonas: args.affectedPersonas ?? ["All users"],
+      affectedArticleSlugs: args.affectedArticleSlugs ?? [],
+      learnMoreSlug: args.learnMoreSlug,
+      visibility: args.visibility,
+      deploymentId: args.deploymentId,
+      publishedAt: args.publishedAt,
+    });
+  },
+});
+
 
 export const adminSeedPlatformContentIfEmpty = mutation({
   args: { memberUserKey: v.string() },

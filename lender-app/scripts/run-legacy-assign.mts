@@ -15,13 +15,24 @@ async function main() {
   const ownerUserKey = process.env.LEGACY_ASSIGN_OWNER_USER_KEY?.trim() ?? "";
   const orgName = process.env.LEGACY_ASSIGN_ORG_NAME?.trim() ?? "Organization";
   const organizationIdRaw = process.env.LEGACY_ASSIGN_ORGANIZATION_ID?.trim();
+  const adminSecret =
+    process.env.DATA_MIGRATION_ADMIN_SECRET?.trim() ||
+    process.env.ORG_INTEGRITY_ADMIN_SECRET?.trim() ||
+    "";
 
   if (!ownerUserKey) {
     console.error("LEGACY_ASSIGN_OWNER_USER_KEY is required.");
     process.exit(1);
   }
+  if (!adminSecret) {
+    console.error(
+      "DATA_MIGRATION_ADMIN_SECRET (or ORG_INTEGRITY_ADMIN_SECRET) is required.",
+    );
+    process.exit(1);
+  }
 
   const args = {
+    adminSecret,
     ownerUserKey,
     orgName,
     ...(organizationIdRaw

@@ -11,6 +11,7 @@ import { appendPipelineFileActivity } from "./pipelineFileActivity";
 import { resyncFileTeamEdgesFromPipeline } from "./indexedGraphEdgeSync";
 import {
   assertOrgMember,
+  resolveMemberUserKey,
   resolveOrgPipelineFileAccessLevel,
 } from "./organizationAccess";
 import {
@@ -492,6 +493,81 @@ export const revokeShare = mutation({
     memberUserKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => revokeShareImpl(ctx, args),
+});
+
+/**
+ * Google Docs–style Leave: recipient revokes *their own* explicit loan share.
+ * Does not delete the owner's file. Inherited project/client access cannot be
+ * left from the loan file — caller gets a clear error.
+ */
+export const leaveShare = mutation({
+  args: {
+    fileId: v.id("pipeline"),
+    memberUserKey: v.optional(v.string()),
+  },
+  returns: v.object({
+    left: v.boolean(),
+    fileId: v.id("pipeline"),
+  }),
+  handler: async (ctx, args) => {
+    const actor = await resolveMemberUserKey(ctx, args.memberUserKey);
+    const file = await ctx.db.get(args.fileId);
+    if (!file) throw new Error("File not found.");
+    if (!file.organizationId) {
+      throw new Error("Sharing applies to organization pipeline files only.");
+    }
+    await assertOrgMember(ctx, file.organizationId, actor);
+
+    const owner = resolveRowOwnerUserId(file);
+    if (owner && owner === actor) {
+      throw new Error(
+        "You own this file — leave is only for shared recipients. Delete or transfer ownership instead.",
+      );
+    }
+
+    const removedResource = await removeResourceShare(ctx, {
+      resourceType: "pipeline",
+      resourceId: String(args.fileId),
+      sharedUserId: actor,
+    });
+
+    let removedLegacy = false;
+    const legacy = await ctx.db
+      .query("pipelineFileShares")
+      .withIndex("by_file_user", (q) =>
+        q.eq("fileId", args.fileId).eq("userKey", actor),
+      )
+      .first();
+    if (legacy) {
+      await ctx.db.delete(legacy._id);
+      removedLegacy = true;
+    }
+
+    if (!removedResource && !removedLegacy) {
+      throw new Error(
+        "You do not have a direct share on this loan file to leave. If you still see it, access may be inherited from a project or client share — ask the owner to change that sharing, or leave from Shared with me.",
+      );
+    }
+
+    const now = Date.now();
+    const actorName = await resolveDisplayUsernameForUserKey(ctx, actor);
+    const fileLabel = file.fileName?.trim() || "a pipeline file";
+    await appendPipelineFileActivity(ctx, {
+      fileId: args.fileId,
+      at: now,
+      kind: "share_revoke",
+      shareTargetUserKey: actor,
+      actorUserKey: actor,
+      summary: clampActivitySummary(
+        `${actorName} left shared access to ${fileLabel}`,
+      ),
+    });
+
+    const refreshed = (await ctx.db.get(args.fileId))!;
+    await resyncFileTeamEdgesFromPipeline(ctx, refreshed, actor);
+
+    return { left: true as const, fileId: args.fileId };
+  },
 });
 
 /** Legacy name — forwards to `shareFile` (resourceShares only). */

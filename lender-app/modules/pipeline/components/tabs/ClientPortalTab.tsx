@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -47,6 +47,15 @@ import {
 } from "@/lib/pipeline/premiumWorkspaceUi";
 import type { DocumentVaultNavigationFocus } from "@/lib/pipeline/documentVaultNavigation";
 
+export type ClientPortalSectionRenderer = (dragHandle: ReactNode) => ReactNode;
+
+export type RegisterClientPortalSections = (
+  sections: Partial<
+    Record<ClientPortalSectionId, ClientPortalSectionRenderer>
+  >,
+  contentSig?: string,
+) => void;
+
 export type ClientPortalTabProps = {
   fileId: Id<"pipeline">;
   memberUserKey?: string;
@@ -58,6 +67,9 @@ export type ClientPortalTabProps = {
   className?: string;
   /** Skip canvas + toolbar when nested in Portals tab. */
   embedded?: boolean;
+  /** Parent owns DnD — register section renderers instead of SortableSectionList. */
+  suppressInternalDnd?: boolean;
+  onRegisterSections?: RegisterClientPortalSections;
 };
 
 function clientPortalAnchorForSection(
@@ -159,7 +171,7 @@ function ClientPortalCollapsibleSection({
       headerRight={headerRight}
       lazyMount
       animated
-      defaultOpen
+      defaultOpen={false}
       description={description}
       contentClassName="space-y-4"
     >
@@ -180,6 +192,8 @@ export function ClientPortalTab({
   onNavigateToDocuments,
   className,
   embedded = false,
+  suppressInternalDnd = false,
+  onRegisterSections,
 }: ClientPortalTabProps) {
   const { draft, saving, savedAt, isDirty, patchClientPortalTabLayout } =
     useDealWorkspaceEditor();
@@ -426,7 +440,7 @@ export function ClientPortalTab({
             badgeVariant={communicationsMeta.badgeVariant}
             icon={<MessageSquare className="h-4 w-4" aria-hidden />}
             headerRight={headerRight}
-            description="Internal file threads plus outbound email and portal messages."
+            description="Internal file threads plus outbound email, SMS, and portal messages."
           >
             <div className={premiumTabSectionSpaceClass}>
               <div className="space-y-2">
@@ -463,6 +477,50 @@ export function ClientPortalTab({
         return null;
     }
   };
+
+  const registerSig = useMemo(
+    () =>
+      [
+        String(activeGrantCount ?? ""),
+        portalMeta.status,
+        portalMeta.summary,
+        communicationsMeta.status,
+        communicationsMeta.summary,
+        String(communicationsMeta.indicatorCount ?? ""),
+        visibleSectionIds.join(","),
+      ].join("|"),
+    [
+      activeGrantCount,
+      communicationsMeta,
+      portalMeta,
+      visibleSectionIds,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    if (!suppressInternalDnd || !onRegisterSections) return;
+    const sections: Partial<
+      Record<ClientPortalSectionId, ClientPortalSectionRenderer>
+    > = {};
+    for (const sectionId of CLIENT_PORTAL_SECTION_IDS) {
+      sections[sectionId] = (dragHandle) =>
+        renderPortalSection(sectionId, dragHandle);
+    }
+    onRegisterSections(sections, registerSig);
+    // renderPortalSection closes over latest access/meta via registerSig.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional register on registerSig
+  }, [
+    onRegisterSections,
+    registerSig,
+    suppressInternalDnd,
+    fileId,
+    memberUserKey,
+    organizationId,
+  ]);
+
+  if (suppressInternalDnd) {
+    return null;
+  }
 
   const sectionsBody =
     visibleSectionIds.length > 0 ? (

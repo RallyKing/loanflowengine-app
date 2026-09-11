@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AI-powered lender discovery.
  *
  * Flow:
@@ -36,6 +36,17 @@ async function assertDiscoveryAccess(
   await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
   const key = await resolveMemberUserKey(ctx, memberUserKey);
   await assertOrgPermission(ctx, organizationId, key, "lenders.edit");
+}
+
+/** Require a candidate row owned by `organizationId` (no cross-tenant leak). */
+function requireCandidateInOrg(
+  row: Doc<"lenderCandidates"> | null,
+  organizationId: Id<"organizations">,
+): Doc<"lenderCandidates"> {
+  if (!row || row.organizationId !== organizationId) {
+    throw new Error("Candidate not found");
+  }
+  return row;
 }
 
 export const _assertDiscoveryAccess = internalMutation({
@@ -307,6 +318,7 @@ export const _existingCompanyKeys = internalQuery({
 
 export const _storeCandidates = internalMutation({
   args: {
+    organizationId: v.id("organizations"),
     query: v.string(),
     provider: v.string(),
     rawCandidates: v.array(
@@ -332,7 +344,10 @@ export const _storeCandidates = internalMutation({
       v.object({ key: v.string(), lenderId: v.id("lenders") })
     ),
   },
-  handler: async (ctx, { query, provider, rawCandidates, existingKeyPairs }) => {
+  handler: async (
+    ctx,
+    { organizationId, query, provider, rawCandidates, existingKeyPairs },
+  ) => {
     const now = Date.now();
     const existingKeys = new Map<string, Id<"lenders">>(
       existingKeyPairs.map((pair) => [pair.key, pair.lenderId])
@@ -353,12 +368,16 @@ export const _storeCandidates = internalMutation({
     if (uniqueKeys.size > 0) {
       await Promise.all(
         Array.from(uniqueKeys, async (key) => {
-          const alreadyPending = await ctx.db
+          const sameCompany = await ctx.db
             .query("lenderCandidates")
             .withIndex("by_company", (q) => q.eq("companyKey", key))
-            .filter((q) => q.neq(q.field("status"), "dismissed"))
-            .first();
-          hasPending.set(key, Boolean(alreadyPending));
+            .collect(); // bounded: same companyKey candidate rows only (dedupe), tiny per key
+          const alreadyPending = sameCompany.some(
+            (row) =>
+              row.organizationId === organizationId &&
+              row.status !== "dismissed",
+          );
+          hasPending.set(key, alreadyPending);
         })
       );
     }
@@ -383,6 +402,7 @@ export const _storeCandidates = internalMutation({
         : "pending";
 
       await ctx.db.insert("lenderCandidates", {
+        organizationId,
         query,
         provider,
         company,
@@ -406,11 +426,13 @@ export const _storeCandidates = internalMutation({
         updatedAt: now,
         companyKey: key,
       });
+      hasPending.set(key, true);
       if (status === "duplicate") duplicates += 1;
       else inserted += 1;
     }
 
     await ctx.db.insert("discoveryRuns", {
+      organizationId,
       query,
       provider,
       candidatesFound: inserted,
@@ -422,7 +444,6 @@ export const _storeCandidates = internalMutation({
     return { inserted, duplicates, warnings };
   },
 });
-
 /* ------------------------------------------------------------------ */
 /* Public action: kicks off an AI search                               */
 /* ------------------------------------------------------------------ */
@@ -504,6 +525,7 @@ export const runDiscovery = action({
       duplicates: number;
       warnings: string[];
     } = await ctx.runMutation(internal.discovery._storeCandidates, {
+      organizationId,
       query: q,
       provider: used,
       rawCandidates: raw,
@@ -544,11 +566,19 @@ export const listCandidates = query({
     const cap = Math.min(limit ?? 200, 500);
     const effective = status ?? "pending";
     if (effective === "all") {
-      return await ctx.db.query("lenderCandidates").order("desc").take(cap);
+      return await ctx.db
+        .query("lenderCandidates")
+        .withIndex("by_org_created", (q) =>
+          q.eq("organizationId", organizationId),
+        )
+        .order("desc")
+        .take(cap);
     }
     return await ctx.db
       .query("lenderCandidates")
-      .withIndex("by_status", (q) => q.eq("status", effective))
+      .withIndex("by_org_status", (q) =>
+        q.eq("organizationId", organizationId).eq("status", effective),
+      )
       .order("desc")
       .take(cap);
   },
@@ -565,7 +595,9 @@ export const recentRuns = query({
     const cap = Math.min(limit ?? 20, 100);
     return await ctx.db
       .query("discoveryRuns")
-      .withIndex("by_created")
+      .withIndex("by_org_created", (q) =>
+        q.eq("organizationId", organizationId),
+      )
       .order("desc")
       .take(cap);
   },
@@ -613,8 +645,7 @@ export const updateCandidate = mutation({
   },
   handler: async (ctx, { organizationId, memberUserKey, id, patch }) => {
     await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
-    const existing = await ctx.db.get(id);
-    if (!existing) throw new Error("Candidate not found");
+    const existing = requireCandidateInOrg(await ctx.db.get(id), organizationId);
     const clean: Record<string, string> = {};
     for (const [k, v] of Object.entries(patch)) {
       if (typeof v === "string") clean[k] = v;
@@ -638,6 +669,7 @@ export const dismissCandidate = mutation({
   },
   handler: async (ctx, { organizationId, memberUserKey, id }) => {
     await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
+    requireCandidateInOrg(await ctx.db.get(id), organizationId);
     await ctx.db.patch(id, { status: "dismissed", updatedAt: Date.now() });
     return { ok: true };
   },
@@ -651,6 +683,7 @@ export const deleteCandidate = mutation({
   },
   handler: async (ctx, { organizationId, memberUserKey, id }) => {
     await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
+    requireCandidateInOrg(await ctx.db.get(id), organizationId);
     await ctx.db.delete(id);
     return { ok: true };
   },
@@ -665,8 +698,10 @@ export const clearDismissed = mutation({
     await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
     const rows = await ctx.db
       .query("lenderCandidates")
-      .withIndex("by_status", (q) => q.eq("status", "dismissed"))
-      .collect();
+      .withIndex("by_org_status", (q) =>
+        q.eq("organizationId", organizationId).eq("status", "dismissed"),
+      )
+      .collect(); // bounded: dismissed candidates for one org only; clearDismissed intentional full-org wipe
     for (const r of rows) await ctx.db.delete(r._id);
     return { deleted: rows.length };
   },
@@ -680,8 +715,7 @@ export const acceptCandidate = mutation({
   },
   handler: async (ctx, { organizationId, memberUserKey, id }) => {
     await assertDiscoveryAccess(ctx, organizationId, memberUserKey);
-    const c = await ctx.db.get(id);
-    if (!c) throw new Error("Candidate not found");
+    const c = requireCandidateInOrg(await ctx.db.get(id), organizationId);
     const now = Date.now();
     const today = new Date(now).toISOString().slice(0, 10);
     const emailKey = c.email.toLowerCase();
@@ -722,7 +756,7 @@ export const acceptCandidate = mutation({
       : "";
 
     const doc = {
-      source: `AI Discovery (${c.provider}) — "${c.query}"`,
+      source: `AI Discovery (${c.provider}) â€” "${c.query}"`,
       section: "Discovered Lender",
       company: c.company,
       contactName: c.contactName,
@@ -803,7 +837,7 @@ export const acceptMany = mutation({
     const today = new Date(now).toISOString().slice(0, 10);
     for (const id of ids) {
       const c = await ctx.db.get(id);
-      if (!c) continue;
+      if (!c || c.organizationId !== organizationId) continue;
       const emailKey = c.email.toLowerCase();
       const contactKey = normalizeKey(c.contactName);
       let existing: Doc<"lenders"> | null = null;
@@ -829,7 +863,7 @@ export const acceptMany = mutation({
         ? `Source: ${c.sourceUrl}`
         : "";
       const doc = {
-        source: `AI Discovery (${c.provider}) — "${c.query}"`,
+        source: `AI Discovery (${c.provider}) â€” "${c.query}"`,
         section: "Discovered Lender",
         company: c.company,
         contactName: c.contactName,

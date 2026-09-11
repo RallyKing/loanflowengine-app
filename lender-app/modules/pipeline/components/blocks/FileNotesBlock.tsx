@@ -19,6 +19,7 @@ export type FileNotesBlockProps = {
 /**
  * Canonical pipeline file notes UI.
  * Pins, URL links, and file attachments via `pipelineFileNotes` + `pipelineFileNoteLinks`.
+ * Scrolls with pipeline file `[data-pipeline-workspace-scroll]` — no nested route scrollport.
  */
 export function FileNotesBlock({
   blockSettings,
@@ -31,15 +32,15 @@ export function FileNotesBlock({
     Number.isFinite(blockSettings.rows) &&
     blockSettings.rows >= 1
       ? Math.min(24, Math.floor(blockSettings.rows))
-      : 4;
+      : 2;
 
   return (
     <div
       data-testid="pipeline-file-notes-block"
       data-phase="24.7"
-      className="space-y-4"
+      className="space-y-2.5"
     >
-      <div className="space-y-2">
+      <div className="space-y-1">
         <FieldLabel>New note</FieldLabel>
         <NoteComposer
           pipelineFileId={pipelineFileId}
@@ -49,7 +50,7 @@ export function FileNotesBlock({
         />
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1">
         <FieldLabel>History</FieldLabel>
         <NoteThread
           pipelineFileId={pipelineFileId}

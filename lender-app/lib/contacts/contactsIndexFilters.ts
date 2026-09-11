@@ -34,6 +34,7 @@ export function entityMatchesSearchTokens(
     companyName?: string;
     primaryContactName?: string;
     ein?: string;
+    websites?: Array<{ url: string; label?: string }> | null;
   },
   q: string,
 ): boolean {
@@ -45,6 +46,7 @@ export function entityMatchesSearchTokens(
     entity.companyName,
     entity.primaryContactName,
     entity.ein,
+    ...(entity.websites ?? []).flatMap((w) => [w.url, w.label ?? ""]),
   ]
     .filter(Boolean)
     .join(" ")

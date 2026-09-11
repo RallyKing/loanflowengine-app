@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { APP_DISPLAY_NAME } from "@/lib/brandIdentity";
+import { APP_DISPLAY_NAME, APP_HOME_HREF } from "@/lib/brandIdentity";
 import { LoginForm } from "./LoginForm";
 
 export const metadata: Metadata = {
@@ -21,7 +21,7 @@ export default async function LoginPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
-  const next = pickFirst(params.next) ?? "/tasks";
+  const next = pickFirst(params.next) ?? APP_HOME_HREF;
   const devPrefill =
     process.env.NODE_ENV === "development"
       ? {

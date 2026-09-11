@@ -229,7 +229,7 @@ function NewIntakeDialog({
 
   return (
     <div
-      className="fixed inset-0 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+      className="fixed inset-0 flex items-center justify-center bg-black/20 p-4"
       style={layerZIndexStyle("MODAL")}
     >
       <div className="max-h-[min(90vh,640px)] w-full max-w-md overflow-y-auto overscroll-contain rounded-2xl border border-border bg-background p-6 shadow-xl">

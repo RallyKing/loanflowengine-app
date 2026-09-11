@@ -31,7 +31,17 @@ export function normalizeAndValidateNoteLinkUrl(raw: string): string {
   return parsed.href;
 }
 
+/** Prefer an explicit title; otherwise a compact host/path (not a raw mega-URL). */
 export function noteLinkDisplayLabel(title: string | undefined, url: string): string {
   const t = title?.trim();
-  return t && t.length > 0 ? t : url;
+  if (t && t.length > 0) return t;
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname === "/" ? "" : parsed.pathname;
+    const label = `${parsed.host}${path}${parsed.search}`;
+    if (label.length <= 48) return label;
+    return `${label.slice(0, 45)}…`;
+  } catch {
+    return url.length > 48 ? `${url.slice(0, 45)}…` : url;
+  }
 }

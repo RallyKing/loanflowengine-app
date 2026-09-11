@@ -9,6 +9,10 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { OverlayShell } from "@/components/ui/OverlayShell";
 import { cn } from "@/lib/cn";
+import {
+  buildClientLinkEmailCopy,
+  clientLinkEmailItemFromFileTask,
+} from "@/lib/clientLinkEmailCopy";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 
 export type ClientLinkGeneratorModalProps = {
@@ -35,6 +39,8 @@ export function ClientLinkGeneratorModal({
   const [mode, setMode] = useState<Mode>("all_outstanding");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [portalUrl, setPortalUrl] = useState("");
+  const [includedTitles, setIncludedTitles] = useState<string[]>([]);
+  const [emailCopy, setEmailCopy] = useState("");
   const [busy, setBusy] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -74,6 +80,16 @@ export function ClientLinkGeneratorModal({
     }
   }, [open, templates]);
 
+  useEffect(() => {
+    if (!open) {
+      setPortalUrl("");
+      setIncludedTitles([]);
+      setEmailCopy("");
+      setSelected(new Set());
+      setShowInvite(false);
+    }
+  }, [open]);
+
   const toggleTask = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -96,7 +112,20 @@ export function ClientLinkGeneratorModal({
             : undefined,
         memberUserKey,
       });
+      const selectedTasks =
+        mode === "selective"
+          ? activeTasks.filter((t) => selected.has(String(t._id)))
+          : activeTasks;
+      const items = selectedTasks.map((task) =>
+        clientLinkEmailItemFromFileTask(task),
+      );
+      const titles = items
+        .map((item) => item.title.trim())
+        .filter((title) => title.length > 0);
+      const copyText = buildClientLinkEmailCopy(items, result.portalUrl);
       setPortalUrl(result.portalUrl);
+      setIncludedTitles(titles);
+      setEmailCopy(copyText);
       showOperationalToast({
         title: "Client link generated",
         description: `${result.fileTaskCount} task(s) included.`,
@@ -108,13 +137,27 @@ export function ClientLinkGeneratorModal({
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopyUrl = async () => {
     if (!portalUrl) return;
     try {
       await navigator.clipboard.writeText(portalUrl);
-      showOperationalToast({ title: "Link copied" });
+      showOperationalToast({ title: "Link copied", variant: "success" });
     } catch {
       onError("Could not copy link.");
+    }
+  };
+
+  const handleCopyEmailBlock = async () => {
+    if (!emailCopy) return;
+    try {
+      await navigator.clipboard.writeText(emailCopy);
+      showOperationalToast({
+        title: "Email text copied",
+        description: "Paste into your email to the client.",
+        variant: "success",
+      });
+    } catch {
+      onError("Could not copy email text.");
     }
   };
 
@@ -149,99 +192,146 @@ export function ClientLinkGeneratorModal({
       open={open}
       onClose={onClose}
       aria-label="Generate client link"
-      panelClassName="w-full max-w-lg p-5"
+      panelClassName="flex max-h-[min(90dvh,720px)] w-full max-w-lg flex-col overflow-hidden p-5"
     >
-      <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-        <Link2 className="h-4 w-4" aria-hidden />
-        Generate Client Link
-      </h3>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Create a tokenized portal link for outstanding document requests.
-      </p>
-
-      <div className="mt-4 flex gap-1 rounded-dlc-md border border-border/70 p-0.5">
-        {(["all_outstanding", "selective"] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            className={cn(
-              "flex-1 rounded-dlc-sm px-2 py-1.5 text-xs font-medium",
-              mode === m
-                ? "bg-dlc-surface-high shadow-dlc-1"
-                : "text-muted-foreground",
-            )}
-            onClick={() => setMode(m)}
-          >
-            {m === "all_outstanding" ? "All Outstanding" : "Selective Tasks"}
-          </button>
-        ))}
-      </div>
-
-      {mode === "selective" ? (
-        <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto rounded-dlc-md border border-border/60 p-2">
-          {activeTasks.length === 0 ? (
-            <li className="text-xs text-muted-foreground">
-              No portal-visible incomplete tasks.
-            </li>
-          ) : (
-            activeTasks.map((task) => (
-              <li key={task._id}>
-                <label className="flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(String(task._id))}
-                    onChange={() => toggleTask(String(task._id))}
-                  />
-                  <span className="truncate">{task.title}</span>
-                </label>
-              </li>
-            ))
-          )}
-        </ul>
-      ) : (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Includes {activeTasks.length} outstanding portal-visible task(s).
+      <div className="flex min-h-0 flex-1 flex-col">
+        <h3 className="flex shrink-0 items-center gap-2 text-sm font-semibold text-foreground">
+          <Link2 className="h-4 w-4" aria-hidden />
+          Generate Client Link
+        </h3>
+        <p className="mt-1 shrink-0 text-xs text-muted-foreground">
+          Create a tokenized portal link for outstanding document requests.
         </p>
-      )}
 
-      {portalUrl ? (
-        <div className="mt-4 space-y-2">
-          <Input value={portalUrl} readOnly className="text-xs" />
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" onClick={() => void handleCopy()}>
-              <Copy className="h-3.5 w-3.5" aria-hidden />
-              Copy
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="primary"
-              onClick={() => setShowInvite(true)}
-            >
-              <Mail className="h-3.5 w-3.5" aria-hidden />
-              Send Invite
-            </Button>
+        <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
+          <div className="flex gap-1 rounded-dlc-md border border-border/70 p-0.5">
+            {(["all_outstanding", "selective"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={cn(
+                  "flex-1 rounded-dlc-sm px-2 py-1.5 text-xs font-medium",
+                  mode === m
+                    ? "bg-dlc-surface-high shadow-dlc-1"
+                    : "text-muted-foreground",
+                )}
+                onClick={() => setMode(m)}
+              >
+                {m === "all_outstanding" ? "All Outstanding" : "Selective Tasks"}
+              </button>
+            ))}
           </div>
-        </div>
-      ) : null}
 
-      <div className="mt-5 flex justify-end gap-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-          Close
-        </Button>
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          disabled={
-            busy ||
-            (mode === "selective" && selected.size === 0) ||
-            (mode === "all_outstanding" && activeTasks.length === 0)
-          }
-          onClick={() => void handleGenerate()}
-        >
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Generate"}
-        </Button>
+          {mode === "selective" ? (
+            <ul className="max-h-40 space-y-1 overflow-y-auto rounded-dlc-md border border-border/60 p-2">
+              {activeTasks.length === 0 ? (
+                <li className="text-xs text-muted-foreground">
+                  No portal-visible incomplete tasks.
+                </li>
+              ) : (
+                activeTasks.map((task) => (
+                  <li key={task._id}>
+                    <label className="flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(String(task._id))}
+                        onChange={() => toggleTask(String(task._id))}
+                      />
+                      <span className="truncate">{task.title}</span>
+                    </label>
+                  </li>
+                ))
+              )}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Includes {activeTasks.length} outstanding portal-visible task(s).
+            </p>
+          )}
+
+          {portalUrl && emailCopy ? (
+            <div
+              className="space-y-3 rounded-dlc-md border border-border/70 bg-dlc-surface px-3 py-3"
+              data-testid="client-link-email-copy"
+            >
+              <div>
+                <p className="text-[11px] font-semibold text-foreground">
+                  Email-ready copy
+                </p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  {includedTitles.length} document request
+                  {includedTitles.length === 1 ? "" : "s"} · paste into your email
+                </p>
+              </div>
+              <textarea
+                readOnly
+                value={emailCopy}
+                rows={Math.min(12, emailCopy.split("\n").length + 1)}
+                className="w-full resize-y rounded-dlc-md border border-border/70 bg-background px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground"
+                data-testid="client-link-email-copy-text"
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  onClick={() => void handleCopyEmailBlock()}
+                  data-testid="client-link-copy-email"
+                >
+                  <Copy className="h-3.5 w-3.5" aria-hidden />
+                  Copy email text
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void handleCopyUrl()}
+                  data-testid="client-link-copy-url"
+                >
+                  <Copy className="h-3.5 w-3.5" aria-hidden />
+                  Copy URL only
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowInvite(true)}
+                >
+                  <Mail className="h-3.5 w-3.5" aria-hidden />
+                  Send Invite
+                </Button>
+              </div>
+              <Input
+                value={portalUrl}
+                readOnly
+                className="text-[10px]"
+                data-testid="client-link-portal-url"
+                aria-label="Generated portal URL"
+              />
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-5 flex shrink-0 justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+            Close
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            disabled={
+              busy ||
+              (mode === "selective" && selected.size === 0) ||
+              (mode === "all_outstanding" && activeTasks.length === 0)
+            }
+            onClick={() => void handleGenerate()}
+            data-testid="client-link-generate"
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Generate"}
+          </Button>
+        </div>
       </div>
 
       {showInvite ? (

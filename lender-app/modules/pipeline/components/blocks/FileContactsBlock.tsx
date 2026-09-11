@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Mail, Phone, Trash2 } from "lucide-react";
+import { Link2, Mail, Phone, Plus, Trash2, UserPlus } from "lucide-react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { InlineTextarea } from "@/components/inline";
+import { OverlayShell } from "@/components/ui/OverlayShell";
+import { InlineText } from "@/components/inline";
 import { FieldLabel } from "@/components/pipeline/FieldLabel";
 import { IntelligentAlertsCallout } from "@/components/IntelligentAlertsCallout";
 import { buildContactFileAlerts } from "@/lib/intelligentAlerts";
@@ -19,6 +20,7 @@ import {
   effectiveContactRoleIdFromDoc,
   type ContactRole,
 } from "@/lib/contact/contactRoles";
+import { cn } from "@/lib/cn";
 
 export type StandaloneContact = Doc<"contacts">;
 export type ContactFileLinkRow = Doc<"contactFileLinks">;
@@ -77,19 +79,27 @@ function ContactRoleSelect({
   onChange,
   disabled,
   id,
+  className,
   "aria-label": ariaLabel,
+  "data-testid": testId,
 }: {
   contactRoles: ContactRole[];
   value: string;
   onChange: (roleId: string) => void;
   disabled?: boolean;
   id?: string;
+  className?: string;
   "aria-label": string;
+  "data-testid"?: string;
 }) {
   return (
     <select
       id={id}
-      className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
+      data-testid={testId}
+      className={cn(
+        "h-10 min-h-[40px] w-full rounded-dlc-sm border border-border bg-background px-2.5 text-sm sm:h-9 sm:min-h-9",
+        className
+      )}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value)}
       disabled={disabled || contactRoles.length === 0}
@@ -122,6 +132,9 @@ export function FileContactsBlock({
   const defaultRoleId =
     contactRoles[0]?.id ?? DEFAULT_CONTACT_ROLE_IDS.client;
 
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+
   const [selectedContactId, setSelectedContactId] = useState<Id<"contacts"> | "">(
     ""
   );
@@ -140,6 +153,7 @@ export function FileContactsBlock({
     null
   );
   const [error, setError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const contactById = useMemo(() => {
     const m = new Map<Id<"contacts">, StandaloneContact>();
@@ -194,25 +208,52 @@ export function FileContactsBlock({
     }
   }, [contactRoles, linkContactRoleId, newContactRoleId]);
 
+  const resetLinkForm = () => {
+    setSelectedContactId("");
+    setLinkContactRoleId(defaultRoleId);
+    setLinkNotes("");
+    setModalError(null);
+  };
+
+  const resetCreateForm = () => {
+    setNewName("");
+    setNewEmail("");
+    setNewPhone("");
+    setNewNotes("");
+    setNewContactRoleId(defaultRoleId);
+    setModalError(null);
+  };
+
+  const openLinkModal = () => {
+    setError(null);
+    resetLinkForm();
+    setLinkModalOpen(true);
+  };
+
+  const openCreateModal = () => {
+    setError(null);
+    resetCreateForm();
+    setCreateModalOpen(true);
+  };
+
   const submitLinkExisting = async () => {
     if (!selectedContactId) return;
     const contactRoleId = linkContactRoleId.trim();
     if (!contactRoleId) {
-      setError("CRM role is required.");
+      setModalError("CRM role is required.");
       return;
     }
-    setError(null);
+    setModalError(null);
     setLinking(true);
     try {
       await onLink(selectedContactId, {
         contactRoleId,
         notes: linkNotes.trim() || undefined,
       });
-      setSelectedContactId("");
-      setLinkContactRoleId(defaultRoleId);
-      setLinkNotes("");
+      resetLinkForm();
+      setLinkModalOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setModalError(e instanceof Error ? e.message : String(e));
     } finally {
       setLinking(false);
     }
@@ -222,14 +263,14 @@ export function FileContactsBlock({
     const name = newName.trim();
     const contactRoleId = newContactRoleId.trim();
     if (!name) {
-      setError("Name is required for new contact.");
+      setModalError("Name is required for new contact.");
       return;
     }
     if (!contactRoleId) {
-      setError("CRM role is required.");
+      setModalError("CRM role is required.");
       return;
     }
-    setError(null);
+    setModalError(null);
     setCreating(true);
     try {
       await onCreateAndLink({
@@ -239,333 +280,535 @@ export function FileContactsBlock({
         notes: newNotes.trim() || undefined,
         contactRoleId,
       });
-      setNewName("");
-      setNewEmail("");
-      setNewPhone("");
-      setNewNotes("");
-      setNewContactRoleId(defaultRoleId);
+      resetCreateForm();
+      setCreateModalOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setModalError(e instanceof Error ? e.message : String(e));
     } finally {
       setCreating(false);
     }
   };
 
+  const headerActionClass =
+    "h-10 min-h-[40px] gap-1 px-2.5 text-xs sm:h-8 sm:min-h-8";
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {contactAlerts.length > 0 ? (
         <IntelligentAlertsCallout alerts={contactAlerts} maxVisible={1} />
       ) : null}
-      <div className="space-y-1">
-        <h4 className="text-sm font-semibold">Associated Contacts</h4>
-        <p className="text-xs text-muted-foreground">
-          Link contacts to this file and assign a CRM role from your organization
-          settings.
-        </p>
-        {legacyContactCount > 0 ? (
+
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-semibold leading-none">
+              Associated Contacts
+            </h4>
+            {links.length > 0 ? (
+              <span
+                className="inline-flex items-center rounded-dlc-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
+                data-testid="file-contacts-linked-count"
+              >
+                {links.length} linked
+              </span>
+            ) : null}
+          </div>
           <p className="text-xs text-muted-foreground">
-            {legacyContactCount} legacy file contact
-            {legacyContactCount === 1 ? "" : "s"} preserved in storage (hidden
-            from this editor to avoid duplicate systems).
+            CRM contacts on this file with an organization role.
           </p>
-        ) : null}
+          {legacyContactCount > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {legacyContactCount} legacy file contact
+              {legacyContactCount === 1 ? "" : "s"} preserved in storage (hidden
+              from this editor to avoid duplicate systems).
+            </p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className={headerActionClass}
+            data-testid="file-contacts-link-existing"
+            onClick={openLinkModal}
+          >
+            <Link2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Link existing
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className={headerActionClass}
+            data-testid="file-contacts-create-new"
+            onClick={openCreateModal}
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Create new
+          </Button>
+        </div>
       </div>
 
       {error ? (
-        <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+        <p className="rounded-dlc-sm border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
           {error}
         </p>
       ) : null}
 
       {hydratedLinks.length === 0 ? (
-        <p className="rounded-md border border-dashed p-3 text-center text-sm text-muted-foreground">
-          No associated contacts yet.
-        </p>
+        <div
+          className="rounded-dlc-sm border border-dashed border-border/80 bg-dlc-surface-low/30 px-3 py-4 text-center"
+          data-testid="file-contacts-empty"
+        >
+          <UserPlus
+            className="mx-auto h-5 w-5 text-muted-foreground/70"
+            aria-hidden
+          />
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            No associated contacts yet.
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground/80">
+            Link an existing CRM contact or create a new one.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={headerActionClass}
+              onClick={openLinkModal}
+            >
+              <Link2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Link existing
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className={headerActionClass}
+              onClick={openCreateModal}
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Create new
+            </Button>
+          </div>
+        </div>
       ) : (
-        <ul className="space-y-2">
+        <ul className="space-y-1.5">
           {hydratedLinks.map(({ link, contact }) => {
             const email = contact ? resolvePreferredEmail(contact) : "";
             const phone = contact ? resolvePreferredPhone(contact) : "";
             const linkRoleId = effectiveLinkContactRoleId(link, contact);
             return (
-            <li
-              key={link._id}
-              className="rounded-md border border-border/70 bg-background p-3"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <p
-                    className="text-sm font-medium max-md:break-words max-md:whitespace-normal max-md:[overflow-wrap:anywhere] md:truncate"
-                    data-testid="file-contact-display-name"
+              <li
+                key={link._id}
+                className="rounded-dlc-sm border border-border/60 bg-dlc-surface px-2.5 py-2 shadow-dlc-1"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p
+                        className="text-sm font-medium leading-tight max-md:break-words max-md:whitespace-normal max-md:[overflow-wrap:anywhere] md:truncate"
+                        data-testid="file-contact-display-name"
+                      >
+                        {contact?.name ?? "Unknown contact"}
+                      </p>
+                      <span className="inline-flex items-center rounded-dlc-sm bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                        Linked
+                      </span>
+                      {isBorrowerClassLink(link) ? (
+                        <span
+                          className="inline-flex items-center rounded-dlc-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
+                          data-testid="file-contact-borrower-badge"
+                        >
+                          {link.registryRoleId === "primary_borrower"
+                            ? "Primary"
+                            : "Borrower"}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                      {email ? (
+                        <a
+                          className="inline-flex min-h-[40px] items-center gap-1 text-primary hover:underline sm:min-h-0"
+                          href={`mailto:${email}`}
+                        >
+                          <Mail className="h-3 w-3 shrink-0" /> {email}
+                        </a>
+                      ) : null}
+                      {phone ? (
+                        <a
+                          className="inline-flex min-h-[40px] items-center gap-1 text-primary hover:underline sm:min-h-0"
+                          href={`tel:${phone.replace(/\s/g, "")}`}
+                        >
+                          <Phone className="h-3 w-3 shrink-0" /> {phone}
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-10 w-10 shrink-0 p-0 text-muted-foreground hover:text-destructive sm:h-8 sm:w-8"
+                    disabled={busyLinkId === link._id}
+                    aria-label={`Unlink ${contact?.name ?? "contact"}`}
+                    onClick={async () => {
+                      setError(null);
+                      setBusyLinkId(link._id);
+                      try {
+                        await onRemoveLink(link._id);
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : String(e));
+                      } finally {
+                        setBusyLinkId(null);
+                      }
+                    }}
                   >
-                    {contact?.name ?? "Unknown contact"}
-                  </p>
-                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                    {email ? (
-                      <a
-                        className="inline-flex items-center gap-1 text-primary hover:underline"
-                        href={`mailto:${email}`}
-                      >
-                        <Mail className="h-3 w-3" /> {email}
-                      </a>
-                    ) : null}
-                    {phone ? (
-                      <a
-                        className="inline-flex items-center gap-1 text-primary hover:underline"
-                        href={`tel:${phone.replace(/\s/g, "")}`}
-                      >
-                        <Phone className="h-3 w-3" /> {phone}
-                      </a>
-                    ) : null}
-                    <span
-                      className="text-xs text-muted-foreground"
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)] sm:items-end">
+                  <div className="space-y-0.5">
+                    <FieldLabel>Role</FieldLabel>
+                    <ContactRoleSelect
+                      contactRoles={contactRoles}
+                      value={linkRoleId}
+                      disabled={busyLinkId === link._id}
+                      aria-label={`CRM role for ${contact?.name ?? "contact"} on this file`}
                       data-testid="file-contact-crm-role"
-                    >
-                      Role:{" "}
-                      {contactRoleDisplayName(contactRoles, linkRoleId) ??
-                        linkRoleId}
-                    </span>
+                      onChange={async (nextRoleId) => {
+                        if (nextRoleId === linkRoleId) return;
+                        const roleLabel =
+                          contactRoleDisplayName(contactRoles, nextRoleId) ??
+                          nextRoleId;
+                        setError(null);
+                        setBusyLinkId(link._id);
+                        try {
+                          await onUpdateLink({
+                            ...link,
+                            contactRoleId: nextRoleId,
+                            role: roleLabel,
+                          });
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : String(e));
+                        } finally {
+                          setBusyLinkId(null);
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <FieldLabel>Notes</FieldLabel>
+                    <InlineText
+                      value={link.notes ?? ""}
+                      allowEmpty
+                      placeholder="Optional link notes"
+                      ariaLabel={`Notes for ${contact?.name ?? "contact"} relationship`}
+                      displayClassName="h-10 min-h-[40px] py-2 text-xs sm:h-9 sm:min-h-9"
+                      inputClassName="h-10 min-h-[40px] text-xs sm:h-9 sm:min-h-9"
+                      onCommit={async (next) => {
+                        setError(null);
+                        setBusyLinkId(link._id);
+                        try {
+                          await onUpdateLink({
+                            ...link,
+                            notes: next.trim() || undefined,
+                          });
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : String(e));
+                        } finally {
+                          setBusyLinkId(null);
+                        }
+                      }}
+                    />
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="text-muted-foreground hover:text-destructive"
-                  disabled={busyLinkId === link._id}
-                  onClick={async () => {
-                    setError(null);
-                    setBusyLinkId(link._id);
-                    try {
-                      await onRemoveLink(link._id);
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : String(e));
-                    } finally {
-                      setBusyLinkId(null);
-                    }
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
 
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <FieldLabel>CRM role on this file</FieldLabel>
-                  <ContactRoleSelect
-                    contactRoles={contactRoles}
-                    value={linkRoleId}
-                    disabled={busyLinkId === link._id}
-                    aria-label={`CRM role for ${contact?.name ?? "contact"} on this file`}
-                    onChange={async (nextRoleId) => {
-                      if (nextRoleId === linkRoleId) return;
-                      const roleLabel =
-                        contactRoleDisplayName(contactRoles, nextRoleId) ??
-                        nextRoleId;
-                      setError(null);
-                      setBusyLinkId(link._id);
-                      try {
-                        await onUpdateLink({
-                          ...link,
-                          contactRoleId: nextRoleId,
-                          role: roleLabel,
-                        });
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : String(e));
-                      } finally {
-                        setBusyLinkId(null);
-                      }
-                    }}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <FieldLabel>Link notes</FieldLabel>
-                  <InlineTextarea
-                    value={link.notes ?? ""}
-                    rows={2}
-                    onCommit={async (next) => {
-                      setError(null);
-                      setBusyLinkId(link._id);
-                      try {
-                        await onUpdateLink({
-                          ...link,
-                          notes: next.trim() || undefined,
-                        });
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : String(e));
-                      } finally {
-                        setBusyLinkId(null);
-                      }
-                    }}
-                    ariaLabel={`Notes for ${contact?.name ?? "contact"} relationship`}
-                    placeholder="Optional notes for this contact's involvement on this file"
-                  />
-                </div>
-              </div>
-
-              {onAssignToBorrowerSlot && contact ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
-                  {isBorrowerClassLink(link) ? (
-                    <span
-                      className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-                      data-testid="file-contact-borrower-badge"
-                    >
-                      {link.registryRoleId === "primary_borrower"
-                        ? "Primary borrower"
-                        : "On borrower slot"}
-                    </span>
-                  ) : null}
-                  {link.registryRoleId !== "primary_borrower" ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      disabled={busyLinkId === link._id}
-                      data-testid="file-contact-assign-primary"
-                      onClick={async () => {
-                        setError(null);
-                        setBusyLinkId(link._id);
-                        try {
-                          await onAssignToBorrowerSlot(contact._id, "primary");
-                        } catch (e) {
-                          setError(e instanceof Error ? e.message : String(e));
-                        } finally {
-                          setBusyLinkId(null);
-                        }
-                      }}
-                    >
-                      Set as primary borrower
-                    </Button>
-                  ) : null}
-                  {!isBorrowerClassLink(link) ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      disabled={busyLinkId === link._id}
-                      data-testid="file-contact-assign-coborrower"
-                      onClick={async () => {
-                        setError(null);
-                        setBusyLinkId(link._id);
-                        try {
-                          await onAssignToBorrowerSlot(
-                            contact._id,
-                            "coborrower"
-                          );
-                        } catch (e) {
-                          setError(e instanceof Error ? e.message : String(e));
-                        } finally {
-                          setBusyLinkId(null);
-                        }
-                      }}
-                    >
-                      Add as co-borrower
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-            </li>
+                {onAssignToBorrowerSlot && contact ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1 border-t border-border/50 pt-1.5">
+                    {link.registryRoleId !== "primary_borrower" ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-10 min-h-[40px] px-2 text-xs sm:h-7 sm:min-h-7"
+                        disabled={busyLinkId === link._id}
+                        data-testid="file-contact-assign-primary"
+                        onClick={async () => {
+                          setError(null);
+                          setBusyLinkId(link._id);
+                          try {
+                            await onAssignToBorrowerSlot(contact._id, "primary");
+                          } catch (e) {
+                            setError(
+                              e instanceof Error ? e.message : String(e)
+                            );
+                          } finally {
+                            setBusyLinkId(null);
+                          }
+                        }}
+                      >
+                        Set primary
+                      </Button>
+                    ) : null}
+                    {!isBorrowerClassLink(link) ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-10 min-h-[40px] px-2 text-xs sm:h-7 sm:min-h-7"
+                        disabled={busyLinkId === link._id}
+                        data-testid="file-contact-assign-coborrower"
+                        onClick={async () => {
+                          setError(null);
+                          setBusyLinkId(link._id);
+                          try {
+                            await onAssignToBorrowerSlot(
+                              contact._id,
+                              "coborrower"
+                            );
+                          } catch (e) {
+                            setError(
+                              e instanceof Error ? e.message : String(e)
+                            );
+                          } finally {
+                            setBusyLinkId(null);
+                          }
+                        }}
+                      >
+                        Add co-borrower
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </li>
             );
           })}
         </ul>
       )}
 
-      <div className="rounded-md border border-border/70 bg-muted/20 p-3">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Link Existing Contact
-        </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <select
-            className="h-9 rounded-md border border-border bg-background px-3 text-sm"
-            value={selectedContactId}
-            onChange={(e) =>
-              setSelectedContactId(e.currentTarget.value as Id<"contacts"> | "")
-            }
-            aria-label="Select existing contact to link"
-          >
-            <option value="">Choose contact…</option>
-            {availableContacts.map((c) => (
-              <option key={c._id} value={c._id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <ContactRoleSelect
-            contactRoles={contactRoles}
-            value={linkContactRoleId}
+      <OverlayShell
+        open={linkModalOpen}
+        onClose={() => {
+          if (linking) return;
+          setLinkModalOpen(false);
+          setModalError(null);
+        }}
+        align="bottom-sheet"
+        aria-label="Link existing contact"
+        panelClassName="flex w-full max-w-md max-h-[min(90dvh,640px)] flex-col overflow-hidden p-0"
+        data-testid="file-contacts-link-modal"
+      >
+        <div className="shrink-0 border-b border-border/60 px-4 py-3">
+          <h3 className="text-sm font-semibold text-foreground">
+            Link existing contact
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Choose a CRM contact, assign a role, and optionally add notes.
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 touch-scroll-y overflow-y-auto overscroll-contain px-4 py-3">
+          {availableContacts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              All contacts are already linked, or none exist yet. Create a new
+              contact instead.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <FieldLabel>Contact</FieldLabel>
+                <select
+                  className="h-10 min-h-[40px] w-full rounded-dlc-sm border border-border bg-background px-3 text-sm"
+                  value={selectedContactId}
+                  onChange={(e) =>
+                    setSelectedContactId(
+                      e.currentTarget.value as Id<"contacts"> | ""
+                    )
+                  }
+                  aria-label="Select existing contact to link"
+                >
+                  <option value="">Choose contact…</option>
+                  {availableContacts.map((c) => (
+                    <option key={c._id} value={c._id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <FieldLabel>CRM role</FieldLabel>
+                <ContactRoleSelect
+                  contactRoles={contactRoles}
+                  value={linkContactRoleId}
+                  disabled={linking}
+                  aria-label="CRM role for associated contact"
+                  onChange={setLinkContactRoleId}
+                />
+              </div>
+              <div className="space-y-1">
+                <FieldLabel>Notes (optional)</FieldLabel>
+                <Input
+                  placeholder="Relationship notes for this file"
+                  value={linkNotes}
+                  onChange={(e) => setLinkNotes(e.currentTarget.value)}
+                  aria-label="Notes for associated contact relationship"
+                  className="h-10 min-h-[40px]"
+                />
+              </div>
+            </div>
+          )}
+          {modalError && linkModalOpen ? (
+            <p className="mt-3 text-xs text-destructive">{modalError}</p>
+          ) : null}
+        </div>
+        <div className="shrink-0 flex justify-end gap-2 border-t border-border/60 px-4 py-3">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-10 min-h-[40px] sm:h-8 sm:min-h-8"
             disabled={linking}
-            aria-label="CRM role for associated contact"
-            onChange={setLinkContactRoleId}
-          />
-          <Input
-            placeholder="Optional relationship notes"
-            value={linkNotes}
-            onChange={(e) => setLinkNotes(e.currentTarget.value)}
-            aria-label="Notes for associated contact relationship"
-          />
-        </div>
-        <div className="mt-2 flex justify-end">
-          <Button
-            type="button"
-            size="sm"
-            disabled={
-              !selectedContactId ||
-              !linkContactRoleId.trim() ||
-              linking ||
-              contactRoles.length === 0
-            }
-            onClick={() => void submitLinkExisting()}
+            onClick={() => {
+              setLinkModalOpen(false);
+              setModalError(null);
+            }}
           >
-            {linking ? "Linking…" : "Link contact"}
+            Cancel
           </Button>
+          {availableContacts.length === 0 ? (
+            <Button
+              type="button"
+              size="sm"
+              className="h-10 min-h-[40px] sm:h-8 sm:min-h-8"
+              disabled={linking}
+              onClick={() => {
+                setLinkModalOpen(false);
+                openCreateModal();
+              }}
+            >
+              Create new
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              className="h-10 min-h-[40px] sm:h-8 sm:min-h-8"
+              disabled={
+                !selectedContactId ||
+                !linkContactRoleId.trim() ||
+                linking ||
+                contactRoles.length === 0
+              }
+              onClick={() => void submitLinkExisting()}
+            >
+              {linking ? "Linking…" : "Link contact"}
+            </Button>
+          )}
         </div>
-      </div>
+      </OverlayShell>
 
-      <div className="rounded-md border border-dashed bg-background p-3">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Create & Link New Contact
-        </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <Input
-            placeholder="Name (required)"
-            value={newName}
-            onChange={(e) => setNewName(e.currentTarget.value)}
-            aria-label="New contact name"
-          />
-          <ContactRoleSelect
-            contactRoles={contactRoles}
-            value={newContactRoleId}
-            disabled={creating}
-            aria-label="CRM role for new contact"
-            onChange={setNewContactRoleId}
-          />
-          <Input
-            placeholder="Email"
-            value={newEmail}
-            onChange={(e) => setNewEmail(e.currentTarget.value)}
-            aria-label="New contact email"
-          />
-          <Input
-            placeholder="Phone"
-            value={newPhone}
-            onChange={(e) => setNewPhone(e.currentTarget.value)}
-            aria-label="New contact phone"
-          />
-          <div className="sm:col-span-2">
-            <Input
-              placeholder="Notes (stored on contact)"
-              value={newNotes}
-              onChange={(e) => setNewNotes(e.currentTarget.value)}
-              aria-label="New contact notes"
-            />
-          </div>
+      <OverlayShell
+        open={createModalOpen}
+        onClose={() => {
+          if (creating) return;
+          setCreateModalOpen(false);
+          setModalError(null);
+        }}
+        align="bottom-sheet"
+        aria-label="Create and link new contact"
+        panelClassName="flex w-full max-w-md max-h-[min(90dvh,640px)] flex-col overflow-hidden p-0"
+        data-testid="file-contacts-create-modal"
+      >
+        <div className="shrink-0 border-b border-border/60 px-4 py-3">
+          <h3 className="text-sm font-semibold text-foreground">
+            Create &amp; link contact
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Add a CRM contact and associate them with this file.
+          </p>
         </div>
-        <div className="mt-2 flex justify-end">
+        <div className="min-h-0 flex-1 touch-scroll-y overflow-y-auto overscroll-contain px-4 py-3">
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <FieldLabel>Name</FieldLabel>
+              <Input
+                placeholder="Full name (required)"
+                value={newName}
+                onChange={(e) => setNewName(e.currentTarget.value)}
+                aria-label="New contact name"
+                className="h-10 min-h-[40px]"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1">
+              <FieldLabel>CRM role</FieldLabel>
+              <ContactRoleSelect
+                contactRoles={contactRoles}
+                value={newContactRoleId}
+                disabled={creating}
+                aria-label="CRM role for new contact"
+                onChange={setNewContactRoleId}
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <FieldLabel>Email</FieldLabel>
+                <Input
+                  placeholder="Email"
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.currentTarget.value)}
+                  aria-label="New contact email"
+                  className="h-10 min-h-[40px]"
+                />
+              </div>
+              <div className="space-y-1">
+                <FieldLabel>Phone</FieldLabel>
+                <Input
+                  placeholder="Phone"
+                  type="tel"
+                  value={newPhone}
+                  onChange={(e) => setNewPhone(e.currentTarget.value)}
+                  aria-label="New contact phone"
+                  className="h-10 min-h-[40px]"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <FieldLabel>Notes (optional)</FieldLabel>
+              <Input
+                placeholder="Stored on the contact"
+                value={newNotes}
+                onChange={(e) => setNewNotes(e.currentTarget.value)}
+                aria-label="New contact notes"
+                className="h-10 min-h-[40px]"
+              />
+            </div>
+          </div>
+          {modalError && createModalOpen ? (
+            <p className="mt-3 text-xs text-destructive">{modalError}</p>
+          ) : null}
+        </div>
+        <div className="shrink-0 flex justify-end gap-2 border-t border-border/60 px-4 py-3">
           <Button
             type="button"
             size="sm"
+            variant="ghost"
+            className="h-10 min-h-[40px] sm:h-8 sm:min-h-8"
+            disabled={creating}
+            onClick={() => {
+              setCreateModalOpen(false);
+              setModalError(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-10 min-h-[40px] sm:h-8 sm:min-h-8"
             disabled={
               !newName.trim() ||
               !newContactRoleId.trim() ||
@@ -577,7 +820,7 @@ export function FileContactsBlock({
             {creating ? "Creating…" : "Create and link"}
           </Button>
         </div>
-      </div>
+      </OverlayShell>
     </div>
   );
 }

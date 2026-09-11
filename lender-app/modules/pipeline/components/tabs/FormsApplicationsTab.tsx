@@ -323,9 +323,11 @@ function FormEditor({
               aria-label="Form name"
             />
             <p className="text-[11px] text-muted-foreground">
-              {form.formType === "referral"
-                ? "Referral — creates a new lead file on submit"
-                : "File intake — hydrates this pipeline file"}
+              {form.sourceKind === "pfs_instance"
+                ? "Linked Personal Financial Statement — title stays matched to that PFS"
+                : form.formType === "referral"
+                  ? "Referral — creates a new lead file on submit"
+                  : "File intake — hydrates this pipeline file"}
             </p>
           </div>
           <div className="flex shrink-0 gap-1.5">
@@ -463,6 +465,9 @@ export function FormsApplicationsTab({
     preferencesAccountId: memberUserKey,
   });
   const createForm = useMutation(api.intakeForms.createForm);
+  const ensurePfsAssociations = useMutation(
+    api.documentVaultFileTasks.ensurePfsInstanceAssociations,
+  );
   const [selectedFormId, setSelectedFormId] = useState<Id<"intakeForms"> | null>(
     null,
   );
@@ -509,6 +514,28 @@ export function FormsApplicationsTab({
         preferencesAccountId: memberUserKey,
       });
       setSelectedFormId(id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const onCreatePfsForm = async () => {
+    setCreating(true);
+    setError(null);
+    try {
+      const result = await ensurePfsAssociations({
+        pipelineFileId: fileId,
+        memberUserKey,
+        createInstance: true,
+      });
+      const createdFormId = result.linked.find(
+        (row) => row.pfsInstanceId === result.createdInstanceId,
+      )?.intakeFormId;
+      if (createdFormId) {
+        setSelectedFormId(createdFormId as Id<"intakeForms">);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -572,6 +599,18 @@ export function FormsApplicationsTab({
               <Plus className="h-4 w-4" aria-hidden />
               Create custom form
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-10 w-full justify-start gap-2"
+              disabled={readOnly || creating}
+              data-testid="forms-create-pfs"
+              onClick={() => void onCreatePfsForm()}
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              New PFS form
+            </Button>
           </div>
 
           {forms && forms.length > 0 ? (
@@ -590,7 +629,12 @@ export function FormsApplicationsTab({
                           : "text-foreground hover:bg-muted/40",
                       )}
                     >
-                      {form.name}
+                      <span className="block truncate">{form.name}</span>
+                      {form.sourceKind === "pfs_instance" ? (
+                        <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Personal financial statement
+                        </span>
+                      ) : null}
                     </button>
                   </li>
                 ))}

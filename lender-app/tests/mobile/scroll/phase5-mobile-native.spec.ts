@@ -161,14 +161,22 @@ describeOrSkip("Phase 5 — mobile native scroll stabilization", () => {
 
   test("AppChrome inner padding stable across main scroll positions (no layout reflow)", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.goto("/sign-in", { waitUntil: "domcontentloaded" });
     await signInWorkspaceSession(page);
     await page.goto("/pipeline", { waitUntil: "domcontentloaded" });
     await waitPipelineHubReady(page, { allowDegraded: true });
     await dismissMobileNavIfOpen(page);
     await waitPipelineHubReady(page, { allowDegraded: true });
+    if (await isPipelineHubDegraded(page).isVisible().catch(() => false)) {
+      testInfo.skip(true, "Pipeline hub unavailable (Convex/org scope)");
+      return;
+    }
     await ensurePipelineHubListVisible(page);
+    if (await isPipelineHubDegraded(page).isVisible().catch(() => false)) {
+      testInfo.skip(true, "Pipeline hub unavailable (Convex/org scope)");
+      return;
+    }
 
     const main = page.getByTestId("app-main-scroll");
     const atTop = await readMainInnerPadding(page);

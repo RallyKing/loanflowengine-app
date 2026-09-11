@@ -28,14 +28,16 @@ yarn-debug.log*
 yarn-error.log*
 
 # --- Local IDE / agent tooling (not application source) ---
-.cursor/
+# Keep committed Cursor always-apply rules so verify:governance:docs
+# passes on a clean clone (MANIFEST lists `.cursor/rules/*.mdc`).
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
 .playwright-mcp/
 .idea/
 .vscode/
 __pycache__/
 *.pyc
-# Accidental empty artifact files
-lender-app/({userId
 
 # --- Database dumps, exports, migration artifacts ---
 export-bundle/

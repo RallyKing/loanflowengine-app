@@ -38,6 +38,11 @@ import {
   titleFromVaultFileName,
   type VaultUploadProgress,
 } from "@/lib/library/uploadFileToVault";
+import {
+  defaultVaultDownloadFormat,
+  vaultDocumentOutboundFileName,
+  vaultOutboundPdfFileName,
+} from "@/lib/library/vaultOutboundFileName";
 import { useDocumentVaultStateOptional } from "@/lib/library/documentVaultState";
 import { DocumentVaultPreviewModal } from "@/components/library/DocumentVaultPreviewModal";
 import { DocumentVaultDirectoryTree, type DocumentVaultExplorerFileHandlers, type VaultTreeDocument } from "@/components/pipeline/tabs/DocumentVaultDirectoryTree";
@@ -68,11 +73,18 @@ import {
   resolveFolderDragVisual,
   type FolderDragVisualState,
 } from "@/lib/library/documentVaultFolderDragUi";
-import { downloadVaultDocumentAsPdf } from "@/lib/documents/pdfExport";
+import {
+  convertVaultAssetToPdfBytes,
+  downloadVaultDocumentAsPdf,
+} from "@/lib/documents/pdfExport";
 import { documentMatchesVaultSearch } from "@/lib/library/vaultDocumentSearch";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 import { extractClientPortalTokenFromPreview, extractCompanySlugFromPreview } from "@/lib/portalToken";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
+import {
+  TriageClockProvider,
+  useTriageClockTime,
+} from "@/components/providers/TriageClockProvider";
 import { unlinkConfirm } from "@/lib/ui/confirmDestructive";
 import type {
   LibraryDocumentsContext,
@@ -106,11 +118,18 @@ import {
   type VaultGridTypeFilter,
 } from "@/lib/library/vaultGridFilters";
 import { DocumentVaultBulkToolbar } from "@/components/library/DocumentVaultBulkToolbar";
+import {
+  VaultMoveCopyToFileDialog,
+  type VaultMoveCopyEntity,
+} from "@/components/library/VaultMoveCopyToFileDialog";
+import { useFloatingBlockWindow } from "@/components/ui/FloatingBlockWindowProvider";
+import { vaultDocumentFloatingBlockKey } from "@/lib/library/vaultDocumentFloatingKey";
 import { FileTaskConfigModal } from "@/components/library/FileTaskConfigModal";
 import { DocumentVaultApplyTemplateDrawer } from "@/components/library/DocumentVaultApplyTemplateDrawer";
 import { ClientLinkGeneratorModal } from "@/components/library/ClientLinkGeneratorModal";
 import { ClientPortalLinkRepository } from "@/components/library/ClientPortalLinkRepository";
 import { DeliverToLenderModal } from "@/components/library/DeliverToLenderModal";
+import { DueDiligenceWorkspaceSheet } from "@/components/library/DueDiligenceWorkspaceSheet";
 import { DealBibleCompilerModal } from "@/components/library/compiler/DealBibleCompilerModal";
 import { DocumentVaultCreatorModal } from "@/components/pipeline/deal/DocumentVaultCreatorModal";
 import type { DocumentCreatorTokenContext } from "@/lib/pipeline/documentVaultCreator";
@@ -124,8 +143,17 @@ import { useDealWorkspaceEditorOptional } from "@/lib/file/useDealWorkspaceEdito
 import { DocumentPropertiesPanel } from "@/components/library/DocumentPropertiesPanel";
 import { LibraryDocumentsList } from "@/components/library/LibraryDocumentsList";
 import { LibraryDocumentsVaultGridSkeleton } from "@/components/library/LibraryDocumentsVaultGrid";
-import { downloadVaultDocumentsZip } from "@/lib/library/downloadVaultDocumentsZip";
-import { buildVaultDocumentZipPath } from "@/lib/library/vaultZipPaths";
+import {
+  downloadRemoteFile,
+  downloadVaultDocumentsZip,
+  type VaultDownloadItem,
+} from "@/lib/library/downloadVaultDocumentsZip";
+import {
+  buildVaultDocumentZipPath,
+  buildVaultFolderSubtreeZipPath,
+  sanitizeZipPathSegment,
+} from "@/lib/library/vaultZipPaths";
+import { collectFolderSubtreeIds } from "@/lib/library/vaultItemCounts";
 import { FileTaskReviewActions } from "@/components/library/FileTaskReviewActions";
 import { FileTaskRejectModal } from "@/components/library/FileTaskRejectModal";
 import {
@@ -167,6 +195,8 @@ type DocRow = {
   latestUploadedAt: number | undefined;
   updatedAt: number;
   documentCategory?: LibraryDocumentCategory;
+  customDocumentCategoryId?: Id<"organizationDocumentCategories">;
+  customDocumentCategoryName?: string;
   taxYear?: string;
   folderId?: Id<"documentFolders">;
   fileTaskId?: Id<"documentVaultFileTasks">;
@@ -189,6 +219,8 @@ type DocRow = {
 
 type OptimisticLinkMeta = {
   documentCategory?: LibraryDocumentCategory | null;
+  customDocumentCategoryId?: Id<"organizationDocumentCategories"> | null;
+  customDocumentCategoryName?: string | null;
   taxYear?: string | null;
 };
 
@@ -217,7 +249,15 @@ export type LibraryDocumentsWorkspaceProps = {
   organizationId?: Id<"organizations">;
 };
 
-export function LibraryDocumentsWorkspace({
+export function LibraryDocumentsWorkspace(props: LibraryDocumentsWorkspaceProps) {
+  return (
+    <TriageClockProvider>
+      <LibraryDocumentsWorkspaceBody {...props} />
+    </TriageClockProvider>
+  );
+}
+
+function LibraryDocumentsWorkspaceBody({
   context,
   memberUserKey,
   canUseHub,
@@ -229,6 +269,21 @@ export function LibraryDocumentsWorkspace({
   documentCreatorTokenContext,
   organizationId,
 }: LibraryDocumentsWorkspaceProps) {
+  const nowBucket = useTriageClockTime();
+  const fallbackSelectDocument = useCallback(
+    (_id: Id<"libraryDocuments"> | null) => {
+      void _id;
+    },
+    [],
+  );
+  const fallbackClosePreview = useCallback(() => {}, []);
+  const fallbackOpenProperties = useCallback(
+    (_id: Id<"libraryDocuments">) => {
+      void _id;
+    },
+    [],
+  );
+  const fallbackCloseProperties = useCallback(() => {}, []);
   const { confirm } = useOperationalConfirm();
   const convex = useConvex();
   const dealEditor = useDealWorkspaceEditorOptional();
@@ -302,6 +357,7 @@ export function LibraryDocumentsWorkspace({
       ? context.pipelineFileId
       : null;
 
+  const floatingHost = useFloatingBlockWindow();
   const vaultNav = useDocumentVaultStateOptional();
   const useVaultNav = layout === "vault" && vaultNav != null;
 
@@ -321,7 +377,9 @@ export function LibraryDocumentsWorkspace({
     ? vaultNav.setCurrentFolderId
     : setEmbeddedFolderId;
   const selectedDocumentId = useVaultNav ? vaultNav.selectedDocumentId : null;
-  const selectDocument = useVaultNav ? vaultNav.selectDocument : () => {};
+  const selectDocument = useVaultNav
+    ? vaultNav.selectDocument
+    : fallbackSelectDocument;
   const activeCategoryFilter = useVaultNav
     ? vaultNav.activeCategoryFilter
     : embeddedCategoryFilter;
@@ -341,14 +399,22 @@ export function LibraryDocumentsWorkspace({
     ? vaultNav.setHighlightDocumentId
     : setEmbeddedHighlightId;
   const isModalOpen = useVaultNav ? vaultNav.isModalOpen : false;
-  const closePreview = useVaultNav ? vaultNav.closePreview : () => {};
+  const closePreview = useVaultNav
+    ? vaultNav.closePreview
+    : fallbackClosePreview;
   const propertiesDocumentId = useVaultNav ? vaultNav.propertiesDocumentId : null;
-  const openProperties = useVaultNav ? vaultNav.openProperties : () => {};
-  const closeProperties = useVaultNav ? vaultNav.closeProperties : () => {};
+  const openProperties = useVaultNav
+    ? vaultNav.openProperties
+    : fallbackOpenProperties;
+  const closeProperties = useVaultNav
+    ? vaultNav.closeProperties
+    : fallbackCloseProperties;
   const navigateToFolder = useVaultNav ? vaultNav.navigateToFolder : setCurrentFolderId;
 
   const [moveDocTarget, setMoveDocTarget] = useState<DocRow | null>(null);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const [moveCopyEntity, setMoveCopyEntity] =
+    useState<VaultMoveCopyEntity | null>(null);
   const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -361,6 +427,10 @@ export function LibraryDocumentsWorkspace({
   const [assignTarget, setAssignTarget] = useState<DocRow | null>(null);
   const [exportingPdfDocId, setExportingPdfDocId] =
     useState<Id<"libraryDocuments"> | null>(null);
+  const [downloadingDocId, setDownloadingDocId] =
+    useState<Id<"libraryDocuments"> | null>(null);
+  const [downloadingFolderId, setDownloadingFolderId] =
+    useState<Id<"documentFolders"> | null>(null);
   const [showArchivedTasks, setShowArchivedTasks] = useState(false);
   const vaultFolders = useDocumentVaultFolders(vaultPipelineFileId, memberUserKey);
   const fileTasksQueryArgs = useMemo(() => {
@@ -395,6 +465,7 @@ export function LibraryDocumentsWorkspace({
   const [clientLinkOpen, setClientLinkOpen] = useState(false);
   const [linkRepositoryOpen, setLinkRepositoryOpen] = useState(false);
   const [deliverLenderOpen, setDeliverLenderOpen] = useState(false);
+  const [dueDiligenceOpen, setDueDiligenceOpen] = useState(false);
   const issueViewAsClient = useMutation(
     api.documentVaultClientBundlePortal.issueViewAsClientPreview,
   );
@@ -418,13 +489,15 @@ export function LibraryDocumentsWorkspace({
       ? undefined
       : (rootLabelQuery.rootLabel ?? "Root");
 
+  const staleComplianceArgs = useMemo(() => {
+    if (!vaultPipelineFileId) return "skip" as const;
+    return memberUserKey
+      ? { pipelineFileId: vaultPipelineFileId, memberUserKey, nowBucket }
+      : { pipelineFileId: vaultPipelineFileId, nowBucket };
+  }, [vaultPipelineFileId, memberUserKey, nowBucket]);
   const staleCompliance = useQuery(
     api.documentVaultCompliance.listStaleDocuments,
-    vaultPipelineFileId && memberUserKey
-      ? { pipelineFileId: vaultPipelineFileId, memberUserKey }
-      : vaultPipelineFileId
-        ? { pipelineFileId: vaultPipelineFileId }
-        : "skip",
+    staleComplianceArgs,
   );
   const stalePortalSyncRef = useRef<string | null>(null);
 
@@ -512,18 +585,6 @@ export function LibraryDocumentsWorkspace({
       : "skip",
   );
 
-  const openPreview = useCallback(
-    (
-      documentId: Id<"libraryDocuments">,
-      versionId: Id<"libraryDocumentVersions">,
-      fileName: string,
-      contentType?: string,
-    ) => {
-      setPreview({ documentId, versionId, fileName, contentType });
-    },
-    [],
-  );
-
   const previewRow =
     preview && previewUrl?.status === "ok"
       ? {
@@ -534,6 +595,8 @@ export function LibraryDocumentsWorkspace({
       : null;
 
   const canMutate = Boolean(memberUserKey) && canUseHub;
+  /** Always offer Move / copy when the broker can mutate — dialog handles empty targets. */
+  const crossFileTransferEnabled = canMutate && Boolean(vaultPipelineFileId);
 
   useEffect(() => {
     if (
@@ -793,6 +856,14 @@ export function LibraryDocumentsWorkspace({
           opt?.documentCategory !== undefined
             ? (opt.documentCategory ?? undefined)
             : d.documentCategory,
+        customDocumentCategoryId:
+          opt?.customDocumentCategoryId !== undefined
+            ? (opt.customDocumentCategoryId ?? undefined)
+            : d.customDocumentCategoryId,
+        customDocumentCategoryName:
+          opt?.customDocumentCategoryName !== undefined
+            ? (opt.customDocumentCategoryName ?? undefined)
+            : d.customDocumentCategoryName,
         taxYear:
           opt?.taxYear !== undefined ? (opt.taxYear ?? undefined) : d.taxYear,
       };
@@ -835,7 +906,7 @@ export function LibraryDocumentsWorkspace({
     ) {
       setActiveTaxYearFilter("all");
     }
-  }, [activeCategoryFilter, activeTaxYearFilter, availableTaxYears]);
+  }, [activeCategoryFilter, activeTaxYearFilter, availableTaxYears, setActiveTaxYearFilter]);
 
   const categoryFilteredRows = useMemo((): DocRow[] | undefined => {
     if (displayRows === undefined) return undefined;
@@ -901,6 +972,40 @@ export function LibraryDocumentsWorkspace({
         folderId: d.folderId,
       }));
   }, [treeSearchFilteredRows]);
+
+  const dueDiligenceDocuments = useMemo(() => {
+    const source = displayRows ?? explorerDocumentRows ?? [];
+    if (bulkSelectedIds.size === 0) return [];
+    return source
+      .filter((d) => bulkSelectedIds.has(String(d._id)))
+      .map((d) => ({
+        _id: d._id,
+        title: d.title,
+        latestVersionId: d.latestVersionId,
+        latestFileName: d.latestFileName,
+        latestContentType: d.latestContentType,
+      }));
+  }, [bulkSelectedIds, displayRows, explorerDocumentRows]);
+
+  const openDueDiligence = useCallback(() => {
+    if (!organizationId || !memberUserKey) {
+      showOperationalToast({
+        title: "Sign in required",
+        description: "Due Diligence needs an organization session.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (dueDiligenceDocuments.length === 0) {
+      showOperationalToast({
+        title: "Select files first",
+        description: "Select at least one vault file, then run Due Diligence.",
+        variant: "default",
+      });
+      return;
+    }
+    setDueDiligenceOpen(true);
+  }, [dueDiligenceDocuments.length, memberUserKey, organizationId]);
 
   const compilerDocuments = useMemo(() => {
     if (!displayRows) return [];
@@ -999,7 +1104,7 @@ export function LibraryDocumentsWorkspace({
           d.latestVersionNumber > 0 &&
           guessAttachmentKind(
             d.latestContentType,
-            d.latestFileName ?? d.title,
+            vaultDocumentOutboundFileName(d),
           ) === "pdf",
       )
       .map((d) => ({
@@ -1024,6 +1129,137 @@ export function LibraryDocumentsWorkspace({
         rootLabel ?? "Root",
       ),
     [vaultFolders, selectedRow?.folderId, currentFolderId, rootLabel],
+  );
+
+  const openVaultFloatingDocument = useCallback(
+    (
+      documentId: Id<"libraryDocuments">,
+      versionId: Id<"libraryDocumentVersions">,
+      fileName: string,
+      contentType?: string,
+    ): boolean => {
+      if (!floatingHost || !vaultPipelineFileId || layout !== "vault") {
+        return false;
+      }
+      const blockKey = vaultDocumentFloatingBlockKey(documentId);
+      if (useVaultNav && vaultNav) {
+        vaultNav.setSelectedDocumentId(documentId);
+        vaultNav.setIsModalOpen(false);
+      }
+      if (floatingHost.isDetached(blockKey)) {
+        return true;
+      }
+      const row =
+        displayRows?.find((d) => d._id === documentId) ??
+        listRows?.find((d) => d._id === documentId) ??
+        null;
+      const proof = row ? proofForDocRow(context, row) : null;
+      const mergeCandidates: DocumentVaultMergeCandidate[] = (listRows ?? [])
+        .filter(
+          (d) =>
+            d._id !== documentId &&
+            d.latestVersionId &&
+            d.latestVersionNumber > 0 &&
+            guessAttachmentKind(
+              d.latestContentType,
+              vaultDocumentOutboundFileName(d),
+            ) === "pdf",
+        )
+        .map((d) => ({
+          documentId: d._id,
+          versionId: d.latestVersionId!,
+          title: d.title,
+        }));
+      floatingHost.detach({
+        blockKey,
+        title: fileName || row?.title || "Document",
+        persistKey: "vault-doc-preview",
+        contentClassName:
+          "flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0 sm:p-0",
+        content: (
+          <DocumentVaultPreviewModal
+            open
+            variant="embedded"
+            onClose={() => floatingHost.reattach(blockKey)}
+            fileName={fileName || row?.title || "Document"}
+            contentType={contentType ?? row?.latestContentType}
+            url={null}
+            documentId={documentId}
+            versionId={versionId}
+            versionNumber={row?.latestVersionNumber}
+            proof={proof ?? undefined}
+            memberUserKey={memberUserKey}
+            canMutate={canMutate}
+            pipelineFileId={vaultPipelineFileId}
+            mergeCandidates={mergeCandidates}
+            vaultMutations={vaultUploadMutations}
+            onError={(message) => setErr(message)}
+            lastModified={row?.updatedAt}
+          />
+        ),
+        testId: `${blockKey}-floating-window`,
+      });
+      return true;
+    },
+    [
+      canMutate,
+      context,
+      displayRows,
+      floatingHost,
+      layout,
+      listRows,
+      memberUserKey,
+      useVaultNav,
+      vaultNav,
+      vaultPipelineFileId,
+      vaultUploadMutations,
+    ],
+  );
+
+  const openPreview = useCallback(
+    (
+      documentId: Id<"libraryDocuments">,
+      versionId: Id<"libraryDocumentVersions">,
+      fileName: string,
+      contentType?: string,
+    ) => {
+      if (layout === "vault" && useVaultNav) {
+        selectDocument(documentId);
+        return;
+      }
+      setPreview({ documentId, versionId, fileName, contentType });
+    },
+    [layout, selectDocument, useVaultNav],
+  );
+
+  const openDocumentInWindow = useCallback(
+    (
+      documentId: Id<"libraryDocuments">,
+      versionId: Id<"libraryDocumentVersions">,
+      fileName: string,
+      contentType?: string,
+    ) => {
+      if (
+        openVaultFloatingDocument(
+          documentId,
+          versionId,
+          fileName,
+          contentType,
+        )
+      ) {
+        return;
+      }
+      // No floating host (e.g. contact vault) — fall back to modal preview.
+      openPreview(documentId, versionId, fileName, contentType);
+    },
+    [openPreview, openVaultFloatingDocument],
+  );
+
+  const openVaultDocumentById = useCallback(
+    (documentId: Id<"libraryDocuments"> | null) => {
+      selectDocument(documentId);
+    },
+    [selectDocument],
   );
 
   const propertiesRow = useMemo(
@@ -1130,51 +1366,295 @@ export function LibraryDocumentsWorkspace({
     vaultPipelineFileId,
   ]);
 
-  const handleBulkDownload = useCallback(async () => {
-    if (!memberUserKey || bulkSelectedIds.size === 0) return;
-    setErr(null);
-    setBulkBusy(true);
-    try {
-      const selected = bulkSelectableRows.filter((d) =>
-        bulkSelectedIds.has(String(d._id)),
-      );
-      const items = await Promise.all(
-        selected.map(async (d) => {
-          if (!d.latestVersionId) throw new Error(`No file for ${d.title}`);
-          const urlResult = await convex.query(
-            api.libraryDocuments.getVersionUrl,
-            {
-              documentId: d._id,
-              versionId: d.latestVersionId,
-              memberUserKey,
-            },
-          );
-          if (urlResult.status !== "ok" || !urlResult.url) {
-            throw new Error(`Could not load ${d.title}`);
-          }
-          return {
-            documentId: d._id,
-            versionId: d.latestVersionId,
-            fileName: d.latestFileName ?? d.title,
-            url: urlResult.url,
-            zipPath: vaultFolders
+  const buildVaultDownloadItem = useCallback(
+    async (
+      d: DocRow,
+      zipPathFor: (fileName: string) => string | undefined,
+    ): Promise<VaultDownloadItem> => {
+      if (!memberUserKey) throw new Error("Sign in to download documents.");
+      if (!d.latestVersionId) throw new Error(`No file for ${d.title}`);
+      const urlResult = await convex.query(api.libraryDocuments.getVersionUrl, {
+        documentId: d._id,
+        versionId: d.latestVersionId,
+        memberUserKey,
+      });
+      if (urlResult.status !== "ok" || !urlResult.url) {
+        throw new Error(`Could not load ${d.title}`);
+      }
+      const outbound = vaultDocumentOutboundFileName(d);
+      if (defaultVaultDownloadFormat(d) === "pdf") {
+        const bytes = await convertVaultAssetToPdfBytes({
+          title: d.title,
+          url: urlResult.url,
+          contentType: d.latestContentType,
+          fileName: outbound,
+        });
+        const pdfName = vaultOutboundPdfFileName(d.title, outbound);
+        return {
+          documentId: d._id,
+          versionId: d.latestVersionId,
+          fileName: pdfName,
+          url: urlResult.url,
+          bytes,
+          zipPath: zipPathFor(pdfName),
+        };
+      }
+      return {
+        documentId: d._id,
+        versionId: d.latestVersionId,
+        fileName: outbound,
+        url: urlResult.url,
+        zipPath: zipPathFor(outbound),
+      };
+    },
+    [convex, memberUserKey],
+  );
+
+  const resolveVaultDownloadItems = useCallback(
+    async (rows: DocRow[]): Promise<VaultDownloadItem[]> => {
+      return Promise.all(
+        rows.map((d) =>
+          buildVaultDownloadItem(d, (fileName) =>
+            vaultFolders
               ? buildVaultDocumentZipPath(
                   vaultFolders,
                   d.folderId,
-                  d.latestFileName ?? d.title,
+                  fileName,
                   rootLabel ?? "Root",
                 )
               : undefined,
-          };
-        }),
+          ),
+        ),
       );
-      await downloadVaultDocumentsZip(items);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBulkBusy(false);
+    },
+    [buildVaultDownloadItem, rootLabel, vaultFolders],
+  );
+
+  const runVaultZipDownload = useCallback(
+    async (rows: DocRow[], zipName: string, emptyMessage: string) => {
+      if (!memberUserKey) return;
+      if (rows.length === 0) {
+        showOperationalToast({
+          title: "Nothing to download",
+          description: emptyMessage,
+          variant: "default",
+        });
+        return;
+      }
+      setErr(null);
+      setBulkBusy(true);
+      showOperationalToast({
+        title: "Preparing download",
+        description:
+          rows.length === 1
+            ? rows[0]!.title
+            : `${rows.length} documents as ZIP`,
+        variant: "default",
+      });
+      try {
+        const items = await resolveVaultDownloadItems(rows);
+        await downloadVaultDocumentsZip(items, zipName, (progress) => {
+          if (progress.completed === 0 || progress.completed === progress.total) {
+            return;
+          }
+          if (progress.completed % 5 === 0 || progress.completed === progress.total - 1) {
+            showOperationalToast({
+              title: "Downloading…",
+              description: `${progress.completed} / ${progress.total}`,
+              variant: "default",
+            });
+          }
+        });
+        showOperationalToast({
+          title: "Download started",
+          description:
+            rows.length === 1
+              ? rows[0]!.title
+              : `${rows.length} documents`,
+          variant: "success",
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        setErr(message);
+        showOperationalToast({
+          title: "Download failed",
+          description: message,
+          variant: "destructive",
+        });
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [memberUserKey, resolveVaultDownloadItems],
+  );
+
+  const handleBulkDownload = useCallback(async () => {
+    if (bulkSelectedIds.size === 0) {
+      showOperationalToast({
+        title: "Nothing selected",
+        description: "Select one or more files, then download selected.",
+        variant: "default",
+      });
+      return;
     }
-  }, [bulkSelectableRows, bulkSelectedIds, convex, memberUserKey, rootLabel, vaultFolders]);
+    const selected = bulkSelectableRows.filter((d) =>
+      bulkSelectedIds.has(String(d._id)),
+    );
+    const zipBase = (rootLabel ?? "vault-documents")
+      .replace(/[/\\]+/g, "-")
+      .trim() || "vault-documents";
+    await runVaultZipDownload(
+      selected,
+      `${zipBase}-selected.zip`,
+      "Selected files have no downloadable versions.",
+    );
+  }, [
+    bulkSelectableRows,
+    bulkSelectedIds,
+    rootLabel,
+    runVaultZipDownload,
+  ]);
+
+  const handleDownloadAll = useCallback(async () => {
+    const zipBase = (rootLabel ?? "vault-documents")
+      .replace(/[/\\]+/g, "-")
+      .trim() || "vault-documents";
+    await runVaultZipDownload(
+      bulkSelectableRows,
+      `${zipBase}-all.zip`,
+      "This vault has no downloadable documents yet.",
+    );
+  }, [bulkSelectableRows, rootLabel, runVaultZipDownload]);
+
+  const handleDownloadFolder = useCallback(
+    async (folderId: Id<"documentFolders">, folderName: string) => {
+      if (!memberUserKey) return;
+      if (!vaultFolders?.length) {
+        showOperationalToast({
+          title: "Nothing to download",
+          description: `"${folderName}" has no downloadable files.`,
+          variant: "default",
+        });
+        return;
+      }
+      const subtree = collectFolderSubtreeIds(vaultFolders, folderId);
+      const rows = bulkSelectableRows.filter(
+        (d) => d.folderId != null && subtree.has(String(d.folderId)),
+      );
+      if (rows.length === 0) {
+        showOperationalToast({
+          title: "Nothing to download",
+          description: `"${folderName}" has no downloadable files.`,
+          variant: "default",
+        });
+        return;
+      }
+
+      const zipBase =
+        sanitizeZipPathSegment(folderName).replace(/\.+$/g, "") || "folder";
+      setErr(null);
+      setDownloadingFolderId(folderId);
+      setBulkBusy(true);
+      showOperationalToast({
+        title: "Preparing download",
+        description:
+          rows.length === 1
+            ? `1 file from ${folderName}`
+            : `${rows.length} files from ${folderName}`,
+        variant: "default",
+      });
+      try {
+        const items = await Promise.all(
+          rows.map((d) =>
+            buildVaultDownloadItem(d, (fileName) =>
+              buildVaultFolderSubtreeZipPath(
+                vaultFolders,
+                folderId,
+                d.folderId,
+                fileName,
+              ),
+            ),
+          ),
+        );
+        await downloadVaultDocumentsZip(items, `${zipBase}.zip`, (progress) => {
+          if (
+            progress.completed === 0 ||
+            progress.completed === progress.total
+          ) {
+            return;
+          }
+          if (
+            progress.completed % 5 === 0 ||
+            progress.completed === progress.total - 1
+          ) {
+            showOperationalToast({
+              title: "Downloading…",
+              description: `${progress.completed} / ${progress.total} · ${folderName}`,
+              variant: "default",
+            });
+          }
+        });
+        showOperationalToast({
+          title: "Download started",
+          description: `${folderName} (${rows.length} file${rows.length === 1 ? "" : "s"})`,
+          variant: "success",
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        setErr(message);
+        showOperationalToast({
+          title: "Download failed",
+          description: message,
+          variant: "destructive",
+        });
+      } finally {
+        setDownloadingFolderId(null);
+        setBulkBusy(false);
+      }
+    },
+    [buildVaultDownloadItem, bulkSelectableRows, memberUserKey, vaultFolders],
+  );
+
+  const handleDownloadOriginal = useCallback(
+    async (doc: DocRow) => {
+      if (!memberUserKey || !doc.latestVersionId) {
+        setErr("No file version available to download.");
+        return;
+      }
+      setErr(null);
+      setDownloadingDocId(doc._id);
+      try {
+        const urlResult = await convex.query(api.libraryDocuments.getVersionUrl, {
+          documentId: doc._id,
+          versionId: doc.latestVersionId,
+          memberUserKey,
+        });
+        if (urlResult.status !== "ok" || !urlResult.url) {
+          throw new Error(`Could not load ${doc.title}`);
+        }
+        await downloadRemoteFile(
+          urlResult.url,
+          vaultDocumentOutboundFileName(doc),
+        );
+        showOperationalToast({
+          title: "Download started",
+          description: doc.title,
+          variant: "success",
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        setErr(message);
+        showOperationalToast({
+          title: "Download failed",
+          description: message,
+          variant: "destructive",
+        });
+      } finally {
+        setDownloadingDocId(null);
+      }
+    },
+    [convex, memberUserKey],
+  );
 
   const handleDownloadAsPdf = useCallback(
     async (doc: DocRow) => {
@@ -1197,7 +1677,7 @@ export function LibraryDocumentsWorkspace({
           title: doc.title,
           url: urlResult.url,
           contentType: doc.latestContentType,
-          fileName: doc.latestFileName ?? doc.title,
+          fileName: vaultDocumentOutboundFileName(doc),
         });
         showOperationalToast({
           title: "PDF download started",
@@ -1211,6 +1691,17 @@ export function LibraryDocumentsWorkspace({
       }
     },
     [convex, memberUserKey],
+  );
+
+  const handleDownloadDocument = useCallback(
+    async (doc: DocRow) => {
+      if (defaultVaultDownloadFormat(doc) === "pdf") {
+        await handleDownloadAsPdf(doc);
+        return;
+      }
+      await handleDownloadOriginal(doc);
+    },
+    [handleDownloadAsPdf, handleDownloadOriginal],
   );
 
   const handleMoveDocumentToFolder = useCallback(
@@ -1730,12 +2221,25 @@ export function LibraryDocumentsWorkspace({
       proofForRow: (row) => proofForDocRow(context, row),
       onToggleBulkSelect: toggleBulkSelect,
       onPreview: openPreview,
+      onOpenInWindow: floatingHost ? openDocumentInWindow : undefined,
       onToggleExpanded: (id) => setExpanded((x) => (x === id ? null : id)),
       onMoveDoc: setMoveDocTarget,
+      onMoveCopyToFile: crossFileTransferEnabled
+        ? (row) =>
+            setMoveCopyEntity({
+              kind: "document",
+              documentId: row._id,
+              label: row.title,
+            })
+        : undefined,
+      crossFileTransferEnabled,
       onOpenProperties: openProperties,
       onSaveToContact: setSaveToContactTarget,
       onAssignToRegistry: setAssignTarget,
+      onDownload: (row) => void handleDownloadDocument(row),
       onDownloadAsPdf: (row) => void handleDownloadAsPdf(row),
+      onDownloadOriginal: (row) => void handleDownloadOriginal(row),
+      downloadingDocId,
       exportingPdfDocId,
       onRemoveLink: (documentId, linkProof, isGlobalContactDoc, title) => {
         void (async () => {
@@ -1771,16 +2275,22 @@ export function LibraryDocumentsWorkspace({
     bulkSelectedIds,
     busyDoc,
     canMutate,
+    crossFileTransferEnabled,
     vaultPipelineFileId,
     context,
     toggleBulkSelect,
     openPreview,
+    openDocumentInWindow,
+    floatingHost,
     openProperties,
     confirm,
     removeLink,
     handleRejectDocument,
     handleToggleClientVisibility,
+    handleDownloadDocument,
     handleDownloadAsPdf,
+    handleDownloadOriginal,
+    downloadingDocId,
     exportingPdfDocId,
   ]);
 
@@ -1806,10 +2316,10 @@ export function LibraryDocumentsWorkspace({
     if (navigationFocus.highlightDocumentId) {
       setHighlightDocumentId(navigationFocus.highlightDocumentId);
       if (useVaultNav) {
-        selectDocument(navigationFocus.highlightDocumentId);
+        openVaultDocumentById(navigationFocus.highlightDocumentId);
       }
     }
-  }, [layout, navigationFocus, selectDocument, setActiveCategoryFilter, setActiveTaxYearFilter, setHighlightDocumentId, useVaultNav]);
+  }, [layout, navigationFocus, openVaultDocumentById, setActiveCategoryFilter, setActiveTaxYearFilter, setHighlightDocumentId, useVaultNav]);
 
   useEffect(() => {
     if (!highlightDocumentId) {
@@ -1841,7 +2351,7 @@ export function LibraryDocumentsWorkspace({
     }, 2000);
 
     return () => window.clearTimeout(timer);
-  }, [highlightDocumentId, onNavigationFocusConsumed]);
+  }, [highlightDocumentId, onNavigationFocusConsumed, setHighlightDocumentId]);
 
   useEffect(() => {
     if (!rows) return;
@@ -2101,6 +2611,7 @@ export function LibraryDocumentsWorkspace({
         rows={listRows}
         layout={layout}
         context={context}
+        organizationId={organizationId}
         memberUserKey={memberUserKey}
         canMutate={Boolean(canMutate)}
         canUseHub={canUseHub}
@@ -2116,7 +2627,7 @@ export function LibraryDocumentsWorkspace({
         busyDoc={busyDoc}
         proofForRow={(row) => proofForDocRow(context, row)}
         actionTitle={actionTitle}
-        onSelectDocument={(id) => selectDocument(id)}
+        onSelectDocument={(id) => openVaultDocumentById(id)}
         onToggleBulkSelect={toggleBulkSelect}
         onBulkSelectAll={() =>
           setBulkSelectedIds(
@@ -2133,6 +2644,7 @@ export function LibraryDocumentsWorkspace({
         onSaveToContact={setSaveToContactTarget}
         onAssignToRegistry={setAssignTarget}
         onDownloadAsPdf={(row) => void handleDownloadAsPdf(row)}
+        onDownloadOriginal={(row) => void handleDownloadOriginal(row)}
         exportingPdfDocId={exportingPdfDocId}
         onNewVersion={onNewVersion}
         onRemoveLink={(documentId, linkProof, isGlobalContactDoc, title) => {
@@ -2193,6 +2705,7 @@ export function LibraryDocumentsWorkspace({
               onMove={() => setBulkMoveOpen(true)}
               onDelete={() => void handleBulkDelete()}
               onDownload={() => void handleBulkDownload()}
+              onDueDiligence={organizationId ? openDueDiligence : undefined}
               onClear={clearBulkSelection}
             />
           ) : null
@@ -2262,6 +2775,9 @@ export function LibraryDocumentsWorkspace({
                 uploadBusy={uploadBusy}
                 searchQuery={vaultSearchQuery}
                 onSearchChange={setVaultSearchQuery}
+                onAddFileTasks={
+                  canMutate ? () => setFileTaskBatchOpen(true) : undefined
+                }
                 onCreate={
                   canMutate ? () => setCreatorOpen(true) : undefined
                 }
@@ -2335,6 +2851,9 @@ export function LibraryDocumentsWorkspace({
                     ? () => setDeliverLenderOpen(true)
                     : undefined
                 }
+                onDueDiligence={
+                  canMutate && organizationId ? openDueDiligence : undefined
+                }
                 onFilesSelected={(files) => onBatchUpload(files)}
                 typeFilters={gridTypeFilters}
                 onTypeFiltersChange={setGridTypeFilters}
@@ -2369,6 +2888,7 @@ export function LibraryDocumentsWorkspace({
                   onMove={() => setBulkMoveOpen(true)}
                   onDelete={() => void handleBulkDelete()}
                   onDownload={() => void handleBulkDownload()}
+                  onDueDiligence={organizationId ? openDueDiligence : undefined}
                   onClear={clearBulkSelection}
                 />
               ) : null}
@@ -2402,6 +2922,37 @@ export function LibraryDocumentsWorkspace({
                   archivedFileTasks={archivedVaultFileTasks}
                   showArchived={showArchivedTasks}
                   onToggleShowArchived={() => setShowArchivedTasks((v) => !v)}
+                  onDownloadAll={() => void handleDownloadAll()}
+                  onDownloadSelected={() => void handleBulkDownload()}
+                  onDownloadFolder={(folderId, folderName) =>
+                    void handleDownloadFolder(folderId, folderName)
+                  }
+                  downloadingFolderId={downloadingFolderId}
+                  downloadBusy={bulkBusy}
+                  bulkSelectedCount={bulkSelectedIds.size}
+                  downloadableCount={bulkSelectableRows.length}
+                  crossFileTransferEnabled={crossFileTransferEnabled}
+                  onMoveCopyFolder={
+                    crossFileTransferEnabled
+                      ? (folderId, folderName) =>
+                          setMoveCopyEntity({
+                            kind: "folder",
+                            folderId,
+                            label: folderName,
+                          })
+                      : undefined
+                  }
+                  onMoveCopyFileTask={
+                    crossFileTransferEnabled
+                      ? (fileTaskId, title) =>
+                          setMoveCopyEntity({
+                            kind: "fileTask",
+                            fileTaskId,
+                            label: title,
+                          })
+                      : undefined
+                  }
+                  onOpenDocument={openVaultDocumentById}
                   onOsFilesDroppedToTask={
                     canMutate
                       ? (files, fileTaskId) =>
@@ -2412,6 +2963,7 @@ export function LibraryDocumentsWorkspace({
                   fileRowHandlers={explorerFileRowHandlers}
                   rootLabel={dealPackageLabel || rootLabel || "Deal Package"}
                   vaultSearchQuery={vaultSearchQuery}
+                  onSearchChange={setVaultSearchQuery}
                   dropEnabled={Boolean(canMutate)}
                   osFileDropEnabled={Boolean(canMutate && canUseHub && !uploadBusy)}
                   onOsFilesDropped={
@@ -2479,6 +3031,16 @@ export function LibraryDocumentsWorkspace({
               {listBody}
             </section>
           )}
+
+          {vaultPipelineFileId && moveCopyEntity ? (
+            <VaultMoveCopyToFileDialog
+              open={moveCopyEntity != null}
+              onClose={() => setMoveCopyEntity(null)}
+              sourcePipelineFileId={vaultPipelineFileId}
+              memberUserKey={memberUserKey}
+              entity={moveCopyEntity}
+            />
+          ) : null}
 
           {vaultPipelineFileId && moveDocTarget ? (
             <MoveToFolderDialog
@@ -2557,7 +3119,7 @@ export function LibraryDocumentsWorkspace({
             <DocumentVaultPreviewModal
               open={isModalOpen}
               onClose={closePreview}
-              fileName={selectedRow.latestFileName ?? selectedRow.title}
+              fileName={vaultDocumentOutboundFileName(selectedRow)}
               contentType={selectedRow.latestContentType}
               url={
                 selectedPreviewUrl?.status === "ok"
@@ -2589,6 +3151,18 @@ export function LibraryDocumentsWorkspace({
                 navigateToFolder(folderId, { keepPreview: true })
               }
               onOpenProperties={() => openProperties(selectedRow._id)}
+              onOpenInWindow={
+                floatingHost && selectedRow.latestVersionId
+                  ? () => {
+                      openDocumentInWindow(
+                        selectedRow._id,
+                        selectedRow.latestVersionId!,
+                        vaultDocumentOutboundFileName(selectedRow),
+                        selectedRow.latestContentType,
+                      );
+                    }
+                  : undefined
+              }
               lastModified={selectedRow.updatedAt}
               reviewFooter={previewReviewFooter}
             />
@@ -2709,6 +3283,14 @@ export function LibraryDocumentsWorkspace({
               clientInstructionText: payload.clientInstructionText,
               instructionUrl: payload.instructionUrl,
               assignedBlockEntries: payload.assignedBlockEntries,
+              clientTemplateAttachments: payload.clientTemplateAttachments?.map(
+                (a) => ({
+                  storageId: a.storageId as Id<"_storage">,
+                  fileName: a.fileName,
+                  mimeType: a.mimeType,
+                  size: a.size,
+                }),
+              ),
               isRequired: payload.isRequired,
               isPortalVisible: payload.isPortalVisible,
               dueDate: payload.dueDate,
@@ -2768,6 +3350,17 @@ export function LibraryDocumentsWorkspace({
           folders={vaultFolders}
           documents={explorerDocumentRows ?? []}
           onError={(message) => setErr(message)}
+        />
+      ) : null}
+
+      {organizationId && memberUserKey ? (
+        <DueDiligenceWorkspaceSheet
+          open={dueDiligenceOpen}
+          onClose={() => setDueDiligenceOpen(false)}
+          organizationId={organizationId}
+          memberUserKey={memberUserKey}
+          pipelineFileId={vaultPipelineFileId || undefined}
+          selectedDocuments={dueDiligenceDocuments}
         />
       ) : null}
     </>

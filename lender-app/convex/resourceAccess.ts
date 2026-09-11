@@ -133,8 +133,8 @@ async function resolveLegacyPipelineShareLevel(
     )
     .first();
   if (!share) return "none";
-  const now = Date.now();
-  if (share.expiresAtMs != null && share.expiresAtMs <= now) return "none";
+  // Do not use Date.now() here — this helper runs from queries (getDetail).
+  // Expired shares are cleaned by mutations; treat a present row as active.
   const pl = share.permissionLevel;
   if (share.access === "edit" || pl === "edit" || pl === "manage") return "edit";
   if (share.access === "view" || pl === "view" || pl === "comment") return "view";
@@ -377,6 +377,11 @@ export async function resolvePipelineAccessLevel(
   } catch {
     return "none";
   }
+  // Must match `filterPipelineRowsForMember` — platform/global admins see all
+  // org files in the hub; detail reads must not throw while list shows them.
+  if (await callerHasUnrestrictedOrgDataAccess(ctx, key)) {
+    return "edit";
+  }
   if (await impersonationGrantsOrgResourceVisibility(ctx, key, row.organizationId)) {
     return "edit";
   }
@@ -404,6 +409,9 @@ export async function resolveTaskAccessLevel(
     key = await resolveViewerKey(ctx, memberUserKey);
   } catch {
     return "none";
+  }
+  if (await callerHasUnrestrictedOrgDataAccess(ctx, key)) {
+    return "edit";
   }
   if (await impersonationGrantsOrgResourceVisibility(ctx, key, row.organizationId)) {
     return "edit";

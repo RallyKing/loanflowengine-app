@@ -20,7 +20,9 @@ type PortalOverlayPanelProps = {
 };
 
 /**
- * Body-portal dropdown/popover — escapes overflow clipping with opaque surface.
+ * Body-portal dropdown/popover — escapes overflow clipping; stacking via
+ * canonical `Z_LAYER` (pass `CHROME_MENU` for masterpage bells so sticky
+ * list toolbars at Tailwind z-40/z-50 cannot cover the panel).
  */
 export function PortalOverlayPanel({
   open,
@@ -45,6 +47,8 @@ export function PortalOverlayPanel({
     const onDoc = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest?.("[data-portal-overlay-panel]")) return;
+      // Trigger lives outside the portal (e.g. header bell) — let its onClick toggle.
+      if (t?.closest?.("[data-portal-overlay-trigger]")) return;
       onClose();
     };
     document.addEventListener("keydown", onKey);

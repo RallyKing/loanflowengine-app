@@ -209,7 +209,9 @@ export function pipelineDrawerSectionFieldCount(
     /* Phase Modular-C — opt-in blocks store data outside the pipeline row. */
     case "constructionBudget":
     case "investorExperience":
-    case "pfs": {
+    case "pfs":
+    case "trackRecord":
+    case "simplePl": {
       return 0;
     }
     default: {

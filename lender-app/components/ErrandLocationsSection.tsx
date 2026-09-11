@@ -710,7 +710,7 @@ export function ErrandLocationsSection({
                             </span>
                             <input
                               type="checkbox"
-                              className="mb-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
+                              className="mb-0.5 h-5 w-5 shrink-0 rounded border-input accent-primary"
                               checked={it.completed}
                               onChange={(e) =>
                                 void toggleItem(li, ii, e.target.checked)

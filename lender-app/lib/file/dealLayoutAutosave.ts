@@ -4,6 +4,22 @@ export const LAYOUT_PATCH_DEBOUNCE_MS = 500;
 /** Suppress autosave briefly after Convex pushes a fresh sheet snapshot. */
 export const BACKEND_SYNC_LOCK_MS = 100;
 
+/** Cap conflict/error auto-retries so flush never hammers Convex forever. */
+export const PATCH_DEAL_MAX_AUTO_RETRIES = 5;
+
+/** Max backoff between conflict/error retries (ms). */
+export const PATCH_DEAL_MAX_RETRY_DELAY_MS = 8_000;
+
+/**
+ * Exponential backoff for patchDeal conflict/error retries.
+ * Attempt 0 → base debounce; then 1s, 2s, 4s… capped.
+ */
+export function patchDealRetryDelayMs(failCount: number): number {
+  const n = Math.max(0, Math.floor(failCount));
+  const delay = LAYOUT_PATCH_DEBOUNCE_MS * 2 ** n;
+  return Math.min(PATCH_DEAL_MAX_RETRY_DELAY_MS, delay);
+}
+
 export function layoutPayloadJsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return false;
@@ -21,6 +37,25 @@ export function sheetFieldValueEqual(a: unknown, b: unknown): boolean {
     return layoutPayloadJsonEqual(a, b);
   }
   return false;
+}
+
+/**
+ * Drop pending keys that already match the latest server sheet (no-op filter).
+ */
+export function filterNoOpDealChanges<T extends Record<string, unknown>>(
+  changes: Partial<T>,
+  sheet: T | null | undefined,
+): Partial<T> {
+  if (!sheet) return { ...changes };
+  const out: Partial<T> = {};
+  for (const key of Object.keys(changes) as (keyof T)[]) {
+    const next = changes[key];
+    if (next === undefined) continue;
+    if (!sheetFieldValueEqual(sheet[key], next)) {
+      out[key] = next;
+    }
+  }
+  return out;
 }
 
 /** Deep equality for intake sheet snapshots (reference-safe for Convex subscriptions). */

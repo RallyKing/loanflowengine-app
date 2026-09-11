@@ -19,9 +19,16 @@
 
 ## Data layer (Convex / client)
 
+**Cost and loop safety is governed separately and is blocking:** **`docs/governance/resource-consumption-policy.md`** (enforced by `npm run verify:resource-safety`, which runs inside `npm run build`). Read it before changing any Convex function, cron, scheduler chain, `useQuery` call site, or write path.
+
 - Prefer **targeted queries** over fetching oversized graphs for simple views.
 - Avoid redundant **subscriptions** when a single combined query suffices.
 - Client caches: respect Convex patterns; do not duplicate authoritative server state in unbounded local structures.
+- **No polling** — no `setInterval`/`refetchInterval` against Convex; subscriptions are push-based.
+- **Stable query args** — never `Date.now()`/`new Date()` or fresh object literals in `useQuery` args (re-subscribe storms); memoize on primitive deps or pass `"skip"`.
+- **Bounded reads** — `withIndex` + `.paginate()`/`.take(N)` on growth tables; `.collect()` only on a provably bounded set with a `// bounded:` comment.
+- **No `Date.now()` inside query handlers** — it defeats Convex query caching.
+- **No idle scheduler pumps** — `runAfter(0, self)` only while work provably remains; crons no more frequent than 15 minutes.
 
 ---
 
@@ -42,6 +49,8 @@
 
 ## References
 
+- **`docs/governance/resource-consumption-policy.md`** — Convex resource & cost safety (hard bans, cron registry, load-test gate).
+- **`docs/governance/convex-reactivity-policy.md`** — push vs pull, React correctness, mutation retry-safety (not a second cost policy).
 - `docs/scroll-architecture-rules.md` — scroll-specific compositing and observer discipline.
 - `docs/ai-development-rules.md` — summary performance bullets.
 

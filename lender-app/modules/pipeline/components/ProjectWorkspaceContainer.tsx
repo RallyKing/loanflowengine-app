@@ -377,6 +377,8 @@ export function ProjectWorkspaceContainer({
         animated
         lazyMount
         density="compact"
+        detachable={false}
+        clientAssignBlockId={false}
         contentClassName="p-0"
         chromeClassName={
           isThemedProject ? cn(theme.background, theme.border) : undefined

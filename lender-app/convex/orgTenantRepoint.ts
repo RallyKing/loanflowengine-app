@@ -131,6 +131,27 @@ async function collectDocsWithOrganizationId(
       .collect(),
   );
   push(
+    "orgAiProviders",
+    await ctx.db
+      .query("orgAiProviders")
+      .withIndex("by_organization", (q) => q.eq("organizationId", fromId))
+      .collect(),
+  );
+  push(
+    "dueDiligencePrompts",
+    await ctx.db
+      .query("dueDiligencePrompts")
+      .withIndex("by_organization", (q) => q.eq("organizationId", fromId))
+      .collect(),
+  );
+  push(
+    "dueDiligenceRuns",
+    await ctx.db
+      .query("dueDiligenceRuns")
+      .withIndex("by_organization_created", (q) => q.eq("organizationId", fromId))
+      .collect(),
+  );
+  push(
     "integrationApiKeys",
     await ctx.db
       .query("integrationApiKeys")

@@ -34,7 +34,6 @@ export function opSearchFieldClass(options?: {
     "w-full rounded-dlc-sm border border-border/60",
     "bg-dlc-surface-low font-bold text-foreground",
     "dark:bg-dlc-surface-low/80",
-    MOBILE_SAFE_FORM_FONT_CLASS,
     "leading-normal shadow-none",
     opMotionFastTransition,
     "hover:border-border/55 hover:bg-dlc-surface-low",
@@ -43,6 +42,8 @@ export function opSearchFieldClass(options?: {
     OP_INPUT_FOCUS_CLASS,
     "disabled:cursor-not-allowed disabled:opacity-[0.48]",
     options?.className,
+    // Last so twMerge keeps ≥16px on mobile even if className has text-xs/text-sm.
+    MOBILE_SAFE_FORM_FONT_CLASS,
   );
 }
 
@@ -52,10 +53,10 @@ export function opSearchOverlayInputClass(options?: {
 }): string {
   return cn(
     "min-w-0 flex-1 bg-transparent py-2 font-bold text-foreground outline-none",
-    MOBILE_SAFE_FORM_FONT_CLASS,
     "placeholder:font-bold placeholder:text-foreground/70",
     "dark:placeholder:text-foreground/60",
     options?.className,
+    MOBILE_SAFE_FORM_FONT_CLASS,
   );
 }
 
@@ -73,7 +74,6 @@ export function opInputFieldClass(options?: {
   return cn(
     OP_CONTROL_HEIGHT_CLASS,
     "w-full rounded-dlc-sm border border-border/40 bg-background px-3 py-0",
-    MOBILE_SAFE_FORM_FONT_CLASS,
     "leading-normal shadow-none",
     opMotionFastTransition,
     OP_INPUT_HOVER_CLASS,
@@ -83,6 +83,8 @@ export function opInputFieldClass(options?: {
     options?.error &&
       "border-destructive/35 focus-visible:border-destructive/50 focus-visible:ring-destructive/15",
     options?.className,
+    // Last so twMerge keeps ≥16px on mobile even if className has text-xs/text-sm.
+    MOBILE_SAFE_FORM_FONT_CLASS,
   );
 }
 
@@ -125,11 +127,11 @@ export const OP_INLINE_EDIT_CLASS = cn(
 
 export const OP_INLINE_TEXTAREA_CLASS = cn(
   "min-h-[5rem] w-full rounded-dlc-sm border border-border/40 bg-background px-3 py-2",
-  MOBILE_SAFE_FORM_FONT_CLASS,
   opMotionFastTransition,
   OP_INPUT_HOVER_CLASS,
   "placeholder:text-muted-foreground/60",
   OP_INPUT_FOCUS_CLASS,
+  MOBILE_SAFE_FORM_FONT_CLASS,
 );
 
 export const OP_INLINE_SAVED_CLASS =

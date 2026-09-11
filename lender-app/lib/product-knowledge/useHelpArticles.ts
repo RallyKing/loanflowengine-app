@@ -35,7 +35,18 @@ function convexArticleToHelp(row: Doc<"productKnowledgeArticles">): HelpArticle 
   };
 }
 
-export function useHelpArticles(): {
+export function useHelpArticles(
+  /**
+   * When `false`, skip the Convex article subscription entirely and serve the
+   * bundled static help content. The Help Center panel passes its open state so
+   * the full-table `listPublishedArticlesForViewer` `.collect()` only mounts
+   * while the panel is actually open — not as an always-on shell subscription on
+   * every page. Defaults to `true` to preserve prior behavior for any other
+   * caller. No new Convex functions / polling; this only narrows WHEN the
+   * existing query subscribes.
+   */
+  enabled: boolean = true,
+): {
   articles: HelpArticle[];
   categories: typeof HELP_CATEGORIES;
   source: "convex" | "static";
@@ -43,7 +54,7 @@ export function useHelpArticles(): {
 } {
   const memberUserKey = useActorUserKey();
   const { activeOrganizationId } = useOrgPermissions();
-  const ready = memberUserKey.length > 0;
+  const ready = enabled && memberUserKey.length > 0;
 
   const queries = useMemo((): RequestForQueries => {
     const q: RequestForQueries = {};

@@ -10,13 +10,14 @@ import {
 } from "@/lib/pipelineBlockRegistry";
 
 /**
- * Phase Modular-D — favorites quick-access bar.
+ * Favorites quick-access bar.
  *
  * Compact pinned chrome (non-scrolling region of `PipelineFileWorkspaceShell`,
- * below `FileWorkspaceTabNav`). Chips open the pinned block — either in the
- * favorites slide-over (`RecordInspectorShell`, standalone-capable blocks) or by
- * jumping to the block's canonical tab section. Pin management lives in the
- * star popover; per-user persistence is `userPreferences.favoriteFileBlocks`.
+ * below `FileWorkspaceTabNav`). Chips open the pinned block in window-in-window
+ * (`FloatingBlockWindow` via favorites launcher); optional “Go to section”
+ * remains on floating chrome. Fallback deep-links to the block’s tab section.
+ * Pin management lives in the star popover; persistence is
+ * `userPreferences.favoriteFileBlocks`.
  */
 export function FileFavoritesBar({
   favorites,
@@ -42,7 +43,7 @@ export function FileFavoritesBar({
       data-testid="pipeline-file-favorites-bar"
     >
       <div className={PREMIUM_WORKSPACE_CONTAINER_CLASS}>
-        <div className="flex min-h-9 items-center gap-1.5 py-1">
+        <div className="flex min-h-7 items-center gap-1 py-0.5 md:min-h-9 md:gap-1.5 md:py-1">
           <DropdownMenu
             aria-label="Manage favorite blocks"
             align="start"
@@ -125,8 +126,8 @@ export function FileFavoritesBar({
                     type="button"
                     onClick={() => onOpenBlock(blockId)}
                     className={cn(
-                      "inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-border/70 bg-dlc-surface px-2.5",
-                      "text-xs font-medium text-foreground transition-colors duration-dlc-fast ease-dlc-standard",
+                      "inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-border/70 bg-dlc-surface px-2 md:h-7 md:px-2.5",
+                      "text-[11px] font-medium text-foreground transition-colors duration-dlc-fast ease-dlc-standard md:text-xs",
                       "hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     )}
                     data-testid={`pipeline-file-favorites-chip-${blockId}`}

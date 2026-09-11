@@ -151,6 +151,37 @@ export function computeRuleBasedDrawerBlockSuggestions(args: {
     );
   }
 
+  if (cand.has("pfs")) {
+    pushSuggestion(
+      out,
+      seen,
+      "pfs",
+      "Personal financial statement is available on every file — add it for guarantor / borrower net worth.",
+      "rules",
+    );
+  }
+
+  const cashFlowLike =
+    summary.dealType.includes("working capital") ||
+    summary.dealType.includes("working-capital") ||
+    summary.fundingType.includes("working capital") ||
+    summary.fundingType.includes("factor") ||
+    summary.purpose.includes("working capital") ||
+    summary.program.includes("working capital") ||
+    pipelineScenario.includes("p&l") ||
+    pipelineScenario.includes("profit and loss") ||
+    summary.scenarioText.includes("p&l");
+
+  if (cand.has("simplePl") && cashFlowLike) {
+    pushSuggestion(
+      out,
+      seen,
+      "simplePl",
+      "Working-capital / cash-flow files often need a Simple P&L (YTD and past years).",
+      "rules",
+    );
+  }
+
   if (cand.has("scenarioMatch") && args.lenderCount >= 2) {
     pushSuggestion(
       out,

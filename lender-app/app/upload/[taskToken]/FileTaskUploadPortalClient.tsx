@@ -12,6 +12,7 @@ import {
   buildVerifyAccessPath,
   readPortalAccessProof,
 } from "@/lib/portalAccessProof";
+import { FileTaskClientTemplateDownloads } from "@/components/library/FileTaskClientTemplateAttach";
 
 type FileTaskUploadPortalClientProps = {
   taskToken: string;
@@ -149,6 +150,13 @@ export function FileTaskUploadPortalClient({
             </span>
           ) : null}
         </p>
+
+        {portal.clientTemplates && portal.clientTemplates.length > 0 ? (
+          <FileTaskClientTemplateDownloads
+            templates={portal.clientTemplates}
+            className="mt-6"
+          />
+        ) : null}
 
         <div
           className={cn(

@@ -11,7 +11,7 @@ import {
   isPaidStatus,
 } from "../lib/pipelineStatus";
 import { isCurrentlySnoozed as pipelineIsCurrentlySnoozed } from "../lib/pipelineSnooze";
-import { assertOrgMember, filterPipelineRowsForMember, sessionKeyIsGlobalAdmin } from "./organizationAccess";
+import { assertOrgMember, filterPipelineRowsForMember } from "./organizationAccess";
 
 function trimStr(x: unknown): string {
   if (x == null) return "";
@@ -63,10 +63,55 @@ export type AnalyticsStageMixRow = {
   count: number;
 };
 
+const dashboardResultV = v.object({
+  fileCount: v.number(),
+  totalPipelineValue: v.number(),
+  totalCommission: v.number(),
+  totalNetRevenue: v.number(),
+  conversion: v.object({
+    winRatePct: v.number(),
+    paidCount: v.number(),
+    lateStageRatePct: v.number(),
+    lateStageCount: v.number(),
+  }),
+  revenueTrend: v.array(
+    v.object({
+      weekStart: v.number(),
+      netRevenue: v.number(),
+      commission: v.number(),
+      files: v.number(),
+    }),
+  ),
+  topReferralSources: v.array(
+    v.object({
+      key: v.string(),
+      label: v.string(),
+      fileCount: v.number(),
+      totalFunding: v.number(),
+    }),
+  ),
+  stageMix: v.array(
+    v.object({
+      status: v.string(),
+      label: v.string(),
+      weight: v.number(),
+      count: v.number(),
+    }),
+  ),
+  fundingTypeSuggestions: v.array(v.string()),
+  applied: v.object({
+    timeField: v.union(v.literal("createdAt"), v.literal("updatedAt")),
+    startMs: v.number(),
+    endMs: v.number(),
+    includeArchived: v.boolean(),
+    includeSnoozed: v.boolean(),
+  }),
+});
+
 /**
- * Single-round-trip dashboard metrics for org-scoped pipeline data.
- * Loads org files via `by_organization_createdAt`, applies membership visibility,
- * batches intakes once, then aggregates in memory (accurate; bounded to org size).
+ * On-demand dashboard metrics for one org. Call with `convex.query` from the
+ * Analytics page only — never `useQuery` (live subscription re-runs on every
+ * pipeline write and, with unstable Date.now() args, on every render).
  */
 export const dashboard = query({
   args: {
@@ -74,6 +119,8 @@ export const dashboard = query({
     memberUserKey: v.optional(v.string()),
     startMs: v.number(),
     endMs: v.number(),
+    /** Client clock for snooze filtering — never Date.now() inside this query. */
+    now: v.number(),
     timeField: v.optional(
       v.union(v.literal("createdAt"), v.literal("updatedAt")),
     ),
@@ -84,6 +131,7 @@ export const dashboard = query({
     includeArchived: v.optional(v.boolean()),
     includeSnoozed: v.optional(v.boolean()),
   },
+  returns: dashboardResultV,
   handler: async (ctx, args) => {
     // `assertOrgMember` resolves the canonical member identity (arg → JWT →
     // single-user fallback) so the dashboard works for cookie-auth callers
@@ -104,17 +152,17 @@ export const dashboard = query({
     const timeField = args.timeField ?? "createdAt";
     const includeArchived = args.includeArchived === true;
     const includeSnoozed = args.includeSnoozed === true;
-    const now = Date.now();
+    const now =
+      typeof args.now === "number" && Number.isFinite(args.now)
+        ? args.now
+        : startMs;
 
-    const god = await sessionKeyIsGlobalAdmin(ctx, args.memberUserKey);
-    const allOrg = god
-      ? await ctx.db.query("pipeline").collect()
-      : await ctx.db
-          .query("pipeline")
-          .withIndex("by_organization_createdAt", (q) =>
-            q.eq("organizationId", args.organizationId),
-          )
-          .collect();
+    const allOrg = await ctx.db
+      .query("pipeline")
+      .withIndex("by_organization_createdAt", (q) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
 
     const visible = await filterPipelineRowsForMember(
       ctx,

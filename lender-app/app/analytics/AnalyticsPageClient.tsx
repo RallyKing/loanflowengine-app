@@ -1,16 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "convex/react";
-import { BarChart3 } from "lucide-react";
+import { useConvex, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
+import { BarChart3, RefreshCw } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { settingsHref } from "@/lib/settingsRegistry";
+import { convexClientErrorMessage } from "@/lib/ui/convexErrorMessage";
+
+type DashboardResult = FunctionReturnType<typeof api.analytics.dashboard>;
 
 function fmtMoney(n: number): string {
   return `$${n.toLocaleString(undefined, {
@@ -55,6 +60,7 @@ function rangeForPreset(
 }
 
 export default function AnalyticsPageClient() {
+  const convex = useConvex();
   const { accountId } = useUserPreferences();
   const { activeOrganizationId } = useOrgPermissions();
   const memberKey = accountId.trim();
@@ -67,18 +73,9 @@ export default function AnalyticsPageClient() {
   );
   const [attributionUserKey, setAttributionUserKey] = useState("");
   const [fundingTypeFilter, setFundingTypeFilter] = useState("");
-
-  const now = Date.now();
-
-  const { startMs, endMs } = useMemo(() => {
-    if (preset === "custom" && customStart && customEnd) {
-      const a = startOfUtcDay(new Date(customStart).getTime());
-      const b = startOfUtcDay(new Date(customEnd).getTime()) + 86400000 - 1;
-      return a <= b ? { startMs: a, endMs: b } : { startMs: b, endMs: a };
-    }
-    const r = rangeForPreset(preset, now);
-    return { startMs: r.start, endMs: r.end };
-  }, [preset, customStart, customEnd, now]);
+  const [dashboard, setDashboard] = useState<DashboardResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const members = useQuery(
     api.organizations.listMembers,
@@ -87,26 +84,62 @@ export default function AnalyticsPageClient() {
       : "skip",
   );
 
-  const dashboard = useQuery(
-    api.analytics.dashboard,
-    activeOrganizationId && memberKey
-      ? {
-          organizationId: activeOrganizationId as Id<"organizations">,
-          memberUserKey: memberKey,
-          startMs,
-          endMs,
-          timeField,
-          attributionUserKey:
-            attributionUserKey.trim() === ""
-              ? undefined
-              : attributionUserKey.trim(),
-          fundingTypeFilter:
-            fundingTypeFilter.trim() === ""
-              ? undefined
-              : fundingTypeFilter.trim(),
-        }
-      : "skip",
-  );
+  const loadStats = useCallback(async () => {
+    if (!activeOrganizationId || !memberKey) return;
+    const now = Date.now();
+    let startMs: number;
+    let endMs: number;
+    if (preset === "custom" && customStart && customEnd) {
+      const a = startOfUtcDay(new Date(customStart).getTime());
+      const b = startOfUtcDay(new Date(customEnd).getTime()) + 86400000 - 1;
+      if (a <= b) {
+        startMs = a;
+        endMs = b;
+      } else {
+        startMs = b;
+        endMs = a;
+      }
+    } else {
+      const r = rangeForPreset(preset, now);
+      startMs = r.start;
+      endMs = r.end;
+    }
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const result = await convex.query(api.analytics.dashboard, {
+        organizationId: activeOrganizationId as Id<"organizations">,
+        memberUserKey: memberKey,
+        startMs,
+        endMs,
+        now,
+        timeField,
+        attributionUserKey:
+          attributionUserKey.trim() === ""
+            ? undefined
+            : attributionUserKey.trim(),
+        fundingTypeFilter:
+          fundingTypeFilter.trim() === ""
+            ? undefined
+            : fundingTypeFilter.trim(),
+      });
+      setDashboard(result);
+    } catch (err) {
+      setLoadError(convexClientErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    activeOrganizationId,
+    memberKey,
+    convex,
+    preset,
+    customStart,
+    customEnd,
+    timeField,
+    attributionUserKey,
+    fundingTypeFilter,
+  ]);
 
   const trendMax = useMemo(() => {
     if (!dashboard?.revenueTrend.length) return 1;
@@ -174,8 +207,9 @@ export default function AnalyticsPageClient() {
           Analytics
         </h1>
         <p className="text-sm text-muted-foreground">
-          One Convex query per change — metrics match pipeline list previews and
-          tracked revenue fields.
+          Stats load only when you click Refresh — they do not stay subscribed
+          while you work elsewhere. Metrics match pipeline previews and tracked
+          revenue fields.
         </p>
       </header>
 
@@ -272,11 +306,39 @@ export default function AnalyticsPageClient() {
             ) : null}
           </div>
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="primary"
+            size="md"
+            className="min-h-10"
+            disabled={loading}
+            onClick={() => void loadStats()}
+          >
+            <RefreshCw
+              className={cn("h-4 w-4", loading && "animate-spin")}
+              aria-hidden
+            />
+            {d ? "Refresh stats" : "Load stats"}
+          </Button>
+          {loading ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              Loading metrics…
+            </p>
+          ) : null}
+          {loadError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {loadError}
+            </p>
+          ) : null}
+        </div>
       </section>
 
-      {d === undefined ? (
+      {d == null ? (
         <p className="text-sm text-muted-foreground" role="status">
-          Loading metrics…
+          {loading
+            ? "Loading metrics…"
+            : "Choose filters, then load stats. Nothing runs until you click."}
         </p>
       ) : (
         <>

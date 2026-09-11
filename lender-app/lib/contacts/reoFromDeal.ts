@@ -1,11 +1,13 @@
 /** Intake REO row — aligned with `reoRow` in `intakeSchemaPart`. */
 export type DealReoRow = {
+  rowId?: string;
   purchasedDate?: string;
   state?: string;
   usage?: string;
   address?: string;
   propertyType?: string;
   marketValue?: string;
+  zillowUrl?: string;
   position?: string;
   balance?: string;
   mortgagePayment?: string;
@@ -19,6 +21,10 @@ export type DealReoRow = {
   apn?: string;
   invested?: string;
   latLong?: string;
+  lotSf?: string;
+  propSf?: string;
+  mostRecent?: string;
+  assignedContactIds?: string[];
 };
 
 /** CRM `contactReoProperties` field payload (excluding ids/timestamps). */
@@ -30,6 +36,7 @@ export type ContactReoPropertyShape = {
   state?: string;
   purchasedDate?: string;
   marketValue?: string;
+  zillowUrl?: string;
   mortgageBalance?: string;
   monthlyPayment?: string;
   rate?: string;
@@ -43,6 +50,9 @@ export type ContactReoPropertyShape = {
   apn?: string;
   invested?: string;
   latLong?: string;
+  lotSf?: string;
+  propSf?: string;
+  mostRecent?: string;
 };
 
 function strField(v: unknown): string | undefined {
@@ -103,6 +113,9 @@ export function reoRowToProfileShape(
     ...(strField(rec.marketValue) !== undefined
       ? { marketValue: strField(rec.marketValue) }
       : {}),
+    ...(strField(rec.zillowUrl) !== undefined
+      ? { zillowUrl: strField(rec.zillowUrl) }
+      : {}),
     ...(strField(rec.balance) !== undefined
       ? { mortgageBalance: strField(rec.balance) }
       : {}),
@@ -129,6 +142,13 @@ export function reoRowToProfileShape(
       : {}),
     ...(strField(rec.latLong) !== undefined
       ? { latLong: strField(rec.latLong) }
+      : {}),
+    ...(strField(rec.lotSf) !== undefined ? { lotSf: strField(rec.lotSf) } : {}),
+    ...(strField(rec.propSf) !== undefined
+      ? { propSf: strField(rec.propSf) }
+      : {}),
+    ...(strField(rec.mostRecent) !== undefined
+      ? { mostRecent: strField(rec.mostRecent) }
       : {}),
   };
 }

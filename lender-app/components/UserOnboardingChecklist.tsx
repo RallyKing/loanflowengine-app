@@ -132,8 +132,11 @@ export function UserOnboardingChecklist({
   /** Signed in but viewer not hydrated yet — don’t flash modal or call mutations with a stale key. */
   const sessionNotReady = isSignedIn && !sessionUserKey;
 
-  /** `useQuery` throws on Convex errors; `useQueries` returns `Error` per key. */
-  const checklistQueries = useMemo((): RequestForQueries => {
+  /**
+   * Phase 1 — subscribe only to the cheap onboarding state row here. `useQuery`
+   * throws on Convex errors; `useQueries` returns `Error` per key.
+   */
+  const onboardingQueries = useMemo((): RequestForQueries => {
     const q: RequestForQueries = {};
     if (
       isLoaded &&
@@ -149,23 +152,6 @@ export function UserOnboardingChecklist({
           : {},
       };
     }
-    if (orgQueryReady && activeOrganizationId && mutationMemberKey) {
-      q.filesPeek = {
-        query: api.pipeline.listLight,
-        args: {
-          organizationId: activeOrganizationId,
-          memberUserKey: mutationMemberKey,
-          maxRows: 1,
-        },
-      };
-      q.contactsPeek = {
-        query: api.contacts.list,
-        args: {
-          organizationId: activeOrganizationId,
-          memberUserKey: mutationMemberKey,
-        },
-      };
-    }
     return q;
   }, [
     isLoaded,
@@ -173,16 +159,13 @@ export function UserOnboardingChecklist({
     sessionNotReady,
     isAuthenticated,
     convexAuthLoading,
-    orgQueryReady,
     onboardingMemberKey,
-    activeOrganizationId,
-    mutationMemberKey,
   ]);
 
-  const checklistResults = useQueries(checklistQueries);
+  const onboardingResults = useQueries(onboardingQueries);
   const onboardingRaw =
     isLoaded && isSignedIn && !sessionNotReady
-      ? checklistResults.onboarding
+      ? onboardingResults.onboarding
       : undefined;
   const onboardingLoadError = onboardingRaw instanceof Error;
   /** Convex still loading subscription result for onboarding query. */
@@ -206,18 +189,72 @@ export function UserOnboardingChecklist({
     );
   }, [isLoaded, isSignedIn, sessionNotReady, onboardingLoadError, onboardingRaw]);
 
-  const filesPeekRaw =
-    activeOrganizationId && mutationMemberKey
-      ? checklistResults.filesPeek
-      : undefined;
+  const hideForRoute = useMemo(() => {
+    if (!pathname) return true;
+    return HIDDEN_PREFIXES.some((p) => pathname.startsWith(p));
+  }, [pathname]);
+
+  /**
+   * Perf + Convex-usage guard: the pipeline + contacts "peek" queries below are
+   * only needed to render the checklist's file/contact step state. Both do a
+   * full-table `.collect()` server-side (`pipeline.listLight`, `contacts.list`).
+   * Previously they were always-on shell subscriptions firing on EVERY page for
+   * every non-admin signed-in user — even after onboarding was finished. We now
+   * gate them behind the onboarding row itself: once the server reports
+   * complete / dismissed / skipped (the steady state for essentially every
+   * returning user), neither subscription ever mounts.
+   *
+   * This narrows only WHEN existing, already-bounded/idempotent queries start —
+   * it adds no new Convex functions, no polling, no self-scheduling, and cannot
+   * increase call volume (it strictly reduces it).
+   */
+  const onboardingActive =
+    isLoaded &&
+    isSignedIn &&
+    !sessionNotReady &&
+    !isGlobalAdmin &&
+    !hideForRoute &&
+    !onboardingUnavailable &&
+    onboarding != null &&
+    onboarding.skipped !== true &&
+    onboarding.gettingStartedDismissed !== true &&
+    onboarding.gettingStartedComplete !== true;
+
+  const peekEnabled =
+    onboardingActive &&
+    orgQueryReady &&
+    Boolean(activeOrganizationId) &&
+    Boolean(mutationMemberKey);
+
+  const peekQueries = useMemo((): RequestForQueries => {
+    const q: RequestForQueries = {};
+    if (peekEnabled && activeOrganizationId && mutationMemberKey) {
+      q.filesPeek = {
+        query: api.pipeline.listLight,
+        args: {
+          organizationId: activeOrganizationId,
+          memberUserKey: mutationMemberKey,
+          maxRows: 1,
+        },
+      };
+      q.contactsPeek = {
+        query: api.contacts.list,
+        args: {
+          organizationId: activeOrganizationId,
+          memberUserKey: mutationMemberKey,
+        },
+      };
+    }
+    return q;
+  }, [peekEnabled, activeOrganizationId, mutationMemberKey]);
+
+  const peekResults = useQueries(peekQueries);
+  const filesPeekRaw = peekEnabled ? peekResults.filesPeek : undefined;
   const filesPeek =
     filesPeekRaw instanceof Error
       ? []
       : (filesPeekRaw as unknown[] | undefined);
-  const contactsPeekRaw =
-    activeOrganizationId && mutationMemberKey
-      ? checklistResults.contactsPeek
-      : undefined;
+  const contactsPeekRaw = peekEnabled ? peekResults.contactsPeek : undefined;
   const contactsPeek =
     contactsPeekRaw instanceof Error
       ? []
@@ -260,11 +297,6 @@ export function UserOnboardingChecklist({
   const checklistFinished =
     !onboardingUnavailable &&
     (onboarding?.gettingStartedComplete === true || allDone);
-
-  const hideForRoute = useMemo(() => {
-    if (!pathname) return true;
-    return HIDDEN_PREFIXES.some((p) => pathname.startsWith(p));
-  }, [pathname]);
 
   const showPanel = useMemo(() => {
     if (!isLoaded || !isSignedIn) return false;

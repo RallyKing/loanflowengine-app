@@ -31,5 +31,11 @@ test.describe("Convex HTTP integration surface", () => {
       },
     );
     expect(badWebhook.status()).toBe(400);
+
+    const badBot = await request.post(`${base}/api/v1/integrations/bot`, {
+      headers: { "Content-Type": "application/json" },
+      data: JSON.stringify({ action: "list_files", payload: {} }),
+    });
+    expect(badBot.status()).toBe(400);
   });
 });

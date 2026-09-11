@@ -6,6 +6,19 @@ import { resolveMemberUserKey } from "./organizationAccess";
 
 const PRESENCE_TTL_MS = 90_000;
 
+/**
+ * Minimum spacing between contended writes to a single member's presence row.
+ * Multiple tabs (and forced heartbeats on mount / visibility / surface change)
+ * all target the same `(org, user)` row, which produced ~355 heartbeat + ~335
+ * clearForUser OCC retries in a 72h prod insights window. When
+ * the presence context is unchanged and the row was refreshed within this
+ * window, we skip the write: liveness is preserved because a refresh still
+ * fires once the row is older than this (heartbeats arrive every ~60s, TTL is
+ * 90s), but the redundant multi-tab writes that fought over the row are
+ * coalesced away. Context changes (opening a file, editing, etc.) always write.
+ */
+const PRESENCE_MIN_REWRITE_MS = 30_000;
+
 const statusV = v.union(
   v.literal("online"),
   v.literal("viewing_file"),
@@ -67,19 +80,38 @@ export const heartbeat = mutation({
       )
       .first();
 
+    const normalizedSurfaceKey = surfaceKey?.trim().slice(0, 200) || undefined;
+    const normalizedObservationOnly = observationOnly === true ? true : undefined;
     const patch = {
       status,
       pipelineFileId,
       collaborationThreadId,
       tabSessionId: tabSessionId?.trim() || undefined,
       workspaceSurface,
-      surfaceKey: surfaceKey?.trim().slice(0, 200) || undefined,
-      observationOnly: observationOnly === true ? true : undefined,
+      surfaceKey: normalizedSurfaceKey,
+      observationOnly: normalizedObservationOnly,
       updatedAt: now,
       expiresAt,
     };
 
     if (existing) {
+      // Coalesce redundant same-state heartbeats (multi-tab / forced remounts).
+      // `tabSessionId` is incidental metadata and intentionally excluded from
+      // change detection so a second tab does not force a contended rewrite.
+      const contextUnchanged =
+        existing.status === status &&
+        (existing.pipelineFileId ?? undefined) === (pipelineFileId ?? undefined) &&
+        (existing.collaborationThreadId ?? undefined) ===
+          (collaborationThreadId ?? undefined) &&
+        (existing.workspaceSurface ?? undefined) ===
+          (workspaceSurface ?? undefined) &&
+        (existing.surfaceKey ?? undefined) === normalizedSurfaceKey &&
+        (existing.observationOnly === true) === (normalizedObservationOnly === true);
+      const refreshedRecently =
+        existing.expiresAt - now > PRESENCE_TTL_MS - PRESENCE_MIN_REWRITE_MS;
+      if (contextUnchanged && refreshedRecently) {
+        return existing._id;
+      }
       await ctx.db.patch(existing._id, patch);
       return existing._id;
     }
@@ -120,13 +152,20 @@ export const listActiveInOrganization = query({
     const key = await resolveMemberUserKey(ctx, memberUserKey);
     const { id: orgId } = await assertOrganizationId(ctx, organizationId);
     await assertOrgPermission(ctx, orgId, key, "files.view");
-    const now = Date.now();
+    /**
+     * Liveness (`expiresAt > now`) is evaluated by the caller, not here: reading
+     * the clock in a query makes the result uncacheable, so every subscriber
+     * would re-execute it. Ordering by `expiresAt` descending puts the freshest
+     * heartbeats first so the bound below never drops a live member.
+     * `memberPresence` holds one row per (org, member) and `purgeExpired` prunes
+     * stale rows, so this set is bounded by team size.
+     */
     let rows = await ctx.db
       .query("memberPresence")
       .withIndex("by_org_expires", (q) =>
         q.eq("organizationId", organizationId),
       )
-      .filter((qq) => qq.gt(qq.field("expiresAt"), now))
+      .order("desc")
       .take(200);
     if (pipelineFileId) {
       rows = rows.filter(

@@ -2,6 +2,7 @@
 
 import { MessageSquare } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { hubNotesChipClass } from "@/lib/ui/pipelineHubSurfaces";
 
 export type PipelineHubNotesIndicatorChipProps = {
   noteCount: number;
@@ -26,10 +27,7 @@ export function PipelineHubNotesIndicatorChip({
     <button
       type="button"
       className={cn(
-        "relative z-[1] inline-flex shrink-0 items-center gap-0.5 rounded-full",
-        "border border-border/60 bg-muted/40 px-1.5 py-0.5",
-        "text-[10px] font-medium tabular-nums text-muted-foreground",
-        "transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground",
+        hubNotesChipClass,
         className,
       )}
       onClick={(e) => {
@@ -39,7 +37,7 @@ export function PipelineHubNotesIndicatorChip({
       }}
       aria-label={`${noteCount} file note${noteCount === 1 ? "" : "s"} for ${fileName}. Open notes.`}
     >
-      <MessageSquare className="h-3 w-3 shrink-0 opacity-75" aria-hidden />
+      <MessageSquare className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
       <span>{noteCount}</span>
     </button>
   );

@@ -8,6 +8,7 @@ import {
   requireLinkForProof,
 } from "./libraryDocuments";
 import { syncLinkExpiresAt } from "./documentVaultCompliance";
+import { resolveVaultOutboundFileName } from "../lib/library/vaultOutboundFileName";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -145,7 +146,10 @@ export const internalGetAssemblyPayload = internalQuery({
       }),
     );
 
-    const baseName = doc.latestFileName ?? doc.title ?? "document";
+    const baseName = resolveVaultOutboundFileName(
+      doc.title,
+      doc.latestFileName,
+    );
     return {
       documentId,
       fileName: baseName.toLowerCase().endsWith(".pdf")

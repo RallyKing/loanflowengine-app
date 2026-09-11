@@ -6,6 +6,9 @@ export const APP_TAGLINE = "Funding & pipeline";
 export const APP_DESCRIPTION =
   "Operational workspace for loan files, referral partners, lenders, and daily pipeline work.";
 
+/** Default first screen after sign-in / brand home (pipeline hub). */
+export const APP_HOME_HREF = "/pipeline" as const;
+
 /** Deep Forest brand palette (see app/globals.css `--brand`). */
 export const PWA_THEME_COLOR = "#034f35";
 export const PWA_BACKGROUND_COLOR = "#ffffff";

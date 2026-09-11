@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -36,10 +36,35 @@ import {
 import { LenderTrackingPanel } from "@/components/pipeline/underwriting/LenderTrackingPanel";
 import { InternalWorkflowPanel } from "@/components/pipeline/underwriting/InternalWorkflowPanel";
 
+export type UnderwritingLedgerSectionId =
+  | "financialMetrics"
+  | "actionQueue"
+  | "lenderTrack"
+  | "internalWorkflow";
+
+export const UNDERWRITING_LEDGER_SECTION_IDS: UnderwritingLedgerSectionId[] = [
+  "financialMetrics",
+  "actionQueue",
+  "lenderTrack",
+  "internalWorkflow",
+];
+
+export type UnderwritingSectionRenderer = (dragHandle: ReactNode) => ReactNode;
+
+export type RegisterUnderwritingSections = (
+  sections: Partial<
+    Record<UnderwritingLedgerSectionId, UnderwritingSectionRenderer>
+  >,
+  contentSig?: string,
+) => void;
+
 export type UnderwritingLedgerTabProps = {
   fileId: Id<"pipeline">;
   memberUserKey?: string;
   className?: string;
+  /** Parent owns DnD — register section renderers instead of stacking locally. */
+  suppressInternalDnd?: boolean;
+  onRegisterSections?: RegisterUnderwritingSections;
 };
 
 function ActionTypeBadge({ type }: { type: UnderwritingActionItem["type"] }) {
@@ -218,6 +243,8 @@ export function UnderwritingLedgerTab({
   fileId,
   memberUserKey,
   className,
+  suppressInternalDnd = false,
+  onRegisterSections,
 }: UnderwritingLedgerTabProps) {
   const { draft } = useDealWorkspaceEditor();
 
@@ -253,6 +280,147 @@ export function UnderwritingLedgerTab({
     workflowProgress?.total ?? 0,
   );
 
+  const contentSig = useMemo(
+    () =>
+      [
+        financialMeta.status,
+        financialMeta.summary,
+        actionMeta.status,
+        actionMeta.summary,
+        String(actionMeta.indicatorCount ?? ""),
+        workflowMeta.status,
+        workflowMeta.summary,
+        String(workflowMeta.indicatorCount ?? ""),
+      ].join("|"),
+    [actionMeta, financialMeta, workflowMeta],
+  );
+
+  const renderSection = (
+    sectionId: UnderwritingLedgerSectionId,
+    dragHandle?: ReactNode,
+  ): ReactNode => {
+    const headerRight = dragHandle ?? undefined;
+    switch (sectionId) {
+      case "financialMetrics":
+        return (
+          <CollapsibleBlock
+            id={UNDERWRITING_TAB_SECTION_IDS.financialMetrics}
+            title="Financial metrics"
+            status={financialMeta.status}
+            summary={financialMeta.summary}
+            badgeVariant={financialMeta.badgeVariant}
+            icon={<TrendingUp className="h-4 w-4" aria-hidden />}
+            headerRight={headerRight}
+            description="DSCR, LTV, and commercial underwriting ratios from the deal workspace."
+            defaultOpen={false}
+          >
+            <p className="text-sm text-muted-foreground">
+              Metrics are sourced from the commercial / DSCR workspace. Edit rent
+              roll and loan terms in{" "}
+              <span className="font-medium text-foreground">
+                Deal Workspace → Financial metrics
+              </span>{" "}
+              to refresh these values.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-dlc-md border border-border/70 bg-muted/20 px-3 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Summary
+                </p>
+                <p className="mt-1 text-sm font-semibold text-foreground tabular-nums">
+                  {financialMeta.summary}
+                </p>
+              </div>
+              <div className="rounded-dlc-md border border-border/70 bg-muted/20 px-3 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Risk rating
+                </p>
+                <p className="mt-1 text-sm font-semibold text-foreground">
+                  {financialMeta.status === "Calculated"
+                    ? "Under review"
+                    : "Pending inputs"}
+                </p>
+              </div>
+            </div>
+          </CollapsibleBlock>
+        );
+      case "actionQueue":
+        return (
+          <CollapsibleBlock
+            id={UNDERWRITING_TAB_SECTION_IDS.actionQueue}
+            title="Action queue"
+            status={actionMeta.status}
+            summary={actionMeta.summary}
+            indicatorCount={actionMeta.indicatorCount}
+            badgeVariant={actionMeta.badgeVariant}
+            icon={<ListChecks className="h-4 w-4" aria-hidden />}
+            headerRight={headerRight}
+            description="Open internal tasks and client portal requests — merged and sorted by due date."
+            defaultOpen={false}
+          >
+            <ActionQueueBody fileId={fileId} memberUserKey={memberUserKey} />
+          </CollapsibleBlock>
+        );
+      case "lenderTrack":
+        return (
+          <CollapsibleBlock
+            id={UNDERWRITING_TAB_SECTION_IDS.lenderTrack}
+            title="Lender track"
+            status="Tracking"
+            summary="Submission milestones and lender relationship status"
+            icon={<Building2 className="h-4 w-4" aria-hidden />}
+            headerRight={headerRight}
+            description="Coversheet milestones and lender pipeline status for this file."
+            defaultOpen={false}
+          >
+            <LenderTrackingPanel
+              fileId={fileId}
+              memberUserKey={memberUserKey}
+            />
+          </CollapsibleBlock>
+        );
+      case "internalWorkflow":
+        return (
+          <CollapsibleBlock
+            id={UNDERWRITING_TAB_SECTION_IDS.internalWorkflow}
+            title="Internal workflow"
+            status={workflowMeta.status}
+            summary={workflowMeta.summary}
+            indicatorCount={workflowMeta.indicatorCount}
+            badgeVariant={workflowMeta.badgeVariant}
+            icon={<ClipboardList className="h-4 w-4" aria-hidden />}
+            headerRight={headerRight}
+            description="Check off mileposts, edit steps, and switch checklist templates."
+            defaultOpen={false}
+          >
+            <InternalWorkflowPanel
+              fileId={fileId}
+              memberUserKey={memberUserKey}
+            />
+          </CollapsibleBlock>
+        );
+      default:
+        return null;
+    }
+  };
+
+  useLayoutEffect(() => {
+    if (!suppressInternalDnd || !onRegisterSections) return;
+    const sections: Partial<
+      Record<UnderwritingLedgerSectionId, UnderwritingSectionRenderer>
+    > = {};
+    for (const id of UNDERWRITING_LEDGER_SECTION_IDS) {
+      sections[id] = (dragHandle) => renderSection(id, dragHandle);
+    }
+    onRegisterSections(sections, contentSig);
+    // renderSection closes over latest meta/query state via contentSig.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional register on contentSig
+  }, [contentSig, onRegisterSections, suppressInternalDnd, fileId, memberUserKey]);
+
+  if (suppressInternalDnd) {
+    return null;
+  }
+
   return (
     <div
       id={UNDERWRITING_TAB_SECTION_IDS.ledger}
@@ -265,81 +433,9 @@ export function UnderwritingLedgerTab({
       data-file-id={fileId}
       data-member-user-key={memberUserKey ?? undefined}
     >
-      <CollapsibleBlock
-        id={UNDERWRITING_TAB_SECTION_IDS.financialMetrics}
-        title="Financial metrics"
-        status={financialMeta.status}
-        summary={financialMeta.summary}
-        badgeVariant={financialMeta.badgeVariant}
-        icon={<TrendingUp className="h-4 w-4" aria-hidden />}
-        description="DSCR, LTV, and commercial underwriting ratios from the deal workspace."
-        defaultOpen={false}
-      >
-        <p className="text-sm text-muted-foreground">
-          Metrics are sourced from the commercial / DSCR workspace. Edit rent
-          roll and loan terms in{" "}
-          <span className="font-medium text-foreground">Deal Workspace → Financial metrics</span>{" "}
-          to refresh these values.
-        </p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-dlc-md border border-border/70 bg-muted/20 px-3 py-2.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Summary
-            </p>
-            <p className="mt-1 text-sm font-semibold text-foreground tabular-nums">
-              {financialMeta.summary}
-            </p>
-          </div>
-          <div className="rounded-dlc-md border border-border/70 bg-muted/20 px-3 py-2.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Risk rating
-            </p>
-            <p className="mt-1 text-sm font-semibold text-foreground">
-              {financialMeta.status === "Calculated" ? "Under review" : "Pending inputs"}
-            </p>
-          </div>
-        </div>
-      </CollapsibleBlock>
-
-      <CollapsibleBlock
-        id={UNDERWRITING_TAB_SECTION_IDS.actionQueue}
-        title="Action queue"
-        status={actionMeta.status}
-        summary={actionMeta.summary}
-        indicatorCount={actionMeta.indicatorCount}
-        badgeVariant={actionMeta.badgeVariant}
-        icon={<ListChecks className="h-4 w-4" aria-hidden />}
-        description="Open internal tasks and client portal requests — merged and sorted by due date."
-        defaultOpen
-      >
-        <ActionQueueBody fileId={fileId} memberUserKey={memberUserKey} />
-      </CollapsibleBlock>
-
-      <CollapsibleBlock
-        id={UNDERWRITING_TAB_SECTION_IDS.lenderTrack}
-        title="Lender track"
-        status="Tracking"
-        summary="Submission milestones and lender relationship status"
-        icon={<Building2 className="h-4 w-4" aria-hidden />}
-        description="Coversheet milestones and lender pipeline status for this file."
-        defaultOpen={false}
-      >
-        <LenderTrackingPanel fileId={fileId} memberUserKey={memberUserKey} />
-      </CollapsibleBlock>
-
-      <CollapsibleBlock
-        id={UNDERWRITING_TAB_SECTION_IDS.internalWorkflow}
-        title="Internal workflow"
-        status={workflowMeta.status}
-        summary={workflowMeta.summary}
-        indicatorCount={workflowMeta.indicatorCount}
-        badgeVariant={workflowMeta.badgeVariant}
-        icon={<ClipboardList className="h-4 w-4" aria-hidden />}
-        description="Checklist steps for internal underwriting progression."
-        defaultOpen={false}
-      >
-        <InternalWorkflowPanel fileId={fileId} memberUserKey={memberUserKey} />
-      </CollapsibleBlock>
+      {UNDERWRITING_LEDGER_SECTION_IDS.map((id) => (
+        <div key={id}>{renderSection(id)}</div>
+      ))}
     </div>
   );
 }

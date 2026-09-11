@@ -235,7 +235,8 @@ export function tasksBlockMeta(
   return {
     status: open > 0 ? `${open} open` : "Clear",
     badgeVariant: resolveTaskTriageBadgeVariant(tasks, labelsById),
-    indicatorCount: tasks.length > 0 ? tasks.length : undefined,
+    // Header pill matches status (“N open”), not open+completed total.
+    indicatorCount: open > 0 ? open : undefined,
     summary:
       tasks.length === 0
         ? "No file tasks yet"

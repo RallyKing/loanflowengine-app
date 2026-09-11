@@ -38,7 +38,7 @@ import {
   resolveMasterOrganizationFallback,
 } from "@/lib/invariants/masterOrganizationFallback";
 import type { FunctionReturnType } from "convex/server";
-import { appendPriorityDebugClientLog, debugAgentLogPostUrl } from "@/lib/debugClientLog";
+import { appendPriorityDebugClientLog } from "@/lib/debugClientLog";
 
 type EffectivePermissions = FunctionReturnType<
   typeof api.organizations.effectivePermissions
@@ -310,25 +310,6 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
       },
       timestamp: now,
     });
-    void fetch(debugAgentLogPostUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "f25461",
-        runId: "eff-key-thrash",
-        hypothesisId: "H185_effective_key_flap",
-        location: "orgPermissionsContext.tsx:effectiveDataKey",
-        message: "effectiveDataKey changed >=10x within 2s",
-        data: {
-          transitions: r.transitions,
-          keySample: effectiveDataKey.slice(0, 240),
-          activeOrganizationId: activeOrganizationId ?? null,
-          querySkipped: effectiveQueryArgs === "skip",
-        },
-        timestamp: now,
-      }),
-      keepalive: true,
-    }).catch(() => {});
     // #endregion
     r.transitions = 0;
     r.windowStart = now;
@@ -363,7 +344,7 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
     const keyUnchanged = prevK === effectiveDataKey;
     debugPrevStableKeyRef.current = effectiveDataKey;
     // #region agent log
-    const payload = {
+    appendPriorityDebugClientLog({
       sessionId: "f25461",
       runId: "verify-stable-key",
       hypothesisId: "H1_perm_order_churn",
@@ -377,34 +358,7 @@ export function OrgPermissionsProvider({ children }: { children: ReactNode }) {
         keyLen: effectiveDataKey.length,
       },
       timestamp: Date.now(),
-    };
-    const body = JSON.stringify(payload);
-    void (async () => {
-      try {
-        const r = await fetch(debugAgentLogPostUrl(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-        });
-        if (process.env.NODE_ENV === "development" && !r.ok) {
-          console.warn("[debug-agent-log]", r.status, await r.text());
-        }
-      } catch (e) {
-        if (process.env.NODE_ENV === "development") {
-          console.warn("[debug-agent-log] fetch failed", e);
-        }
-      }
-      if (process.env.NODE_ENV === "development") {
-        fetch("http://127.0.0.1:7412/ingest/32d854df-a7db-4c6f-bb28-ee2545e32c91", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "f25461",
-          },
-          body,
-        }).catch(() => {});
-      }
-    })();
+    });
     // #endregion
   }, [effective, effectiveDataKey, effectiveQueryArgs]);
 

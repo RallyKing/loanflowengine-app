@@ -23,7 +23,21 @@ export const listWebhooks = query({
     ...memberKeyArg,
   },
   handler: async (ctx, { organizationId, memberUserKey }) => {
-    await assertOrgPermission(ctx, organizationId, memberUserKey, "settings.access");
+    try {
+      await assertOrgPermission(
+        ctx,
+        organizationId,
+        memberUserKey,
+        "settings.access",
+      );
+    } catch (err) {
+      console.warn("[webhooks.listWebhooks] denied", {
+        organizationId: String(organizationId),
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      /** Fail closed for Settings hub `useQuery` — do not crash the page. */
+      return [];
+    }
     const rows = await ctx.db
       .query("webhooks")
       .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
@@ -51,7 +65,20 @@ export const listWebhookLogs = query({
     ...memberKeyArg,
   },
   handler: async (ctx, { organizationId, webhookId, limit, memberUserKey }) => {
-    await assertOrgPermission(ctx, organizationId, memberUserKey, "settings.access");
+    try {
+      await assertOrgPermission(
+        ctx,
+        organizationId,
+        memberUserKey,
+        "settings.access",
+      );
+    } catch (err) {
+      console.warn("[webhooks.listWebhookLogs] denied", {
+        organizationId: String(organizationId),
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
     const cap = Math.min(Math.max(limit ?? 30, 5), 100);
 
     if (webhookId) {

@@ -1,8 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useAuth } from "@/lib/sessionUiClient";
 import {
@@ -10,6 +8,7 @@ import {
   setStoredActiveOrganizationId,
 } from "@/lib/activeOrganizationId";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
+import { useListAllOrganizationsForGlobalAdmin } from "@/lib/organizationResolver";
 import { Select } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
 
@@ -17,7 +16,7 @@ type Variant = "default" | "sidebar";
 
 /**
  * Tenant switcher for Convex global admins (`authUsers.isGlobalAdmin`).
- * Uses `listAllOrganizations` (see `convex/organizationResolver.ts`).
+ * Uses `listAllOrganizations` via non-throwing `useQueries`.
  */
 export function GlobalTenantSwitcher({
   className,
@@ -28,14 +27,10 @@ export function GlobalTenantSwitcher({
 }) {
   const { isSignedIn, isGlobalAdmin, userId } = useAuth();
   const { activeOrganizationId } = useOrgPermissions();
-  const orgs = useQuery(
-    api.organizationResolver.listAllOrganizations,
-    isSignedIn && isGlobalAdmin && userId
-      ? { memberUserKey: userId }
-      : "skip",
-  );
+  const { organizations, error, loading } =
+    useListAllOrganizationsForGlobalAdmin();
 
-  const options = useMemo(() => orgs ?? [], [orgs]);
+  const options = useMemo(() => organizations ?? [], [organizations]);
 
   const selectClass =
     variant === "sidebar"
@@ -63,10 +58,14 @@ export function GlobalTenantSwitcher({
           setStoredActiveOrganizationId(v as Id<"organizations">);
           window.location.reload();
         }}
-        disabled={orgs === undefined}
+        disabled={loading}
       >
-        {options.length === 0 ? (
+        {loading ? (
           <option value="">Loading workspaces…</option>
+        ) : options.length === 0 ? (
+          <option value="">
+            {error ? "Workspaces unavailable" : "No workspaces"}
+          </option>
         ) : (
           options.map((o) => (
             <option key={o._id} value={o._id}>
@@ -75,14 +74,25 @@ export function GlobalTenantSwitcher({
           ))
         )}
       </Select>
-      <p
-        className={cn(
-          "text-[10px] text-muted-foreground",
-          variant === "sidebar" && "text-white/70",
-        )}
-      >
-        GodMode — you can open any organization. Reload applies data scope.
-      </p>
+      {error ? (
+        <p
+          className={cn(
+            "text-[10px] text-destructive",
+            variant === "sidebar" && "text-red-200",
+          )}
+        >
+          Could not load tenants. Refresh or check Convex logs.
+        </p>
+      ) : (
+        <p
+          className={cn(
+            "text-[10px] text-muted-foreground",
+            variant === "sidebar" && "text-white/70",
+          )}
+        >
+          GodMode — you can open any organization. Reload applies data scope.
+        </p>
+      )}
     </div>
   );
 }

@@ -25,6 +25,7 @@ import { sanitizeDbPatch } from "./sanitizeConvexPatch";
 import { appendPipelineFileActivity } from "./pipelineFileActivity";
 import { clampActivitySummary } from "../lib/pipelineFileActivityModel";
 import { refreshPipelineGlobalSearchText } from "./globalSearchSync";
+import { syncFileClientTitleFromPrimaryParties } from "./pipelineClientTitleSync";
 import {
   findLoanClientLink,
   listLoanClientLinks,
@@ -576,6 +577,7 @@ export const bindEntityBorrowerToFile = mutation({
     }
 
     await refreshPipelineGlobalSearchText(ctx, file._id);
+    await syncFileClientTitleFromPrimaryParties(ctx, file._id);
     return {
       ok: true as const,
       clientId: args.clientId,
@@ -656,6 +658,7 @@ export const unbindEntityBorrowerFromFile = mutation({
       summary: clampActivitySummary("Entity borrower removed"),
     });
     await refreshPipelineGlobalSearchText(ctx, file._id);
+    await syncFileClientTitleFromPrimaryParties(ctx, file._id);
     return { ok: true as const };
   },
 });
@@ -744,6 +747,7 @@ export async function propagateEntityKycToLinkedFiles(
       }) as Partial<Doc<"pipeline">>,
     );
     await refreshPipelineGlobalSearchText(ctx, file._id);
+    await syncFileClientTitleFromPrimaryParties(ctx, file._id);
     filesTouched += 1;
   }
   return { filesTouched };

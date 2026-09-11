@@ -93,6 +93,7 @@ export type DocumentEditorCanvasProps = {
   onClosePreview?: () => void;
   onToggleFullscreen?: () => void;
   previewFullscreen?: boolean;
+  onOpenInWindow?: () => void;
   onOpenProperties?: () => void;
   /** When set, manipulation + editor action chrome portals here (modal toolbar slot). */
   toolbarSlot?: HTMLElement | null;
@@ -198,6 +199,7 @@ export function DocumentEditorCanvas({
   onClosePreview,
   onToggleFullscreen,
   previewFullscreen,
+  onOpenInWindow,
   onOpenProperties,
   toolbarSlot = null,
 }: DocumentEditorCanvasProps) {
@@ -286,6 +288,8 @@ export function DocumentEditorCanvas({
     });
     setCrop({ x: 0, y: 0 });
     setZoom(1);
+    // reactivity-allow: reset crop UI when page identity/geometry changes, not on every selectedPage object identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedPage primitives above
   }, [selectedPage?._id, selectedPage?.cropData, selectedPage?.sourceWidth, selectedPage?.sourceHeight]);
 
   const reportError = useCallback(
@@ -666,6 +670,7 @@ export function DocumentEditorCanvas({
       onClosePreview={onClosePreview}
       onToggleFullscreen={onToggleFullscreen}
       previewFullscreen={previewFullscreen}
+      onOpenInWindow={onOpenInWindow}
       onOpenProperties={onOpenProperties}
       fileName={fileName}
       onCancelEditMode={onCancelEditMode}

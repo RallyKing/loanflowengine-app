@@ -39,6 +39,11 @@ import {
   resolvePrimaryEntityForContact,
   type PrimaryEntitySummary,
 } from "./contactPrimaryEntity";
+import {
+  applyFicoScore,
+  parseFicoScore,
+  type FicoHistoryEntry,
+} from "../lib/contacts/ficoHistory";
 
 export type ContactHubRecord = Doc<"contacts"> & {
   primaryEntity: PrimaryEntitySummary | null;
@@ -46,21 +51,58 @@ export type ContactHubRecord = Doc<"contacts"> & {
 
 const contactPiiArgV = {
   fico: v.optional(v.number()),
+  /** When set with `fico`, timestamps the new pull (ms). Defaults to now. */
+  ficoRecordedAt: v.optional(v.number()),
+  ficoNote: v.optional(v.string()),
   ssn: v.optional(v.string()),
   dob: v.optional(v.string()),
 };
 
-function contactPiiPatchFromArgs(args: {
-  fico?: number;
-  ssn?: string;
-  dob?: string;
-}): Partial<Pick<Doc<"contacts">, "fico" | "ssn" | "dob">> {
-  const patch: Partial<Pick<Doc<"contacts">, "fico" | "ssn" | "dob">> = {};
+const ficoHistoryValidator = v.array(
+  v.object({
+    id: v.string(),
+    score: v.number(),
+    recordedAt: v.number(),
+    note: v.optional(v.string()),
+  }),
+);
+
+function contactPiiPatchFromArgs(
+  args: {
+    fico?: number;
+    ficoRecordedAt?: number;
+    ficoNote?: string;
+    ssn?: string;
+    dob?: string;
+  },
+  row?: Pick<Doc<"contacts">, "fico" | "ficoHistory" | "createdAt" | "updatedAt">,
+  now: number = Date.now(),
+): Partial<Pick<Doc<"contacts">, "fico" | "ficoHistory" | "ssn" | "dob">> {
+  const patch: Partial<
+    Pick<Doc<"contacts">, "fico" | "ficoHistory" | "ssn" | "dob">
+  > = {};
   if (args.fico !== undefined) {
-    if (!Number.isFinite(args.fico)) {
-      throw new Error("FICO must be a valid number.");
+    const next = parseFicoScore(args.fico);
+    if (next == null) {
+      throw new Error("FICO must be a whole number between 300 and 850.");
     }
-    patch.fico = args.fico;
+    const sameAsCurrent = row != null && parseFicoScore(row.fico) === next;
+    const explicitPull =
+      args.ficoRecordedAt !== undefined ||
+      Boolean(args.ficoNote?.trim());
+    if (!sameAsCurrent || explicitPull || row == null) {
+      const applied = applyFicoScore({
+        fico: row?.fico,
+        history: row?.ficoHistory as FicoHistoryEntry[] | undefined,
+        nextScore: next,
+        recordedAt: args.ficoRecordedAt ?? now,
+        note: args.ficoNote,
+        now,
+        fallbackRecordedAt: row?.updatedAt ?? row?.createdAt ?? now,
+      });
+      patch.fico = applied.fico;
+      patch.ficoHistory = applied.ficoHistory;
+    }
   }
   if (args.ssn !== undefined) {
     const ssn = args.ssn.trim();
@@ -235,13 +277,34 @@ function resolveMethodsFromArgs(args: {
   phone?: string;
   emails?: import("../lib/contact/contactMethods").ContactEmailEntry[];
   phones?: import("../lib/contact/contactMethods").ContactPhoneEntry[];
+  /** Arrays were explicitly provided (including empty clear). */
+  emailsExplicit?: boolean;
+  phonesExplicit?: boolean;
+  /** Scalar email/phone were explicitly provided. */
+  emailExplicit?: boolean;
+  phoneExplicit?: boolean;
 }) {
+  const emailsExplicit = args.emailsExplicit === true;
+  const phonesExplicit = args.phonesExplicit === true;
+  const emailExplicit = args.emailExplicit === true;
+  const phoneExplicit = args.phoneExplicit === true;
   return normalizeContactMethods(
     {
-      legacyEmail: args.email,
-      legacyPhone: args.phone,
+      // When arrays are explicit, do not resurrect methods from stale scalars.
+      legacyEmail: emailExplicit
+        ? args.email
+        : emailsExplicit
+          ? ""
+          : args.email,
+      legacyPhone: phoneExplicit
+        ? args.phone
+        : phonesExplicit
+          ? ""
+          : args.phone,
       emails: args.emails,
       phones: args.phones,
+      legacyIsExplicitScalar:
+        (emailExplicit && !emailsExplicit) || (phoneExplicit && !phonesExplicit),
     },
     (e) => normalizeEmailKey(e),
   );
@@ -436,7 +499,7 @@ export const create = mutation({
       notes: (args.notes ?? "").trim(),
       contactRoleIds,
       contactRoleId,
-      ...contactPiiPatchFromArgs(args),
+      ...contactPiiPatchFromArgs(args, undefined, now),
       organizationId: args.organizationId,
       createdAt: now,
       updatedAt: now,
@@ -539,6 +602,8 @@ export const update = mutation({
     crmTags: v.optional(v.array(v.string())),
     contactRoleId: v.optional(v.string()),
     contactRoleIds: v.optional(v.array(v.string())),
+    /** Org portal default template ids (at most one per portal type). */
+    portalDefaultIds: v.optional(v.array(v.id("portalDefaults"))),
     /** @deprecated Phase CRM-4 — use entityContactLinks via setIndividualPrimaryCompany. */
     companyName: v.optional(v.string()),
     ...contactPiiArgV,
@@ -561,11 +626,19 @@ export const update = mutation({
 
     let methodPatch: ReturnType<typeof contactMethodsToConvexFields> | undefined;
     if (methodsTouched) {
+      const emailsExplicit = rest.emails !== undefined;
+      const phonesExplicit = rest.phones !== undefined;
+      const emailExplicit = rest.email !== undefined;
+      const phoneExplicit = rest.phone !== undefined;
       const methods = resolveMethodsFromArgs({
-        email: rest.email !== undefined ? rest.email : row.email,
-        phone: rest.phone !== undefined ? rest.phone : row.phone,
-        emails: rest.emails !== undefined ? rest.emails : row.emails,
-        phones: rest.phones !== undefined ? rest.phones : row.phones,
+        email: emailExplicit ? rest.email : row.email,
+        phone: phoneExplicit ? rest.phone : row.phone,
+        emails: emailsExplicit ? rest.emails : row.emails,
+        phones: phonesExplicit ? rest.phones : row.phones,
+        emailsExplicit,
+        phonesExplicit,
+        emailExplicit,
+        phoneExplicit,
       });
       await assertNoDuplicateEmailsInOrg(
         ctx,
@@ -602,6 +675,19 @@ export const update = mutation({
       };
     }
 
+    let portalDefaultIdsPatch:
+      | { portalDefaultIds: Id<"portalDefaults">[] | undefined }
+      | undefined;
+    if (rest.portalDefaultIds !== undefined) {
+      const { sanitizePortalDefaultIdsForOrg } = await import("./portalDefaults");
+      const sanitized = await sanitizePortalDefaultIdsForOrg(
+        ctx,
+        row.organizationId,
+        rest.portalDefaultIds,
+      );
+      portalDefaultIdsPatch = { portalDefaultIds: sanitized };
+    }
+
     await ctx.db.patch(id, {
       ...(rest.name !== undefined ? { name: rest.name.trim() } : {}),
       ...(methodPatch ?? {}),
@@ -614,7 +700,8 @@ export const update = mutation({
           }
         : {}),
       ...(rolePatch ?? {}),
-      ...contactPiiPatchFromArgs(rest),
+      ...(portalDefaultIdsPatch ?? {}),
+      ...contactPiiPatchFromArgs(rest, row, now),
       updatedAt: now,
     });
     await refreshContactGlobalSearchText(ctx, id);
@@ -632,7 +719,7 @@ export const update = mutation({
       const identityTouched =
         rest.name !== undefined ||
         methodsTouched ||
-        Object.keys(contactPiiPatchFromArgs(rest)).length > 0;
+        Object.keys(contactPiiPatchFromArgs(rest, row, now)).length > 0;
       if (identityTouched) {
         await propagateContactIdentityToLinkedFiles(ctx, updatedRow);
       }
@@ -658,5 +745,51 @@ export const remove = mutation({
     );
     await deleteContactGraph(ctx, id);
     await ctx.db.delete(id);
+  },
+});
+
+export const recordFicoScore = mutation({
+  args: {
+    id: v.id("contacts"),
+    score: v.number(),
+    recordedAt: v.optional(v.number()),
+    note: v.optional(v.string()),
+    memberUserKey: v.optional(v.string()),
+  },
+  returns: v.object({
+    fico: v.number(),
+    ficoHistory: ficoHistoryValidator,
+  }),
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.id);
+    if (!row) throw new Error("Contact not found");
+    await assertCanMutateContactRow(ctx, row, args.memberUserKey);
+    const now = Date.now();
+    const applied = applyFicoScore({
+      fico: row.fico,
+      history: row.ficoHistory as FicoHistoryEntry[] | undefined,
+      nextScore: args.score,
+      recordedAt: args.recordedAt ?? now,
+      note: args.note,
+      now,
+      fallbackRecordedAt: row.updatedAt ?? row.createdAt ?? now,
+    });
+    await ctx.db.patch(args.id, {
+      fico: applied.fico,
+      ficoHistory: applied.ficoHistory,
+      updatedAt: now,
+    });
+    const updatedRow = await ctx.db.get(args.id);
+    if (updatedRow) {
+      await appendContactCrudFeed(
+        ctx,
+        updatedRow,
+        "contact_updated",
+        `Updated FICO for “${updatedRow.name.trim() || "Contact"}” to ${applied.fico}`,
+        args.memberUserKey?.trim(),
+      );
+      await propagateContactIdentityToLinkedFiles(ctx, updatedRow);
+    }
+    return applied;
   },
 });

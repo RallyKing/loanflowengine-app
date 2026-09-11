@@ -21,6 +21,7 @@ import {
   OP_INLINE_TEXTAREA_DISPLAY_CLASS,
 
 } from "@/lib/ui/operationalInputs";
+import { convexClientErrorMessage } from "@/lib/ui/convexErrorMessage";
 
 
 
@@ -106,7 +107,7 @@ export function useInlineCommit(): InlineCommitState {
 
       } catch (e) {
 
-        setError(e instanceof Error ? e.message : "Couldn't save");
+        setError(convexClientErrorMessage(e) || "Couldn't save");
 
         return false;
 

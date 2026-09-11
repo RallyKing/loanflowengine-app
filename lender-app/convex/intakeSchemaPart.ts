@@ -79,6 +79,8 @@ const liabilityRow = v.object({
 });
 
 const workflowItem = v.object({
+  /** Stable id for automations / template sync — never reuse after delete. */
+  id: v.optional(v.string()),
   label: v.string(),
   done: v.boolean(),
   date: v.optional(v.string()),
@@ -117,13 +119,17 @@ const dtiState = v.object({
 });
 
 const reoRow = v.object({
+  /** Stable client id for copy / selection (optional on legacy rows). */
+  rowId: v.optional(v.string()),
   purchasedDate: v.optional(v.string()),
   state: v.optional(v.string()),
   usage: v.optional(v.string()), // Primary / Rental / 2nd Home / Commercial
   address: v.optional(v.string()),
   propertyType: v.optional(v.string()),
   marketValue: v.optional(v.string()),
-  position: v.optional(v.string()), // 1st / 2nd
+  /** Zillow / listing URL for this property (additive). */
+  zillowUrl: v.optional(v.string()),
+  position: v.optional(v.string()), // 1st / 2nd / 3rd / HELOC
   balance: v.optional(v.string()),
   mortgagePayment: v.optional(v.string()),
   rate: v.optional(v.string()),
@@ -136,6 +142,16 @@ const reoRow = v.object({
   apn: v.optional(v.string()),
   invested: v.optional(v.string()),
   latLong: v.optional(v.string()),
+  lotSf: v.optional(v.string()),
+  propSf: v.optional(v.string()),
+  mostRecent: v.optional(v.string()),
+  /** Row-level multi-contact assignees (Convex contact ids as strings). */
+  assignedContactIds: v.optional(v.array(v.string())),
+});
+
+/** Block-level Schedule of REO assignees + notes (additive on deal/intake). */
+const reoBlockMeta = v.object({
+  assignedContactIds: v.optional(v.array(v.string())),
 });
 
 const comparisonSide = v.object({
@@ -155,12 +171,58 @@ const comparisonState = v.object({
 });
 
 const weightedInterestRow = v.object({
+  /** Stable client id for copy / selection (optional on legacy rows). */
+  rowId: v.optional(v.string()),
   account: v.optional(v.string()),
   balance: v.optional(v.string()),
   ratePct: v.optional(v.string()),
   monthlyPayment: v.optional(v.string()),
   note: v.optional(v.string()),
   include: v.optional(v.boolean()),
+  debtType: v.optional(v.string()),
+  debtTypeOther: v.optional(v.string()),
+  originalAmount: v.optional(v.string()),
+  originationDate: v.optional(v.string()),
+  maturityDate: v.optional(v.string()),
+  /** Row-level multi-contact assignees (Convex contact ids as strings). */
+  assignedContactIds: v.optional(v.array(v.string())),
+});
+
+/** Block-level Schedule of Business Debt assignees (additive on deal/intake). */
+const businessDebtBlockMeta = v.object({
+  assignedContactIds: v.optional(v.array(v.string())),
+});
+
+const trackRecordGuarantorSlot = v.object({
+  name: v.optional(v.string()),
+  contactId: v.optional(v.string()),
+});
+
+const trackRecordRow = v.object({
+  rowId: v.optional(v.string()),
+  address: v.optional(v.string()),
+  city: v.optional(v.string()),
+  state: v.optional(v.string()),
+  zip: v.optional(v.string()),
+  propertyType: v.optional(v.string()),
+  ownedByGuarantor1: v.optional(v.string()),
+  ownedByGuarantor2: v.optional(v.string()),
+  ownedByGuarantor3: v.optional(v.string()),
+  ownedByGuarantor4: v.optional(v.string()),
+  titleHeldInName: v.optional(v.string()),
+  acquisitionDate: v.optional(v.string()),
+  acquisitionPrice: v.optional(v.string()),
+  projectType: v.optional(v.string()),
+  rehabOrConstructionAmount: v.optional(v.string()),
+  exitType: v.optional(v.string()),
+  dateSoldOrLeased: v.optional(v.string()),
+  salePriceOrRentAmount: v.optional(v.string()),
+  assignedContactIds: v.optional(v.array(v.string())),
+});
+
+const trackRecordBlockMeta = v.object({
+  assignedContactIds: v.optional(v.array(v.string())),
+  guarantors: v.optional(v.array(trackRecordGuarantorSlot)),
 });
 
 /** Per-instance payload for weighted-interest tool (rows live under `data`). */
@@ -515,6 +577,14 @@ export const intakeSheetsTable = defineTable({
     // Assets & Liabilities
     assets: v.array(assetRow),
     liabilities: v.array(liabilityRow),
+    /** Optional structured PFS (SBA-style); additive for older sheets. */
+    pfs: v.optional(v.any()),
+    /** First-class per-borrower PFS documents; additive for older sheets. */
+    pfsInstances: v.optional(v.any()),
+    /** Simple P&L (CSV template); additive for older sheets. */
+    simplePl: v.optional(v.any()),
+    /** First-class per-timeframe Simple P&L documents; additive. */
+    simplePlInstances: v.optional(v.any()),
 
     // Household
     dependentsCount: v.optional(v.string()),
@@ -522,6 +592,8 @@ export const intakeSheetsTable = defineTable({
 
     // Workflow checklist (intro email, EDU, scenario, needs list, OL & PD, Velocify, etc.)
     workflow: v.array(workflowItem),
+    /** Active org internal-workflow template applied to this file (optional). */
+    workflowTemplateId: v.optional(v.string()),
 
     // Notes
     primaryObjective: v.optional(v.string()),
@@ -532,9 +604,13 @@ export const intakeSheetsTable = defineTable({
     dti: v.optional(dtiState),
     dtiInstances: v.optional(v.array(analysisInstance(dtiState))),
     reo: v.optional(v.array(reoRow)),
+    reoMeta: v.optional(reoBlockMeta),
+    trackRecord: v.optional(v.array(trackRecordRow)),
+    trackRecordMeta: v.optional(trackRecordBlockMeta),
     comparison: v.optional(comparisonState),
     comparisonInstances: v.optional(v.array(analysisInstance(comparisonState))),
     weightedInterest: v.optional(v.array(weightedInterestRow)),
+    businessDebtMeta: v.optional(businessDebtBlockMeta),
     weightedInterestInstances: v.optional(
       v.array(analysisInstance(weightedInterestInstanceData)),
     ),
@@ -568,6 +644,8 @@ export const intakeSheetsTable = defineTable({
     overviewTabLayout: v.optional(v.any()),
     /** Tab 5 Client Portal: section order / visibility (v1 object). */
     clientPortalTabLayout: v.optional(v.any()),
+    /** Portals & Progress: unified block order / visibility (v1 object). */
+    portalsProgressTabLayout: v.optional(v.any()),
 
     // Bookkeeping
     updatedAt: v.optional(v.number()),
@@ -598,9 +676,13 @@ export {
   loan,
   payoffState,
   propertyRecord,
+  reoBlockMeta,
   reoRow,
+  trackRecordBlockMeta,
+  trackRecordRow,
   scenarioDebt,
   scenarioState,
+  businessDebtBlockMeta,
   weightedInterestInstanceData,
   weightedInterestRow,
   workflowItem,
@@ -623,12 +705,19 @@ export const intakeFormsTable = defineTable({
   ),
   /** Referral templates — partner attribution on created files. */
   referralPartnerContactId: v.optional(v.id("contacts")),
+  /**
+   * Origin of a generated PFS intake form (one per borrower PFS instance).
+   * Additive — older forms omit these fields.
+   */
+  sourceKind: v.optional(v.literal("pfs_instance")),
+  sourceInstanceId: v.optional(v.string()),
   createdByUserKey: v.string(),
   createdAt: v.number(),
   updatedAt: v.number(),
 })
   .index("by_org", ["organizationId", "updatedAt"])
-  .index("by_file", ["fileId", "updatedAt"]);
+  .index("by_file", ["fileId", "updatedAt"])
+  .index("by_file_source", ["fileId", "sourceKind", "sourceInstanceId"]);
 
 /** Stage 2 — tokenized public URLs for intake forms. */
 export const intakeFormLinksTable = defineTable({

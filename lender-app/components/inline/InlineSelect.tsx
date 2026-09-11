@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { cn } from "@/lib/cn";
 import { useResourceAccess } from "@/components/ResourceAccessProvider";
 import { inlineClasses, useInlineCommit } from "./useInlineCommit";
@@ -31,6 +32,28 @@ export type InlineSelectProps = {
   stopPropagation?: boolean;
 };
 
+function stopBubble(
+  e: { stopPropagation: () => void },
+  stopPropagation: boolean | undefined,
+) {
+  if (stopPropagation) e.stopPropagation();
+}
+
+/**
+ * Open the native chooser inside the same user gesture as the click.
+ * Calling `showPicker` from a `useEffect` after `setEditing(true)` fails in
+ * Chromium (“requires a user gesture”) — that was the hub stage-pill regression.
+ */
+function openNativeSelectPicker(el: HTMLSelectElement | null) {
+  if (!el) return;
+  el.focus();
+  try {
+    el.showPicker?.();
+  } catch {
+    /* Safari < 16 / NotAllowedError — focused select is still usable */
+  }
+}
+
 export function InlineSelect({
   value,
   options,
@@ -51,9 +74,11 @@ export function InlineSelect({
   const ref = useRef<HTMLSelectElement>(null);
   const { loading, error, justSaved, commit } = useInlineCommit();
 
+  // Non-badge path: focus after mount (picker already requested in click via flushSync).
   useEffect(() => {
-    if (editing && ref.current) ref.current.focus();
-  }, [editing]);
+    if (!editing || !ref.current || asBadge) return;
+    ref.current.focus();
+  }, [editing, asBadge]);
 
   const trySave = async (next: string) => {
     if (next === value) {
@@ -63,43 +88,6 @@ export function InlineSelect({
     const ok = await commit(next, onCommit);
     if (ok) setEditing(false);
   };
-
-  if (editing) {
-    return (
-      <InlineFieldSync
-        loading={loading}
-        className={className}
-        onClick={(e) => stopPropagation && e.stopPropagation()}
-      >
-        <select
-          ref={ref}
-          value={value}
-          aria-label={ariaLabel}
-          disabled={loading}
-          onChange={(e) => void trySave(e.target.value)}
-          onBlur={() => setEditing(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              setEditing(false);
-            }
-          }}
-          className={cn(
-            inlineClasses.edit,
-            error && inlineClasses.errored,
-            selectClassName
-          )}
-        >
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        {error ? <div className={inlineClasses.errorText}>{error}</div> : null}
-      </InlineFieldSync>
-    );
-  }
 
   const current = options.find((o) => o.value === value);
 
@@ -124,26 +112,93 @@ export function InlineSelect({
     );
   }
 
+  /**
+   * Badge mode: opaque label + transparent native <select> hit target.
+   * First click opens the OS chooser (no edit-state / showPicker race).
+   */
   if (asBadge) {
     return (
-      <button
-        type="button"
-        aria-label={ariaLabel}
-        onClick={(e) => {
-          if (stopPropagation) e.stopPropagation();
-          setEditing(true);
-        }}
+      <div
         className={cn(
-          "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-foreground/40",
-          current?.badgeClassName ?? "border-muted bg-muted text-foreground",
-          justSaved && inlineClasses.saved,
-          displayClassName,
-          className
+          "relative z-[1] inline-flex max-w-full shrink-0",
+          loading && "opacity-70",
+          className,
         )}
-        style={current?.badgeStyle}
+        onPointerDown={(e) => stopBubble(e, stopPropagation)}
+        onClick={(e) => stopBubble(e, stopPropagation)}
       >
-        {current?.label || placeholder}
-      </button>
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none inline-flex max-w-full items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+            current?.badgeClassName ?? "border-muted bg-muted text-foreground",
+            justSaved && inlineClasses.saved,
+            displayClassName,
+          )}
+          style={current?.badgeStyle}
+        >
+          <span className="truncate">{current?.label || placeholder}</span>
+        </span>
+        <select
+          ref={ref}
+          value={value}
+          aria-label={ariaLabel}
+          disabled={loading}
+          data-testid="inline-select-badge-native"
+          onPointerDown={(e) => stopBubble(e, stopPropagation)}
+          onClick={(e) => stopBubble(e, stopPropagation)}
+          onChange={(e) => void trySave(e.target.value)}
+          className={cn(
+            "absolute inset-0 z-[1] cursor-pointer opacity-0",
+            "disabled:cursor-not-allowed",
+            selectClassName,
+          )}
+        >
+          {options.map((o) => (
+            <option key={o.value || "__empty"} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        {error ? <div className={inlineClasses.errorText}>{error}</div> : null}
+      </div>
+    );
+  }
+
+  if (editing) {
+    return (
+      <InlineFieldSync
+        loading={loading}
+        className={className}
+        onClick={(e) => stopBubble(e, stopPropagation)}
+      >
+        <select
+          ref={ref}
+          value={value}
+          aria-label={ariaLabel}
+          disabled={loading}
+          onChange={(e) => void trySave(e.target.value)}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setEditing(false);
+            }
+          }}
+          className={cn(
+            inlineClasses.edit,
+            error && inlineClasses.errored,
+            selectClassName
+          )}
+        >
+          {options.map((o) => (
+            <option key={o.value || "__empty"} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        {error ? <div className={inlineClasses.errorText}>{error}</div> : null}
+      </InlineFieldSync>
     );
   }
 
@@ -152,8 +207,9 @@ export function InlineSelect({
       type="button"
       aria-label={ariaLabel}
       onClick={(e) => {
-        if (stopPropagation) e.stopPropagation();
-        setEditing(true);
+        stopBubble(e, stopPropagation);
+        flushSync(() => setEditing(true));
+        openNativeSelectPicker(ref.current);
       }}
       className={cn(
         inlineClasses.display,

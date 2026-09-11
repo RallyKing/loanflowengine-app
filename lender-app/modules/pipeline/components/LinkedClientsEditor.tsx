@@ -400,12 +400,12 @@ export function LinkedClientsEditor(props: Props) {
   return (
     <section
       className={cn(
-        suppressTitle
-          ? "min-w-0"
-          : cn(
-              "rounded-dlc-md border border-border/70 bg-dlc-surface/60",
-              compact ? "p-2" : "p-3",
-            ),
+        "w-full min-w-0",
+        !suppressTitle &&
+          cn(
+            "rounded-dlc-md border border-border/70 bg-dlc-surface/60",
+            compact ? "p-2" : "p-3",
+          ),
       )}
       data-testid={`linked-clients-editor-${scope}`}
     >
@@ -439,7 +439,7 @@ export function LinkedClientsEditor(props: Props) {
 
       {scope === "loan" && promoteDisabled ? (
         <p
-          className="mb-2 rounded-dlc-md border border-primary/25 bg-primary/5 px-2.5 py-2 text-xs leading-relaxed text-foreground"
+          className="mb-2 w-full min-w-0 max-w-none whitespace-normal break-words rounded-dlc-md border border-primary/25 bg-primary/5 px-2.5 py-2 text-xs leading-relaxed text-foreground"
           data-testid="linked-clients-primary-project-signpost"
         >
           <span className="font-semibold">Primary client is locked to the project.</span>{" "}

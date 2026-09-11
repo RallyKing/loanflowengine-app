@@ -21,10 +21,12 @@ import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/cn";
 import { ContactRoleMultiSelect } from "@/components/contacts/ContactRoleMultiSelect";
 import { ContactMethodsEditor } from "@/components/contacts/ContactMethodsEditor";
+import { ContactPortalDefaultsAssign } from "@/components/contacts/ContactPortalDefaultsAssign";
 import { ContactRelationshipsTab } from "@/components/contacts/ContactRelationshipsTab";
 import { ContactFinancialsTab } from "@/components/contacts/ContactFinancialsTab";
 import { ContactDealsTab } from "@/components/contacts/ContactDealsTab";
 import { ContactDocumentsNotesTab } from "@/components/contacts/ContactDocumentsNotesTab";
+import { UnifiedCommunicationPanel } from "@/components/communications/UnifiedCommunicationPanel";
 import { MergeRecordModal } from "@/components/contacts/MergeRecordModal";
 import { ConvertToEntityModal } from "@/components/contacts/ConvertToEntityModal";
 import {
@@ -75,6 +77,16 @@ export type IndividualHubDetailPanelProps = {
   contactRoles: ContactRole[];
   editorDraft: IndividualHubDraft;
   onPatchDraft: (patch: Partial<IndividualHubDraft>) => void;
+  onPatchEmails: (
+    next:
+      | ContactEmailEntry[]
+      | ((prev: ContactEmailEntry[]) => ContactEmailEntry[]),
+  ) => void;
+  onPatchPhones: (
+    next:
+      | ContactPhoneEntry[]
+      | ((prev: ContactPhoneEntry[]) => ContactPhoneEntry[]),
+  ) => void;
   onOpenEntityProfile: (entityId: Id<"clients">) => void;
   onOpenEntityInHub: (entityId: Id<"clients">) => void;
   hiddenByListFilters?: boolean;
@@ -98,6 +110,8 @@ export function IndividualHubDetailPanel({
   contactRoles,
   editorDraft,
   onPatchDraft,
+  onPatchEmails,
+  onPatchPhones,
   onOpenEntityProfile,
   onOpenEntityInHub,
   hiddenByListFilters = false,
@@ -306,8 +320,8 @@ export function IndividualHubDetailPanel({
         emails={editorDraft.emails}
         phones={editorDraft.phones}
         disabled={saving}
-        onEmailsChange={(emails) => onPatchDraft({ emails })}
-        onPhonesChange={(phones) => onPatchDraft({ phones })}
+        onEmailsChange={onPatchEmails}
+        onPhonesChange={onPatchPhones}
       />
       <Label htmlFor="hub-contact-role">
         CRM contact roles
@@ -320,6 +334,18 @@ export function IndividualHubDetailPanel({
           aria-label="CRM contact roles"
         />
       </Label>
+      {!isNew && contactId ? (
+        <ContactPortalDefaultsAssign
+          contactId={contactId}
+          organizationId={organizationId}
+          memberUserKey={memberUserKey}
+          contactRoleIds={editorDraft.contactRoleIds}
+          assignedIds={
+            (selectedDoc as Doc<"contacts"> | null)?.portalDefaultIds ?? null
+          }
+          disabled={saving || !canUseHub}
+        />
+      ) : null}
       <Label htmlFor="hub-contact-notes" hint="Optional context or follow-ups.">
         Notes
         <Textarea
@@ -437,6 +463,33 @@ export function IndividualHubDetailPanel({
       />
     );
 
+  const messagesTab =
+    isNew || !contactId ? (
+      <p className={hubDetailStyles.sectionHint}>
+        Save this contact to send email or text templates.
+      </p>
+    ) : (
+      <div className="space-y-3" data-testid="contact-hub-messages">
+        <p className="text-sm text-muted-foreground">
+          Apply org email or SMS templates with merge variables for this contact.
+          Manage the library in{" "}
+          <Link
+            href="/automations"
+            className="font-medium text-primary underline-offset-2 hover:underline"
+          >
+            Automations
+          </Link>
+          .
+        </p>
+        <UnifiedCommunicationPanel
+          organizationId={organizationId}
+          memberUserKey={memberUserKey}
+          relatedContactId={contactId}
+          defaultChannel={displayEmail ? "email" : displayPhone ? "sms" : "email"}
+        />
+      </div>
+    );
+
   const footer = (
     <div className="flex flex-wrap items-center gap-2">
       <Button
@@ -464,7 +517,7 @@ export function IndividualHubDetailPanel({
 
   const stickyCommandCenterHeader =
     layoutMode === "commandCenter" ? (
-      <div className="sticky top-0 z-50 border-b border-border/60 bg-dlc-surface/90 shadow-sm backdrop-blur-md">
+      <div className="sticky top-0 z-[calc(var(--dlc-z-header,20)+1)] border-b border-border/60 bg-dlc-surface/90 shadow-sm backdrop-blur-md">
         <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-5">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <Link
@@ -522,6 +575,7 @@ export function IndividualHubDetailPanel({
           label: "Documents & Notes",
           content: documentsNotesTab,
         },
+        { id: "messages", label: "Messages", content: messagesTab },
       ]}
     />
   );

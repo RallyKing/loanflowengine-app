@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {
   applyDocumentCreatorTokens,
   buildDocumentEditorImageInsertHtml,
+  extractHtmlDocumentBody,
   htmlDocumentToVaultFile,
   resolveDocumentCreatorTokenContext,
   sanitizeDocumentEditorImageUrl,
@@ -81,6 +82,19 @@ test("htmlDocumentToVaultFile wraps editor HTML in a full document", async () =>
   const text = await file.text();
   assert.match(text, /<!DOCTYPE html>/);
   assert.match(text, /<h1>Hi<\/h1>/);
+});
+
+test("extractHtmlDocumentBody returns inner body for vault HTML files", async () => {
+  const file = htmlDocumentToVaultFile("Needs", "<p>Line one</p><p>Line two</p>");
+  const text = await file.text();
+  assert.equal(
+    extractHtmlDocumentBody(text),
+    "<p>Line one</p><p>Line two</p>",
+  );
+});
+
+test("extractHtmlDocumentBody falls back to trimmed HTML without body tags", () => {
+  assert.equal(extractHtmlDocumentBody("  <h1>Bare</h1>  "), "<h1>Bare</h1>");
 });
 
 console.log(`\n${passed} document vault creator tests passed.`);
