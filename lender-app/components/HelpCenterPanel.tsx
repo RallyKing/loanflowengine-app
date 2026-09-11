@@ -180,13 +180,18 @@ function ArticleDetail({
 
 export function HelpCenterPanel() {
   const { isGlobalAdmin } = useAuth();
-  const { articles, categories } = useHelpArticles();
   const {
     isOpen,
     closeHelp,
     initialQuery,
     initialArticleId,
   } = useHelpSupport();
+  /**
+   * Only subscribe to published help articles while the panel is open. When
+   * closed the panel renders `null`, so the always-on full-table article
+   * `.collect()` was pure shell overhead on every page.
+   */
+  const { articles, categories } = useHelpArticles(isOpen);
   const [q, setQ] = useState("");
   const [category, setCategory] = useState<HelpCategory | "all">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
