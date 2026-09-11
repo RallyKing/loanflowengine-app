@@ -113,30 +113,45 @@ export async function batchGraphLinksForPipelineFiles(
   );
 
   const orgStr = String(organizationId);
-  const filterOrg = <T extends { organizationId: Id<"organizations"> }>(
-    rows: T[],
-  ) => rows.filter((r) => String(r.organizationId) === orgStr);
-
-  const fcAll = filterOrg(await ctx.db.query("fileClients").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const fpAll = filterOrg(await ctx.db.query("fileProjects").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const flAll = filterOrg(await ctx.db.query("fileLenders").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
+  // Org-scoped via each edge table's `by_org_entity` index (prefix on
+  // organizationId) instead of scanning every org's edges on each hub load.
+  // These tables carry `organizationId`, and the prior JS filter already
+  // excluded null-org rows, so exact-org matching preserves behavior.
+  const fcAll = (
+    await ctx.db
+      .query("fileClients")
+      .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
+      .collect() // bounded: one org's file↔client edges, not the whole table
+  ).filter((r) => fileIdSet.has(String(r.fileId)));
+  const fpAll = (
+    await ctx.db
+      .query("fileProjects")
+      .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
+      .collect() // bounded: one org's file↔project edges, not the whole table
+  ).filter((r) => fileIdSet.has(String(r.fileId)));
+  const flAll = (
+    await ctx.db
+      .query("fileLenders")
+      .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
+      .collect() // bounded: one org's file↔lender edges, not the whole table
+  ).filter((r) => fileIdSet.has(String(r.fileId)));
   /** Phase 25.6 — referrals are CFL-only; junction table disabled for hub graph. */
   const frAll: Array<{
     fileId: Id<"pipeline">;
     contactId: Id<"contacts">;
   }> = [];
-  const ftAll = filterOrg(await ctx.db.query("fileTeamMembers").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const ftaskAll = filterOrg(await ctx.db.query("fileTasks").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
+  const ftAll = (
+    await ctx.db
+      .query("fileTeamMembers")
+      .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
+      .collect() // bounded: one org's file↔team-member edges, not the whole table
+  ).filter((r) => fileIdSet.has(String(r.fileId)));
+  const ftaskAll = (
+    await ctx.db
+      .query("fileTasks")
+      .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
+      .collect() // bounded: one org's file↔task edges, not the whole table
+  ).filter((r) => fileIdSet.has(String(r.fileId)));
 
   const clientIds = new Set<string>();
   const projectIds = new Set<string>();
@@ -162,9 +177,12 @@ export async function batchGraphLinksForPipelineFiles(
   for (const r of ftaskAll) taskIds.add(String(r.taskId));
   for (const r of ftAll) userKeys.add(r.userKey.trim());
 
-  const cflAll = (await ctx.db.query("contactFileLinks").collect()).filter((l) =>
-    fileIdSet.has(String(l.fileId)),
-  );
+  const cflAll = (
+    await ctx.db
+      .query("contactFileLinks")
+      .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
+      .collect() // bounded: one org's contact↔file links, not the whole table
+  ).filter((l) => fileIdSet.has(String(l.fileId)));
   for (const link of cflAll) {
     contactIds.add(String(link.contactId));
   }
