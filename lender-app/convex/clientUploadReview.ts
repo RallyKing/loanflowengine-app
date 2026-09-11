@@ -1,7 +1,16 @@
 /**
  * Client-upload quiet-window review pipeline (Phase 1–3) + feature flags.
  *
- * Two notification layers (both required when auto-review is enabled):
+ * ## Manual vs automatic (coexistence)
+ * Auto 15m review is **additive**. It does **not** replace Document Task Request
+ * + Templates. Brokers still create/apply `documentTaskTemplates` / stacks, set
+ * portal-visible `documentVaultFileTasks`, and use notifyClient / portal invite.
+ * Gap analysis reads those same live vault tasks (titles, isRequired, status,
+ * isPortalVisible, taskType) — including template-injected rows. Drafts cite
+ * those titles; reassign draft only for incomplete missing-upload tasks. This
+ * module never inserts/patches/deletes template definitions.
+ *
+ * ## Two notification layers (both required when auto-review is enabled)
  * 1. Immediate — existing `recordClientVaultUpload` → `notifyPipelineBrokers`
  *    (per-upload in-app + Web Push). Always fires; never gated by these flags.
  * 2. Additive — 15 minutes after the *last* upload for a pipeline file, build a
@@ -12,7 +21,7 @@
  * - Org: `organizationSettings.clientUploadAutoReviewEnabled`
  * - File: `pipeline.clientUploadAutoReviewEnabled`
  *
- * No client email/SMS send and no task reassignment in this phase.
+ * No client email/SMS send and no task reassignment in this phase (Phase 4).
  */
 import {
   internalMutation,
@@ -101,11 +110,17 @@ type GapItem = {
   note?: string;
 };
 
+/** Same upload-request kind as manual Document Task Request (incl. template inject). */
 function isDocumentUploadTask(task: Doc<"documentVaultFileTasks">): boolean {
   const t = task.taskType;
   return t === undefined || t === "document_upload";
 }
 
+/**
+ * Portal-visible document-upload vault tasks on the pipeline file.
+ * Template-applied rows are indistinguishable here — they are live
+ * `documentVaultFileTasks` with the same fields as manually created ones.
+ */
 function isRequestedClientTask(task: Doc<"documentVaultFileTasks">): boolean {
   if (task.isArchived) return false;
   if (!task.isPortalVisible) return false;
@@ -173,6 +188,11 @@ async function countUploadsForTask(
   return links.length;
 }
 
+/**
+ * Gap vs the **manual** requested-task model: live `documentVaultFileTasks` on
+ * this pipeline (portal-visible document_upload), compared to uploads linked
+ * via `libraryDocumentLinks.fileTaskId`. Does not read or mutate templates.
+ */
 async function buildGapReport(
   ctx: MutationCtx,
   pipelineFileId: Id<"pipeline">,
@@ -340,6 +360,8 @@ function buildDrafts(args: {
     reason: string;
   };
 } {
+  // Titles come from existing vault file tasks (manual or template-injected) —
+  // never a parallel invented checklist.
   const missingTitles = args.gap.missing.map((m) => m.title);
   const unclearTitles = args.gap.unclear.map((u) => u.title);
 
@@ -358,7 +380,7 @@ function buildDrafts(args: {
     ``,
     `Thanks for the recent uploads on ${args.dealName}.`,
     ``,
-    `We're still missing:`,
+    `Per your document request list, we're still missing:`,
     missingBlock,
     ``,
     unclearTitles.length > 0
@@ -379,16 +401,19 @@ function buildDrafts(args: {
     missingTitles.length > 3 ? "…" : ""
   }. Please upload via your portal. Thanks!`.slice(0, 320);
 
+  // Reassign draft only when there are incomplete vault tasks (missing uploads).
+  // Never mutates templates or live tasks in Phase 1–3 — draft only.
   let draftTaskReassignment:
     | { suggestedAssigneeUserKey: string; reason: string }
     | undefined;
-  const incomplete =
-    args.gap.missing.length > 0 || args.gap.unclear.length > 0;
   const owner = args.ownerUserKey?.trim();
-  if (incomplete && owner) {
+  if (args.gap.missing.length > 0 && owner) {
+    const incompleteTitles = missingTitles.slice(0, 8).join("; ");
     draftTaskReassignment = {
       suggestedAssigneeUserKey: owner,
-      reason: `Incomplete client docs (${args.gap.summaryLine}). Keep follow-up with pipeline owner until gaps clear.`,
+      reason: `Incomplete vault tasks still need uploads: ${incompleteTitles}${
+        missingTitles.length > 8 ? "…" : ""
+      }. Suggest keeping follow-up with pipeline owner. (Draft only — does not change templates or tasks.)`,
     };
   }
 

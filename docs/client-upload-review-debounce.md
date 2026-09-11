@@ -22,20 +22,37 @@ Debounce behavior: two uploads 1 minute apart → only one review job, timed fro
 
 ## Manual vs automatic (coexistence)
 
-Auto 15m review is **additive**. It does **not** replace the manual Document Task
-Request + Templates flow.
+**Auto 15m review is additive. It does not replace the manual Document Task
+Request + Templates flow.**
 
-| Path | Who | What stays |
-|------|-----|------------|
-| **Manual** | Broker | Create/apply `documentTaskTemplates` / stacks, set portal-visible vault file tasks, use existing notifyClient / portal invite |
-| **Automatic (this PR)** | Quiet window after client uploads | Gap report against the **same** `documentVaultFileTasks` on the pipeline (including template-injected tasks), draft follow-ups, notify Joshua |
+| Path | Owner | What it does | What it must not do |
+|------|--------|--------------|---------------------|
+| **Manual (unchanged)** | Broker | Create/apply `documentTaskTemplates` / stacks; inject into a file as live `documentVaultFileTasks`; set portal-visible / required; use existing **notifyClient** and portal invite flows for initial requests | N/A — remains the source of truth for *what* was requested |
+| **Automatic (this PR)** | Quiet window after client uploads | Read the **same** live vault tasks on the pipeline; gap report; draft email/SMS (and optional reassign **draft**); notify Joshua/broker that a package awaits approval | Replace templates; invent a parallel checklist; delete/alter template definitions; send client outbound; auto-reassign live tasks |
 
-Gap analysis compares requested portal-visible document-upload tasks
-(`documentVaultFileTasks`: titles, `isRequired`, status, `isPortalVisible`,
-`taskType`) to uploads linked via `libraryDocumentLinks.fileTaskId`. Drafts name
-those existing task titles — they do not invent a parallel checklist. Optional
-reassignment draft only suggests who should own incomplete vault follow-up; it
-never deletes or alters template definitions.
+### Same requested-task model
+
+Gap analysis uses **`documentVaultFileTasks`** on the pipeline file — the same rows
+brokers see after manual create or template injection:
+
+- `title`
+- `isRequired`
+- `status` (`incomplete` | `pending_review` | `complete`)
+- `isPortalVisible`
+- `taskType` (document-upload requests: unset or `document_upload`)
+- plus linked uploads via `libraryDocumentLinks.fileTaskId`
+
+Template-injected tasks are **not** a second schema: once applied, they are ordinary
+vault file tasks. Auto review never opens `documentTaskTemplates` / stacks for
+write (or delete).
+
+### Drafts
+
+- Email/SMS bodies list **those existing task titles** for missing / unclear items.
+- Optional `draftTaskReassignment` is suggested **only when there are incomplete
+  vault tasks still missing uploads** — never for complete-only packages, and
+  never applied in Phase 1–3 (status/approve only).
+- Approving a package does **not** mutate templates or vault task definitions.
 
 ## Feature flags
 
@@ -83,7 +100,8 @@ Stacy sends via **GHL SMS + Gmail only**. Do **not** also fire LFE portal Notify
 on the same package unless Joshua explicitly wants portal. Default: one outbound
 owner.
 
-Manual LFE “Notify client” remains for **initial** doc requests. No GHL
+Manual LFE “Notify client” remains for **initial** doc requests (Document Task
+Request path). Auto Phase 4 is the quiet-window follow-up only. No GHL
 incomplete-docs tags in Phase 1–3.
 
 ## Convex usage (fail closed)
@@ -93,3 +111,4 @@ incomplete-docs tags in Phase 1–3.
 - Bounded `.take()` on tasks / links / grants / contacts
 - Approve / dismiss do not schedule further reviews or outbound sends
 - Immediate upload notify does not re-enter the upload path
+- No writes to `documentTaskTemplates` / stacks from this feature
