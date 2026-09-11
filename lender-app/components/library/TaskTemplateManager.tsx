@@ -35,6 +35,7 @@ import {
   folderTreeToRows,
   type FolderTemplateNode,
 } from "@/lib/library/folderTemplateTypes";
+import { templateStackLabel } from "@/lib/library/partitionDocumentTaskTemplates";
 
 export type TaskTemplateManagerProps = {
   open: boolean;
@@ -244,12 +245,10 @@ export function TaskTemplateManager({
     const inStack = new Set(
       (activeStack?.templates ?? []).map((t) => String(t._id)),
     );
-    return [
-      ...library.individualTemplates,
-      ...library.stacks.flatMap((s) =>
-        String(s._id) !== String(stackSelection.stackId) ? s.templates : [],
-      ),
-    ].filter((t) => !inStack.has(String(t._id)));
+    // individualTemplates is the full org library (includes other stacks).
+    return library.individualTemplates.filter(
+      (t) => !inStack.has(String(t._id)),
+    );
   }, [library, activeStack, stackSelection]);
 
   useEffect(() => {
@@ -337,9 +336,18 @@ export function TaskTemplateManager({
     resetTemplateDraft();
   };
 
-  const handleSelectTemplate = (tpl: Doc<"documentTaskTemplates">) => {
+  const handleSelectTemplate = (
+    tpl: Doc<"documentTaskTemplates">,
+    opts?: { fromSection?: SidebarSection },
+  ) => {
     setTemplateSelection({ mode: "edit", templateId: tpl._id });
     loadTemplateDraft(tpl);
+    // Stay on Individual when browsing the library; only jump to Stacks when
+    // selecting a row from a stack's task list.
+    if (opts?.fromSection === "individual") {
+      setSidebarSection("individual");
+      return;
+    }
     if (tpl.stackId) {
       const stack = library?.stacks.find(
         (s) => String(s._id) === String(tpl.stackId),
@@ -576,13 +584,17 @@ export function TaskTemplateManager({
               <ul className="space-y-0.5">
                 {library.individualTemplates.length === 0 ? (
                   <li className="px-2 py-3 text-xs text-muted-foreground">
-                    No individual tasks yet.
+                    No task templates yet. Create one here or inside a stack.
                   </li>
                 ) : (
                   library.individualTemplates.map((tpl) => {
                     const selected =
                       templateSelection?.mode === "edit" &&
                       String(templateSelection.templateId) === String(tpl._id);
+                    const stackLabel = templateStackLabel(
+                      tpl.stackId ? String(tpl.stackId) : undefined,
+                      library.stacks,
+                    );
                     return (
                       <li key={tpl._id}>
                         <button
@@ -593,20 +605,27 @@ export function TaskTemplateManager({
                               ? "bg-primary/10 text-foreground"
                               : "hover:bg-muted/40 text-foreground",
                           )}
-                          onClick={() => handleSelectTemplate(tpl)}
+                          onClick={() =>
+                            handleSelectTemplate(tpl, {
+                              fromSection: "individual",
+                            })
+                          }
                         >
                           <span className="block truncate text-sm font-medium">
                             {tpl.title}
                           </span>
-                          {(tpl.clientTemplateAttachments?.length ?? 0) > 0 ? (
-                            <span className="mt-0.5 block text-[10px] text-muted-foreground">
-                              {tpl.clientTemplateAttachments!.length} client
-                              template
-                              {tpl.clientTemplateAttachments!.length === 1
-                                ? ""
-                                : "s"}
-                            </span>
-                          ) : null}
+                          <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                            {stackLabel
+                              ? `In stack: ${stackLabel}`
+                              : "Standalone"}
+                            {(tpl.clientTemplateAttachments?.length ?? 0) > 0
+                              ? ` · ${tpl.clientTemplateAttachments!.length} client template${
+                                  tpl.clientTemplateAttachments!.length === 1
+                                    ? ""
+                                    : "s"
+                                }`
+                              : ""}
+                          </span>
                         </button>
                       </li>
                     );
@@ -758,11 +777,18 @@ export function TaskTemplateManager({
                         }}
                       >
                         <option value="">Choose task to add…</option>
-                        {availableForStack.map((t) => (
-                          <option key={t._id} value={t._id}>
-                            {t.title}
-                          </option>
-                        ))}
+                        {availableForStack.map((t) => {
+                          const label = templateStackLabel(
+                            t.stackId ? String(t.stackId) : undefined,
+                            library.stacks,
+                          );
+                          return (
+                            <option key={t._id} value={t._id}>
+                              {t.title}
+                              {label ? ` (${label})` : ""}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
                   ) : null}
@@ -859,7 +885,7 @@ export function TaskTemplateManager({
             ) : (
               <div className="rounded-dlc-md border border-dashed border-border/70 px-6 py-16 text-center">
                 <p className="text-sm text-muted-foreground">
-                  Select an individual task from the sidebar or create a new one.
+                  Select a task from the library sidebar or create a new one.
                 </p>
               </div>
             )}
