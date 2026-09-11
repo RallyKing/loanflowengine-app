@@ -21,7 +21,7 @@ import {
   type HierarchyCreateMode,
   type HierarchyCreateResult,
 } from "@/components/NewPipelineHierarchyCreateDialog";
-import { PipelineBoardView } from "@/components/pipeline/PipelineBoardView";
+import dynamic from "next/dynamic";
 import { PipelineHubProjectionView } from "@/components/pipeline/PipelineHubProjectionView";
 import { ProjectionModeSwitcher } from "@/components/ui/ProjectionModeSwitcher";
 import { OperationalOrientationStrip } from "@/components/ui/OperationalOrientationStrip";
@@ -222,6 +222,28 @@ import {
   parseClientMomentum,
   type ClientMomentumFilterToken,
 } from "@/lib/clientMomentum";
+
+/**
+ * The board view is the only pipeline-hub surface that pulls `@dnd-kit`. The
+ * hub defaults to the table view (and mobile is always table), so lazy-load the
+ * board so its drag-and-drop bundle stays off the default `/pipeline` critical
+ * path and only downloads when a user actually switches to the board.
+ * `ssr: false` — the board is interaction-only and never needed for first paint.
+ */
+const PipelineBoardView = dynamic(
+  () =>
+    import("@/components/pipeline/PipelineBoardView").then((m) => ({
+      default: m.PipelineBoardView,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="px-1 py-2">
+        <OperationalSkeletonList rows={4} />
+      </div>
+    ),
+  },
+);
 
 type SortKey = PipelineHubSortKey;
 
