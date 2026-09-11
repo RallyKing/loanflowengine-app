@@ -42,7 +42,10 @@ import { PwaServiceWorkerRegistration } from "@/components/PwaServiceWorkerRegis
  * into `--font-sans` in globals.css so every component picks it up.
  */
 const brandFont = Noto_Serif_Ethiopic({
-  subsets: ["latin", "latin-ext", "ethiopic"],
+  // English-only UI: only the Latin glyph subsets are ever rendered. Dropping the
+  // large `ethiopic` subset trims the preloaded/self-hosted woff2 payload with no
+  // visual change (the family's Latin glyphs are unaffected).
+  subsets: ["latin", "latin-ext"],
   weight: ["400", "500", "600", "700"],
   display: "swap",
   variable: "--font-brand",

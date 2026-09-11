@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries, type RequestForQueries } from "convex/react";
 import { ChevronDown, Sparkles } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -154,31 +154,55 @@ export function ProductUpdatesBell({
             : {}),
         },
       };
-      q.posts = {
-        query: api.productKnowledge.listPublishedReleasePostsForViewer,
-        args: {
-          memberUserKey: k,
-          ...(activeOrganizationId
-            ? { organizationId: activeOrganizationId }
-            : {}),
-          // Show a full recent ship log — small fixes must not fall off a tiny cap.
-          limit: 80,
-        },
-      };
+      // Defer the heavier post-body feed until the panel is opened. The unread
+      // badge stays live via the cheap `unread` count above; the 80-post list
+      // (each with body) only subscribes while `open`, removing an always-on
+      // shell subscription from every page. Narrows WHEN an existing bounded
+      // query runs — no new functions, no polling.
+      if (open) {
+        q.posts = {
+          query: api.productKnowledge.listPublishedReleasePostsForViewer,
+          args: {
+            memberUserKey: k,
+            ...(activeOrganizationId
+              ? { organizationId: activeOrganizationId }
+              : {}),
+            // Show a full recent ship log — small fixes must not fall off a tiny cap.
+            limit: 80,
+          },
+        };
+      }
     }
     return q;
-  }, [ready, k, activeOrganizationId]);
+  }, [ready, open, k, activeOrganizationId]);
 
   const results = useQueries(queries);
   const unread =
     results.unread instanceof Error ? 0 : (results.unread ?? 0);
-  const postsRaw = ready ? results.posts : undefined;
+  const postsRaw = ready && open ? results.posts : undefined;
   const posts: Doc<"productReleasePosts">[] | undefined =
     postsRaw instanceof Error
       ? undefined
       : (postsRaw as Doc<"productReleasePosts">[] | undefined);
 
   const markRead = useMutation(api.productKnowledge.markReleaseFeedRead);
+
+  /**
+   * Mark the feed read through the newest post once the (now-deferred) posts
+   * load while the panel is open. Idempotent — mutates a single read marker
+   * through the latest `publishedAt`; fires at most once per open (the value is
+   * stable while the panel stays open). Not a poll or loop.
+   */
+  const latestPublishedAt = posts?.[0]?.publishedAt;
+  useEffect(() => {
+    if (!open || !latestPublishedAt) return;
+    void markRead({
+      memberUserKey: k,
+      throughPublishedAt: latestPublishedAt,
+    }).catch(() => {
+      /* Backend unavailable — panel still opens. */
+    });
+  }, [open, latestPublishedAt, k, markRead]);
 
   useLayoutEffect(() => {
     if (!open || !rootRef.current) return;
@@ -195,15 +219,6 @@ export function ProductUpdatesBell({
 
   const openPanel = () => {
     setOpen(true);
-    const latest = posts?.[0]?.publishedAt;
-    if (latest) {
-      void markRead({
-        memberUserKey: k,
-        throughPublishedAt: latest,
-      }).catch(() => {
-        /* Backend unavailable — panel still opens. */
-      });
-    }
   };
 
   return (
@@ -251,7 +266,15 @@ export function ProductUpdatesBell({
         </div>
 
         <div className="max-h-[min(60dvh,26rem)] space-y-3 overflow-y-auto overscroll-contain touch-scroll-y pr-0.5">
-          {!posts || posts.length === 0 ? (
+          {posts === undefined ? (
+            <p
+              className="text-xs text-muted-foreground"
+              role="status"
+              aria-live="polite"
+            >
+              Loading updates…
+            </p>
+          ) : posts.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               No published updates yet. Your workspace admin can seed content
               from Settings → Product knowledge.
