@@ -46,6 +46,7 @@
     "admin:joshua-legacy-cleanup": "tsx scripts/operator-joshua-legacy-key-cleanup.ts",
     "admin:hard-reset-native-auth": "tsx scripts/hard-reset-native-auth-email.ts",
     "test:web-push-payload": "tsx scripts/web-push-payload-tests.ts",
+    "test:web-push-prompt-dismiss": "tsx scripts/web-push-prompt-dismiss-tests.ts",
     "test:core": "tsx scripts/core-edge-tests.ts",
     "test:migration-admin-gate": "tsx scripts/assert-migration-admin-gate-tests.ts",
     "test:ai-due-diligence": "tsx scripts/ai-due-diligence-tests.ts",

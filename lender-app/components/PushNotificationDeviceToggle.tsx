@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { Button } from "@/components/ui/Button";
 import {
   getCurrentPushSubscriptionKeys,
   subscribeThisDeviceToWebPush,
@@ -29,6 +30,7 @@ export function PushNotificationDeviceToggle({
 }: Props) {
   const upsert = useMutation(api.pushSubscriptions.upsert);
   const removeByEndpoint = useMutation(api.pushSubscriptions.removeByEndpoint);
+  const sendTestPush = useAction(api.webPushActions.sendTestPush);
   const hasAny = useQuery(
     api.pushSubscriptions.hasAnyForUser,
     enabled && memberUserKey
@@ -38,7 +40,9 @@ export function PushNotificationDeviceToggle({
 
   const [deviceOn, setDeviceOn] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testMessage, setTestMessage] = useState<string | null>(null);
   const [supported, setSupported] = useState(false);
   const vapidConfigured = Boolean(vapidPublicKeyFromEnv());
 
@@ -60,6 +64,7 @@ export function PushNotificationDeviceToggle({
       if (!organizationId || !memberUserKey || busy) return;
       setBusy(true);
       setError(null);
+      setTestMessage(null);
       try {
         if (next) {
           const keys = await subscribeThisDeviceToWebPush();
@@ -112,7 +117,51 @@ export function PushNotificationDeviceToggle({
     ],
   );
 
+  const onSendTest = useCallback(async () => {
+    if (!organizationId || !memberUserKey || testBusy) return;
+    setTestBusy(true);
+    setError(null);
+    setTestMessage(null);
+    try {
+      const result = await sendTestPush({
+        organizationId,
+        memberUserKey,
+      });
+      if (result.ok) {
+        setTestMessage("Test notification sent — check this device.");
+        return;
+      }
+      if (result.reason === "rate_limited") {
+        const secs = Math.max(
+          1,
+          Math.ceil((result.retryAfterMs ?? 60_000) / 1000),
+        );
+        setError(`Wait ${secs}s before sending another test.`);
+        return;
+      }
+      if (result.reason === "no_subscription") {
+        setError("Enable push on this device first.");
+        return;
+      }
+      if (result.reason === "no_vapid") {
+        setError("Push is not configured on the server (VAPID keys).");
+        return;
+      }
+      setError(result.reason ?? "Test notification failed");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Test notification failed");
+    } finally {
+      setTestBusy(false);
+    }
+  }, [organizationId, memberUserKey, testBusy, sendTestPush]);
+
   if (!enabled) return null;
+
+  const canTest =
+    supported &&
+    Boolean(organizationId) &&
+    (deviceOn || hasAny === true) &&
+    !busy;
 
   return (
     <div className="space-y-2 border-t border-border/60 pt-4">
@@ -133,23 +182,40 @@ export function PushNotificationDeviceToggle({
           This browser does not support Web Push.
         </p>
       ) : (
-        <label className="flex cursor-pointer items-start gap-2">
-          <input
-            type="checkbox"
-            className="mt-1"
-            disabled={busy || !organizationId}
-            checked={deviceOn}
-            onChange={(e) => void onToggle(e.target.checked)}
-            data-testid="settings-web-push-toggle"
-          />
-          <span className="text-sm">
-            Enable push on this device
-            {busy ? (
-              <span className="ml-2 text-xs text-muted-foreground">…</span>
-            ) : null}
-          </span>
-        </label>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={busy || !organizationId}
+              checked={deviceOn}
+              onChange={(e) => void onToggle(e.target.checked)}
+              data-testid="settings-web-push-toggle"
+            />
+            <span className="text-sm">
+              Enable push on this device
+              {busy ? (
+                <span className="ml-2 text-xs text-muted-foreground">…</span>
+              ) : null}
+            </span>
+          </label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!canTest || testBusy}
+            onClick={() => void onSendTest()}
+            data-testid="settings-web-push-test"
+          >
+            {testBusy ? "Sending…" : "Send test notification"}
+          </Button>
+        </div>
       )}
+      {testMessage ? (
+        <p className="text-xs text-muted-foreground" role="status">
+          {testMessage}
+        </p>
+      ) : null}
       {error ? (
         <p className="text-xs text-destructive" role="alert">
           {error}
