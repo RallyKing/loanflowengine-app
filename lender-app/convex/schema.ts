@@ -700,6 +700,12 @@ export default defineSchema({
         enableInternal: v.boolean(),
       }),
     ),
+    /**
+     * Org master switch for the 15-minute client-upload auto-review package.
+     * Default **ON** when unset (dev-friendly). Does **not** gate immediate
+     * per-upload Alerts / Web Push — only the quiet-window review job.
+     */
+    clientUploadAutoReviewEnabled: v.optional(v.boolean()),
     updatedAt: v.number(),
     updatedByUserKey: v.optional(v.string()),
   }).index("by_organization", ["organizationId"]),
@@ -2074,6 +2080,13 @@ export default defineSchema({
 
     /** Phase 40.3 — custom display label for the vault root directory. */
     documentVaultRootLabel: v.optional(v.string()),
+
+    /**
+     * Per-file switch for the 15-minute client-upload auto-review package.
+     * Default **ON** when unset. Org master must also be ON (or unset).
+     * Does not affect immediate per-upload Alerts / Web Push.
+     */
+    clientUploadAutoReviewEnabled: v.optional(v.boolean()),
 
     /** Project workspace display order (lower first). */
     workspaceSortOrder: v.optional(v.number()),
@@ -5581,4 +5594,105 @@ export default defineSchema({
     lastReadPublishedAt: v.number(),
     updatedAt: v.number(),
   }).index("by_userKey", ["userKey"]),
+
+  /**
+   * Debounce cursor for the 15-minute client-upload quiet window.
+   * One row per pipeline file; `generation` bumps on each upload so stale
+   * scheduled jobs no-op. Not a cron — only `scheduler.runAfter` from uploads.
+   */
+  clientUploadReviewDebounce: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    organizationId: v.id("organizations"),
+    lastUploadAt: v.number(),
+    generation: v.number(),
+    updatedAt: v.number(),
+  }).index("by_pipelineFile", ["pipelineFileId"]),
+
+  /**
+   * Broker review packages after the client-upload quiet window.
+   * Phase 1–3: gap report + draft email/SMS/reassignment only.
+   * Outbound send / task patch is Phase 4 (not invoked from approve).
+   */
+  clientUploadReviews: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    organizationId: v.id("organizations"),
+    status: v.union(
+      v.literal("awaiting_broker_approval"),
+      v.literal("approved"),
+      v.literal("changes_requested"),
+      v.literal("dismissed"),
+    ),
+    generation: v.number(),
+    lastUploadAt: v.number(),
+    gapReport: v.object({
+      matched: v.array(
+        v.object({
+          fileTaskId: v.id("documentVaultFileTasks"),
+          title: v.string(),
+          status: v.union(
+            v.literal("incomplete"),
+            v.literal("pending_review"),
+            v.literal("complete"),
+          ),
+          isRequired: v.boolean(),
+          uploadedCount: v.number(),
+          note: v.optional(v.string()),
+        }),
+      ),
+      missing: v.array(
+        v.object({
+          fileTaskId: v.id("documentVaultFileTasks"),
+          title: v.string(),
+          status: v.union(
+            v.literal("incomplete"),
+            v.literal("pending_review"),
+            v.literal("complete"),
+          ),
+          isRequired: v.boolean(),
+          uploadedCount: v.number(),
+          note: v.optional(v.string()),
+        }),
+      ),
+      unclear: v.array(
+        v.object({
+          fileTaskId: v.id("documentVaultFileTasks"),
+          title: v.string(),
+          status: v.union(
+            v.literal("incomplete"),
+            v.literal("pending_review"),
+            v.literal("complete"),
+          ),
+          isRequired: v.boolean(),
+          uploadedCount: v.number(),
+          note: v.optional(v.string()),
+        }),
+      ),
+      summaryLine: v.string(),
+    }),
+    draftEmail: v.object({
+      toEmails: v.array(v.string()),
+      subject: v.string(),
+      body: v.string(),
+    }),
+    draftSms: v.object({
+      toPhones: v.array(v.string()),
+      body: v.string(),
+    }),
+    draftTaskReassignment: v.optional(
+      v.object({
+        suggestedAssigneeUserKey: v.string(),
+        reason: v.string(),
+      }),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    decidedAt: v.optional(v.number()),
+    decidedByUserKey: v.optional(v.string()),
+  })
+    .index("by_pipelineFile_createdAt", ["pipelineFileId", "createdAt"])
+    .index("by_org_status_createdAt", [
+      "organizationId",
+      "status",
+      "createdAt",
+    ]),
 });

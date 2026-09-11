@@ -238,6 +238,8 @@ export async function recordClientVaultUpload(
 
   // Broker phone/in-app recipient = pipeline.ownerUserKey (via notifyPipelineBrokers).
   // documentVaultFileTasks has no broker assigneeUserKey — assignedContactId/etc. are clients.
+  // Layer 1 (immediate): always notify on each upload — in-app + Web Push.
+  // Not gated by clientUploadAutoReviewEnabled flags.
   await notifyPipelineBrokers(ctx, {
     pipeline: args.pipeline,
     category: "document_activity",
@@ -248,6 +250,11 @@ export async function recordClientVaultUpload(
     documentVaultFileTaskId: args.task._id,
     contextContactName: args.submitterName,
   });
+
+  // Layer 2 (additive): 15m quiet-window review package when org+file flags allow.
+  // Dynamic import avoids a cycle: this module ↔ clientUploadReview (broker notify).
+  const { scheduleClientUploadReview } = await import("./clientUploadReview");
+  await scheduleClientUploadReview(ctx, args.pipeline);
 }
 
 export async function recordBrokerVaultReview(

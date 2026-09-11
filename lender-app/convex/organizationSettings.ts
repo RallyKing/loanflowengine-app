@@ -244,3 +244,56 @@ export const updateContactRoles = mutation({
     return { ok: true as const, contactRoles: normalized };
   },
 });
+
+/**
+ * Org master switch for 15-minute client-upload auto-review.
+ * Default ON when unset. Does not gate immediate per-upload Alerts/push.
+ */
+export async function readClientUploadAutoReviewEnabledForOrg(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+): Promise<boolean> {
+  const existing = await ctx.db
+    .query("organizationSettings")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .first();
+  // Unset → ON (dev default).
+  return existing?.clientUploadAutoReviewEnabled !== false;
+}
+
+export const getClientUploadAutoReviewEnabled = query({
+  args: orgArgs,
+  returns: v.object({ enabled: v.boolean() }),
+  handler: async (ctx, { organizationId, memberUserKey }) => {
+    await requireOrgReader(ctx, organizationId, memberUserKey);
+    return {
+      enabled: await readClientUploadAutoReviewEnabledForOrg(
+        ctx,
+        organizationId,
+      ),
+    };
+  },
+});
+
+export const setClientUploadAutoReviewEnabled = mutation({
+  args: {
+    ...orgArgs,
+    enabled: v.boolean(),
+  },
+  returns: v.object({ ok: v.literal(true), enabled: v.boolean() }),
+  handler: async (ctx, { organizationId, memberUserKey, enabled }) => {
+    const actor = await requireOrgSettingsAdmin(
+      ctx,
+      organizationId,
+      memberUserKey,
+    );
+    const settings = await ensureOrganizationSettings(ctx, organizationId);
+    const now = Date.now();
+    await ctx.db.patch(settings._id, {
+      clientUploadAutoReviewEnabled: enabled,
+      updatedAt: now,
+      updatedByUserKey: actor,
+    });
+    return { ok: true as const, enabled };
+  },
+});

@@ -2976,6 +2976,38 @@ export const setAutoArchiveOnInactivity = mutation({
 });
 
 /**
+ * Per-file switch for 15-minute client-upload auto-review.
+ * Default ON when unset. Does not bump `updatedAt` (config only).
+ * Immediate per-upload alerts are unaffected.
+ */
+export const setClientUploadAutoReviewEnabled = mutation({
+  args: {
+    id: v.id("pipeline"),
+    enabled: v.boolean(),
+    ...preferencesAccountIdArg,
+  },
+  returns: v.object({
+    id: v.id("pipeline"),
+    enabled: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const actorKey = resolvePipelineActorKey(args);
+    const row = await ctx.db.get(args.id);
+    if (!row) throw new Error("Pipeline not found");
+    await assertCanMutatePipelineRow(ctx, row, actorKey);
+    const current = row.clientUploadAutoReviewEnabled !== false;
+    if (current === args.enabled) {
+      return { id: args.id, enabled: args.enabled };
+    }
+    await ctx.db.patch(args.id, {
+      // Store explicit false; omit/undefined means ON. Persist true as true for clarity.
+      clientUploadAutoReviewEnabled: args.enabled,
+    });
+    return { id: args.id, enabled: args.enabled };
+  },
+});
+
+/**
  * Add a lender to the `lenders` list on a pipeline file; idempotent (no
  * duplicate ids).
  */
