@@ -170,7 +170,8 @@ export function PushNotificationDeviceToggle({
         Uses browser Web Push (not Convex polling). On iPhone: Add to Home Screen
         (iOS 16.4+), then enable here. Requires VAPID keys on Convex +{" "}
         <code className="rounded bg-muted px-1">NEXT_PUBLIC_VAPID_PUBLIC_KEY</code>{" "}
-        on Vercel. First events: task assigned / assignment change.
+        on Vercel. Phone pushes fire when a client uploads documents (pending
+        review) on a pipeline file you own.
         {hasAny === true && !deviceOn ? (
           <span className="mt-1 block">
             Another device on your account already has push enabled.

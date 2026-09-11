@@ -9,12 +9,17 @@ Event-driven browser **Web Push** for Direct Lending Connection (`lender-app`). 
 - Cap: dedupe via `userNotifications.pushDispatchedAt`, skip when no subscription, prune **410/404** endpoints, small send concurrency (3).
 - In-app Alerts bell is unchanged — push extends the same `dispatchUserNotification` path.
 
-## What ships first
+## What ships (phone push)
 
 Push is scheduled only for:
 
-1. **`task_assignment`** — task assigned / reassigned (`taskNotifications.notifyTaskAssigneeChange`)
-2. **`assignment_change`** — entity ownership assignment (`assignments.upsert` → `dispatchUserNotification`)
+1. **`document_activity`** — client uploaded docs to a Document Vault file task (`recordClientVaultUpload` → `notifyPipelineBrokers` → `dispatchUserNotification`)
+
+**Recipient rule:** Vault file tasks do **not** have a broker `assigneeUserKey`. Registry fields (`assignedContactId` / `assignedClientId` / `assignedLenderId`) identify the *client-side* assignee, not a broker phone. Broker notification goes to the pipeline file’s **`ownerUserKey`** (same as in-app Alerts for vault uploads today).
+
+Settings **Send test notification** bypasses the category allowlist and does not insert a `userNotifications` row.
+
+Task assignment / ownership assignment change remain **in-app only** (not phone push).
 
 To add another category later:
 
@@ -37,6 +42,7 @@ Event mutation → dispatchUserNotification (insert userNotifications)
 | Send action (`"use node"`) | `convex/webPushActions.ts` |
 | Allowlist + payload | `convex/webPushPayload.ts` |
 | Hook | `convex/notifications.ts` → `dispatchUserNotification` |
+| Client upload path | `convex/documentVaultActivity.ts` → `recordClientVaultUpload` |
 | Service worker | `public/sw.js` |
 | Client subscribe | `lib/webPush/clientSubscribe.ts` |
 | Settings toggle | `components/PushNotificationDeviceToggle.tsx` |
@@ -84,7 +90,7 @@ Redeploy the Next app after setting public env vars (`npm run deploy:prod` per d
 2. Install / Add to Home Screen (optional but recommended).
 3. Settings → Notifications → **Enable push on this device**.
 4. Accept the browser permission prompt.
-5. Assign a task to yourself from another session — phone should show a system notification.
+5. Have a client upload a document to a vault task on a file you own — phone should show a system notification.
 
 ### iOS Safari (16.4+)
 
@@ -100,12 +106,15 @@ iOS will **not** deliver Web Push from a normal Safari tab — Home Screen insta
 
 1. Set VAPID on Convex + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` on the web deploy.
 2. Production (or preview with HTTPS): enable toggle once → one `pushSubscriptions` row (check Convex dashboard). Re-toggling on should upsert the same endpoint, not spam rows on an interval.
-3. Create a hooked event (assign a task to the subscribed user) → `trySendWebPush` runs once; `pushDispatchedAt` set on the notification row.
-4. Confirm **no** new Convex cron for push (only existing `deadlineDigest` remains).
-5. Revoke / expire a subscription (or mock 410) → endpoint row deleted on next send attempt.
+3. Client portal/vault upload on a file owned by the subscribed user → `document_activity` notification → `trySendWebPush` runs once; `pushDispatchedAt` set on the notification row.
+4. Task assignment should **not** schedule Web Push.
+5. Settings **Send test notification** still works (bypasses allowlist).
+6. Confirm **no** new Convex cron for push (only existing `deadlineDigest` remains).
+7. Revoke / expire a subscription (or mock 410) → endpoint row deleted on next send attempt.
 
 ## Out of scope
 
+- Mentions, deadlines, comments, broker review, lender room access
 - SMS / email channels (email already exists separately)
 - Replacing Product Updates / Alerts UI
 - Marketing blast pushes

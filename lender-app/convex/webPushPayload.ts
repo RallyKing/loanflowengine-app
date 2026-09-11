@@ -4,10 +4,13 @@
 
 import type { NotificationCategory } from "../lib/notificationPreferences";
 
-/** First-ship categories: task assign + ownership assignment change. */
+/**
+ * Phone Web Push allowlist — client vault uploads only (`document_activity`
+ * from `recordClientVaultUpload` → `notifyPipelineBrokers`).
+ * Settings test push bypasses this list (`sendTestPush`).
+ */
 export const WEB_PUSH_CATEGORIES: ReadonlySet<NotificationCategory> = new Set([
-  "task_assignment",
-  "assignment_change",
+  "document_activity",
 ]);
 
 export function isWebPushCategory(

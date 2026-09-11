@@ -135,8 +135,8 @@ export function PushNotificationEnablePrompt() {
           Enable phone notifications
         </p>
         <p className="text-xs text-muted-foreground">
-          Get task and assignment alerts on this device. You can change this
-          anytime in Settings.
+          Get alerts when a client uploads documents for review. You can change
+          this anytime in Settings.
         </p>
         {error ? (
           <p className="mt-1 text-xs text-destructive" role="alert">
