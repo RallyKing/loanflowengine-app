@@ -2601,6 +2601,8 @@ export default defineSchema({
     expirationTime: v.optional(v.number()),
     createdAt: v.number(),
     lastSuccessAt: v.optional(v.number()),
+    /** Rate-limit key for Settings “Send test notification” (1 / 60s / user). */
+    lastTestAt: v.optional(v.number()),
   })
     .index("by_user", ["memberUserKey"])
     .index("by_org_user", ["organizationId", "memberUserKey"])

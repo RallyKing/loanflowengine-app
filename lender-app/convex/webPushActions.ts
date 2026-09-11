@@ -1,15 +1,43 @@
 "use node";
 
 import webpush from "web-push";
-import { internalAction } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import {
   buildWebPushPayload,
   isWebPushCategory,
 } from "./webPushPayload";
 
 const SEND_CONCURRENCY = 3;
+
+type TestPushResult = {
+  ok: boolean;
+  reason?: string;
+  sent?: number;
+  pruned?: number;
+  failed?: number;
+  retryAfterMs?: number;
+};
+
+type ClaimTestSubscription = {
+  _id: Id<"pushSubscriptions">;
+  endpoint: string;
+  keysP256dh: string;
+  keysAuth: string;
+};
+
+type ClaimTestSendResult =
+  | {
+      ok: true;
+      subscriptions: ClaimTestSubscription[];
+    }
+  | {
+      ok: false;
+      reason: "no_subscription" | "rate_limited";
+      retryAfterMs?: number;
+    };
 
 function vapidConfigured(): {
   publicKey: string;
@@ -132,6 +160,109 @@ export const trySendWebPush = internalAction({
       pruned,
       failed,
       reason: sent > 0 ? ("sent" as const) : ("all_failed" as const),
+    };
+  },
+});
+
+/**
+ * Settings “Send test notification” — one web-push to the caller’s stored
+ * subscriptions only. Does **not** insert `userNotifications`, does **not**
+ * schedule `trySendWebPush`, and does **not** fan out to other users.
+ */
+export const sendTestPush = action({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.optional(v.string()),
+  },
+  returns: v.object({
+    ok: v.boolean(),
+    reason: v.optional(v.string()),
+    sent: v.optional(v.number()),
+    pruned: v.optional(v.number()),
+    failed: v.optional(v.number()),
+    retryAfterMs: v.optional(v.number()),
+  }),
+  handler: async (ctx, args): Promise<TestPushResult> => {
+    const claim = (await ctx.runMutation(api.pushSubscriptions.claimTestSend, {
+      organizationId: args.organizationId,
+      memberUserKey: args.memberUserKey,
+    })) as ClaimTestSendResult;
+
+    if (!claim.ok) {
+      return {
+        ok: false,
+        reason: claim.reason,
+        retryAfterMs:
+          claim.reason === "rate_limited" ? claim.retryAfterMs : undefined,
+      };
+    }
+
+    const vapid = vapidConfigured();
+    if (!vapid) {
+      return { ok: false, reason: "no_vapid" };
+    }
+
+    webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);
+
+    const body = JSON.stringify({
+      title: "Loan Flow Engine test",
+      body: "Push is working.",
+      url: "/settings",
+      tag: "web-push-test",
+    });
+
+    let sent = 0;
+    let pruned = 0;
+    let failed = 0;
+
+    for (let i = 0; i < claim.subscriptions.length; i += SEND_CONCURRENCY) {
+      const batch = claim.subscriptions.slice(i, i + SEND_CONCURRENCY);
+      await Promise.all(
+        batch.map(async (sub: ClaimTestSubscription) => {
+          try {
+            await webpush.sendNotification(
+              {
+                endpoint: sub.endpoint,
+                keys: {
+                  p256dh: sub.keysP256dh,
+                  auth: sub.keysAuth,
+                },
+              },
+              body,
+              { TTL: 60 * 60 },
+            );
+            sent += 1;
+            await ctx.runMutation(internal.pushSubscriptions.internalMarkSuccess, {
+              id: sub._id,
+            });
+          } catch (err: unknown) {
+            const statusCode =
+              err &&
+              typeof err === "object" &&
+              "statusCode" in err &&
+              typeof (err as { statusCode: unknown }).statusCode === "number"
+                ? (err as { statusCode: number }).statusCode
+                : undefined;
+            if (statusCode === 404 || statusCode === 410) {
+              pruned += 1;
+              await ctx.runMutation(internal.pushSubscriptions.internalDelete, {
+                id: sub._id,
+              });
+              return;
+            }
+            failed += 1;
+            console.error("webPush test send failed", statusCode, err);
+          }
+        }),
+      );
+    }
+
+    return {
+      ok: sent > 0,
+      sent,
+      pruned,
+      failed,
+      reason: sent > 0 ? "sent" : "all_failed",
     };
   },
 });

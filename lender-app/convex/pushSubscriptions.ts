@@ -151,3 +151,83 @@ export const internalMarkSuccess = internalMutation({
     await ctx.db.patch(id, { lastSuccessAt: Date.now() });
   },
 });
+
+/** Minimum spacing between Settings “Send test notification” clicks per user. */
+export const TEST_PUSH_COOLDOWN_MS = 60_000;
+
+/**
+ * Auth + rate-limit claim for a one-shot test push.
+ * Does **not** insert `userNotifications` (avoids re-entering the push path).
+ * Called from `webPushActions.sendTestPush` only.
+ */
+export const claimTestSend = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.optional(v.string()),
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      subscriptions: v.array(
+        v.object({
+          _id: v.id("pushSubscriptions"),
+          endpoint: v.string(),
+          keysP256dh: v.string(),
+          keysAuth: v.string(),
+        }),
+      ),
+    }),
+    v.object({
+      ok: v.literal(false),
+      reason: v.union(
+        v.literal("no_subscription"),
+        v.literal("rate_limited"),
+      ),
+      retryAfterMs: v.optional(v.number()),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const caller = await requireOrgMemberKey(
+      ctx,
+      args.organizationId,
+      args.memberUserKey,
+    );
+    const now = Date.now();
+    const rows = await ctx.db
+      .query("pushSubscriptions")
+      .withIndex("by_user", (q) => q.eq("memberUserKey", caller))
+      .take(16);
+
+    if (rows.length === 0) {
+      return { ok: false as const, reason: "no_subscription" as const };
+    }
+
+    let latestTest = 0;
+    for (const row of rows) {
+      if (typeof row.lastTestAt === "number" && row.lastTestAt > latestTest) {
+        latestTest = row.lastTestAt;
+      }
+    }
+    if (latestTest > 0 && now - latestTest < TEST_PUSH_COOLDOWN_MS) {
+      return {
+        ok: false as const,
+        reason: "rate_limited" as const,
+        retryAfterMs: TEST_PUSH_COOLDOWN_MS - (now - latestTest),
+      };
+    }
+
+    for (const row of rows) {
+      await ctx.db.patch(row._id, { lastTestAt: now });
+    }
+
+    return {
+      ok: true as const,
+      subscriptions: rows.map((row) => ({
+        _id: row._id,
+        endpoint: row.endpoint,
+        keysP256dh: row.keysP256dh,
+        keysAuth: row.keysAuth,
+      })),
+    };
+  },
+});

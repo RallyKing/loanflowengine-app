@@ -22,6 +22,7 @@ import { MainNav } from "@/components/MainNav";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import { MobileBottomNavScrollSpacer } from "@/components/layout/MobileBottomNavScrollSpacer";
 import { OfflineSyncBanner } from "@/components/OfflineSyncBanner";
+import { PushNotificationEnablePrompt } from "@/components/PushNotificationEnablePrompt";
 import { SuperuserImpersonationBanner } from "@/components/SuperuserImpersonationBanner";
 import { OrgScopeRecoveryBanner } from "@/components/OrgScopeRecoveryBanner";
 import { PageErrorBoundary } from "@/components/PageErrorBoundary";
@@ -218,6 +219,7 @@ function AppChromeBody({
           <SuperuserImpersonationBanner />
           <ConvexConnectionStatus />
           <OfflineSyncBanner />
+          <PushNotificationEnablePrompt />
         </div>
       </div>
     ) : null;
