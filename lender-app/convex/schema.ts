@@ -5695,4 +5695,46 @@ export default defineSchema({
       "status",
       "createdAt",
     ]),
+
+  /**
+   * In-app bug reports (screenshot + metadata) for Cursor Cloud Minion / GrokBot.
+   * Source of truth; optional GitHub issue created via one-shot action when token set.
+   */
+  bugReports: defineTable({
+    organizationId: v.id("organizations"),
+    createdByUserKey: v.string(),
+    createdByEmail: v.optional(v.string()),
+    description: v.string(),
+    severity: v.union(
+      v.literal("low"),
+      v.literal("medium"),
+      v.literal("high"),
+    ),
+    status: v.union(
+      v.literal("new"),
+      v.literal("acknowledged"),
+      v.literal("resolved"),
+      v.literal("wontfix"),
+    ),
+    pageUrl: v.string(),
+    pagePath: v.string(),
+    pipelineFileId: v.optional(v.id("pipeline")),
+    viewportWidth: v.number(),
+    viewportHeight: v.number(),
+    userAgent: v.string(),
+    screenshotStorageId: v.optional(v.id("_storage")),
+    screenshotBytes: v.optional(v.number()),
+    screenshotMimeType: v.optional(v.string()),
+    githubIssueUrl: v.optional(v.string()),
+    githubIssueNumber: v.optional(v.number()),
+    githubIssueError: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_org_createdAt", ["organizationId", "createdAt"])
+    .index("by_org_status_createdAt", [
+      "organizationId",
+      "status",
+      "createdAt",
+    ])
+    .index("by_creator_createdAt", ["createdByUserKey", "createdAt"]),
 });
