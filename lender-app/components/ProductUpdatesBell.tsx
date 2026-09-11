@@ -266,7 +266,15 @@ export function ProductUpdatesBell({
         </div>
 
         <div className="max-h-[min(60dvh,26rem)] space-y-3 overflow-y-auto overscroll-contain touch-scroll-y pr-0.5">
-          {!posts || posts.length === 0 ? (
+          {posts === undefined ? (
+            <p
+              className="text-xs text-muted-foreground"
+              role="status"
+              aria-live="polite"
+            >
+              Loading updates…
+            </p>
+          ) : posts.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               No published updates yet. Your workspace admin can seed content
               from Settings → Product knowledge.
