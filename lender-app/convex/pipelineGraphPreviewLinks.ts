@@ -177,12 +177,19 @@ export async function batchGraphLinksForPipelineFiles(
   for (const r of ftaskAll) taskIds.add(String(r.taskId));
   for (const r of ftAll) userKeys.add(r.userKey.trim());
 
+  // `contactFileLinks` has no organizationId; fan out per visible file via
+  // `by_file` (bounded by links-per-file) instead of scanning every file's
+  // links across all orgs.
   const cflAll = (
-    await ctx.db
-      .query("contactFileLinks")
-      .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
-      .collect() // bounded: one org's contact↔file links, not the whole table
-  ).filter((l) => fileIdSet.has(String(l.fileId)));
+    await Promise.all(
+      files.map((f) =>
+        ctx.db
+          .query("contactFileLinks")
+          .withIndex("by_file", (q) => q.eq("fileId", f._id))
+          .collect(), // bounded: contact↔file links for a single file
+      ),
+    )
+  ).flat();
   for (const link of cflAll) {
     contactIds.add(String(link.contactId));
   }
