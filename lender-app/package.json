@@ -45,6 +45,7 @@
     "admin:joshua-rebind": "tsx scripts/run-joshua-explicit-rebind.ts",
     "admin:joshua-legacy-cleanup": "tsx scripts/operator-joshua-legacy-key-cleanup.ts",
     "admin:hard-reset-native-auth": "tsx scripts/hard-reset-native-auth-email.ts",
+    "test:web-push-payload": "tsx scripts/web-push-payload-tests.ts",
     "test:core": "tsx scripts/core-edge-tests.ts",
     "test:migration-admin-gate": "tsx scripts/assert-migration-admin-gate-tests.ts",
     "test:ai-due-diligence": "tsx scripts/ai-due-diligence-tests.ts",
@@ -131,11 +132,13 @@
     "react-easy-crop": "^6.0.2",
     "stripe": "^17.7.0",
     "tailwind-merge": "^2.5.4",
-    "vaul": "^1.1.2"
+    "vaul": "^1.1.2",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@types/papaparse": "^5.3.15",
+    "@types/web-push": "^3.6.4",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.0",
     "eslint": "^9.15.0",

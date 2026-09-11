@@ -79,6 +79,7 @@ import {
   NOTIFY_TASK_ASSIGNMENT_EMAIL_KEY,
   NOTIFY_TASK_ASSIGNMENT_INAPP_KEY,
 } from "@/lib/notificationPreferences";
+import { PushNotificationDeviceToggle } from "@/components/PushNotificationDeviceToggle";
 
 const LIVE_PILL_OPTIONS: {
   value: LiveStatusPillMode;
@@ -581,6 +582,12 @@ export function SettingsPageClient() {
                     />
                   </div>
                 </div>
+
+                <PushNotificationDeviceToggle
+                  organizationId={activeOrganizationId}
+                  memberUserKey={actorKeyForConvex || accountId}
+                  enabled={canSyncDisplayColors}
+                />
 
                 <div className="space-y-3 border-t border-border/60 pt-4">
                   <p className="text-sm font-medium">Categories</p>

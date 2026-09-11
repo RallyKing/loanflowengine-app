@@ -21,6 +21,7 @@ import {
 import { resolveDisplayUsernameForUserKey } from "./auth/displayIdentity";
 import { requireAuthenticatedCaller } from "./callerAuth";
 import { resolveNotificationContext } from "./notificationContext";
+import { isWebPushCategory } from "./webPushPayload";
 
 async function assertCallerOwnsUserKey(
   ctx: QueryCtx | MutationCtx,
@@ -162,6 +163,17 @@ export async function dispatchUserNotification(
 
   if (channels.email && simpleEmailLooksValid(prefs.notificationEmail)) {
     await ctx.scheduler.runAfter(0, internal.notifications.trySendNotificationEmail, {
+      notificationId: id,
+    });
+  }
+
+  /**
+   * Lean Web Push: only for allowlisted categories, only when a row was inserted
+   * (dedupe already applied). The action no-ops if the user has no subscription
+   * or VAPID env is unset — no cron / no polling.
+   */
+  if (isWebPushCategory(args.category)) {
+    await ctx.scheduler.runAfter(0, internal.webPushActions.trySendWebPush, {
       notificationId: id,
     });
   }
@@ -442,6 +454,13 @@ export const internalMarkEmailDispatched = internalMutation({
   args: { notificationId: v.id("userNotifications") },
   handler: async (ctx, { notificationId }) => {
     await ctx.db.patch(notificationId, { emailDispatchedAt: Date.now() });
+  },
+});
+
+export const internalMarkPushDispatched = internalMutation({
+  args: { notificationId: v.id("userNotifications") },
+  handler: async (ctx, { notificationId }) => {
+    await ctx.db.patch(notificationId, { pushDispatchedAt: Date.now() });
   },
 });
 

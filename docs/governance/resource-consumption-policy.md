@@ -355,6 +355,8 @@ await ctx.scheduler.runAfter(0, internal.dataBackup.executeBackupPass, { snapsho
 | collaboration presence purge | 15 min | `presence.purgeExpired` | Bounded delete of expired presence rows | ~2,880 |
 | full data backup snapshot | daily 04:15 UTC | `dataBackup.runScheduledBackup` | Enqueues one paged backup chain with a real terminal condition | ~30 |
 
+**Not a cron — Web Push:** Phone notifications use browser Web Push (`webPushActions.trySendWebPush`), scheduled only from `dispatchUserNotification` for allowlisted categories when a row is inserted. No subscription polling. Dead endpoints pruned on HTTP 410. See `docs/pwa-web-push.md`.
+
 **Total scheduled floor: ≈ 23,100 calls/month** even with zero activity. That is the budget these crons consume before a single user signs in — which is why the floor exists and why 1-minute crons (43,200/month **each**) are banned.
 
 **Deliberately absent — do not re-add:**

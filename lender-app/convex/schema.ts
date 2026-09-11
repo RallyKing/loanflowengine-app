@@ -2576,6 +2576,8 @@ export default defineSchema({
      */
     dedupeKey: v.optional(v.string()),
     emailDispatchedAt: v.optional(v.number()),
+    /** Web Push delivery stamp (dedupe; one push fan-out per notification row). */
+    pushDispatchedAt: v.optional(v.number()),
     /** In-app silencing until instant (ms). */
     snoozedUntil: v.optional(v.number()),
   })
@@ -2583,6 +2585,27 @@ export default defineSchema({
     .index("by_task", ["taskId"])
     .index("by_file", ["fileId"])
     .index("by_user_dedupe", ["userKey", "dedupeKey"]),
+
+  /**
+   * Browser Web Push subscriptions (FCM / Mozilla / Apple push networks).
+   * Delivery is event-driven via `webPushActions.trySendWebPush` — never polled.
+   * Keyed by org + memberUserKey + endpoint; dead endpoints pruned on HTTP 410.
+   */
+  pushSubscriptions: defineTable({
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    endpoint: v.string(),
+    keysP256dh: v.string(),
+    keysAuth: v.string(),
+    userAgent: v.optional(v.string()),
+    expirationTime: v.optional(v.number()),
+    createdAt: v.number(),
+    lastSuccessAt: v.optional(v.number()),
+  })
+    .index("by_user", ["memberUserKey"])
+    .index("by_org_user", ["organizationId", "memberUserKey"])
+    .index("by_endpoint", ["endpoint"]),
+
   /**
    * Per-task file metadata (the app’s “task files” / attachments store).
    * Bytes live in Convex file storage (`_storage`); each row points at a blob via `storageId`.
