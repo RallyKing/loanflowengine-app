@@ -1,4 +1,4 @@
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
@@ -84,6 +84,7 @@ import {
   resolveOrgPipelineFileAccessLevel,
   sessionKeyIsGlobalAdmin,
 } from "./organizationAccess";
+import { PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID } from "./auth/platformGodMode";
 import {
   pipelineHierarchyFkArgs,
   resolvePipelineHierarchyForCreate,
@@ -441,6 +442,56 @@ async function tryInsertLedgerWhenMarkedPaid(
 // ---------- Queries ----------
 
 /**
+ * Hard cap on rows pulled by an org-scoped pipeline list scan. A single
+ * organization's pipeline is far below this; the cap only prevents a
+ * pathological org from turning a list subscription into an effectively
+ * unbounded read (see docs/governance/resource-consumption-policy.md). Mirrors
+ * `TASKS_GET_ALL_MAX_ROWS` in `tasks.ts`.
+ */
+const PIPELINE_LIST_MAX_ROWS = 20_000;
+
+/**
+ * Org-scoped pipeline rows for list/table surfaces, newest-first by
+ * `_creationTime` — identical ordering to the previous
+ * `ctx.db.query("pipeline").order("desc").collect()` full-table scan, but read
+ * through the `by_organization_createdAt` index so a hub subscription only
+ * touches the requesting org's rows instead of every organization's rows.
+ *
+ * Legacy rows with no `organizationId` belong to the primary workspace
+ * (`rowBelongsToOrganizationScope`), so they are folded in only for the primary
+ * default org — preserving `filterPipelineByOrgScope` semantics exactly.
+ *
+ * Callers still run `filterPipelineRowsForMember` afterward for owner/share/
+ * hierarchy ACL, which also re-applies org scoping (idempotent here).
+ */
+async function collectOrgScopedPipelineRows(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+): Promise<Doc<"pipeline">[]> {
+  const scoped = await ctx.db
+    .query("pipeline")
+    .withIndex("by_organization_createdAt", (q) =>
+      q.eq("organizationId", organizationId),
+    )
+    .order("desc")
+    .take(PIPELINE_LIST_MAX_ROWS);
+  const rows =
+    organizationId === PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID
+      ? scoped.concat(
+          await ctx.db
+            .query("pipeline")
+            .withIndex("by_organization_createdAt", (q) =>
+              q.eq("organizationId", undefined),
+            )
+            .order("desc")
+            .take(PIPELINE_LIST_MAX_ROWS),
+        )
+      : scoped;
+  rows.sort((a, b) => b._creationTime - a._creationTime);
+  return rows;
+}
+
+/**
  * All pipeline rows, newest first. Archived rows are hidden by default —
  * pass `includeArchived: true` to surface them (e.g. the "Show archived"
  * toggle on the pipeline page).
@@ -452,12 +503,16 @@ export const getAll = query({
   },
   handler: async (ctx, { includeArchived, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
-    let out = includeArchived ? rows : rows.filter((r) => r.archivedAt == null);
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
-    out = god ? out : filterPipelineByOrgScope(out, organizationId);
-    out = await filterPipelineRowsForMember(ctx, out, organizationId, memberUserKey);
-    return out;
+    const rows = await collectOrgScopedPipelineRows(ctx, organizationId);
+    const out = includeArchived
+      ? rows
+      : rows.filter((r) => r.archivedAt == null);
+    return await filterPipelineRowsForMember(
+      ctx,
+      out,
+      organizationId,
+      memberUserKey,
+    );
   },
 });
 
@@ -522,14 +577,13 @@ export const listLight = query({
   },
   handler: async (ctx, { includeArchived, organizationId, memberUserKey, maxRows }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
+    const rows = await collectOrgScopedPipelineRows(ctx, organizationId);
     const filtered = includeArchived
       ? rows
       : rows.filter((r) => r.archivedAt == null);
-    const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
     const visible = await filterPipelineRowsForMember(
       ctx,
-      orgScoped,
+      filtered,
       organizationId,
       memberUserKey,
     );
@@ -804,32 +858,35 @@ export const listTablePreview = query({
   },
   handler: async (ctx, { includeArchived, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
+    const rows = await collectOrgScopedPipelineRows(ctx, organizationId);
     const filtered = rows.filter(
       (r) => includeArchived || r.archivedAt == null,
     );
-    const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
     const visible = await filterPipelineRowsForMember(
       ctx,
-      orgScoped,
+      filtered,
       organizationId,
       memberUserKey,
     );
     const intakeIds = new Set<Id<"intakeSheets">>();
     const lenderIds = new Set<Id<"lenders">>();
     const fileIdSet = new Set(visible.map((r) => String(r._id)));
-    const orgStr = String(organizationId);
     for (const r of visible) {
       if (r.intakeSheetId) intakeIds.add(r.intakeSheetId);
       if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
       for (const lid of r.lenders ?? []) lenderIds.add(lid);
     }
     const fileLenderEdgesByFile = new Map<string, Doc<"fileLenders">[]>();
-    const allFileLenders = (await ctx.db.query("fileLenders").collect()).filter(
-      (edge) =>
-        fileIdSet.has(String(edge.fileId)) &&
-        String(edge.organizationId) === orgStr,
-    );
+    // Org-scoped via `by_org_entity` (prefix on organizationId) instead of a
+    // full-table scan of every org's edges. `fileLenders.organizationId` is
+    // required, so exact-org matches the prior `String(...) === orgStr` filter.
+    const allFileLenders = (
+      await ctx.db
+        .query("fileLenders")
+        .withIndex("by_org_entity", (q) => q.eq("organizationId", organizationId))
+        // bounded: one organization's file↔lender edges (files × lenders), not the whole table
+        .collect()
+    ).filter((edge) => fileIdSet.has(String(edge.fileId)));
     for (const edge of allFileLenders) {
       const key = String(edge.fileId);
       const bucket = fileLenderEdgesByFile.get(key) ?? [];

@@ -24,6 +24,17 @@ function workspaceRoleFromMemberRole(
   return "workspace:admin";
 }
 
+/**
+ * Coalesce idle-window refreshes on the shared session row. `touchSession` runs
+ * on every authenticated server render (validateSession → touchSession), so
+ * multi-tab use and rapid navigation hammered the same `authSessions` row —
+ * ~828 OCC retries + a permanent failure in a 72h prod insights window. The
+ * idle window is >= 24h, so refreshing it at most once
+ * per this interval keeps the session just as alive while collapsing the
+ * contended writes. Token rotation is never coalesced (see below).
+ */
+const TOUCH_SESSION_COALESCE_MS = 5 * 60_000;
+
 export const validateSession = query({
   args: {
     publicId: v.string(),
@@ -135,12 +146,24 @@ export const touchSession = mutation({
     const idleMs = row.rememberMe
       ? 7 * 24 * 60 * 60 * 1000
       : 24 * 60 * 60 * 1000;
+
+    const rotating =
+      args.newTokenHash != null && args.newTokenHash !== row.tokenHash;
+
+    // Coalesce: outside a token rotation, skip the write when the session was
+    // already refreshed within the coalesce window. The idle window (>= 24h)
+    // dwarfs this window, so liveness is unaffected and the session stays valid;
+    // this collapses the multi-tab / every-render touchSession write stampede.
+    if (!rotating && now - row.lastSeenAt < TOUCH_SESSION_COALESCE_MS) {
+      return { ok: true as const };
+    }
+
     let nextTokenHash = row.tokenHash;
     let previousTokenHash: string | undefined = row.previousTokenHash;
     let previousTokenValidUntilMs: number | undefined = row.previousTokenValidUntilMs;
 
-    if (args.newTokenHash && args.newTokenHash !== row.tokenHash) {
-      nextTokenHash = args.newTokenHash;
+    if (rotating) {
+      nextTokenHash = args.newTokenHash!;
       previousTokenHash = row.tokenHash;
       previousTokenValidUntilMs = now + (args.rotationGraceMs ?? 120_000);
     }

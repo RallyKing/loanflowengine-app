@@ -1,4 +1,4 @@
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { assertOrgPermission, assertOrgScopeArgs } from "./organizationAccess";
@@ -40,17 +40,22 @@ export const list = query({
   handler: async (ctx, { search, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
     await assertOrgPermission(ctx, organizationId, memberUserKey, "files.view");
-    const [all, pipelines] = await Promise.all([
-      ctx.db.query("intakeSheets").collect(),
-      ctx.db.query("pipeline").collect(),
-    ]);
-    const orgPipelines = pipelines.filter(
-      (p) => p.organizationId === organizationId,
-    );
+    // Org-scoped pipeline read (exact org — this list never surfaced legacy
+    // null-org rows) instead of scanning every org's pipeline + every
+    // intakeSheet. Linked sheets are then fetched by id, so the intakeSheets
+    // table is never scanned.
+    const orgPipelines = await ctx.db
+      .query("pipeline")
+      .withIndex("by_organization_createdAt", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect(); // bounded: one org's pipeline rows via by_organization_createdAt
     const intakeToPipeline = pipelineIdByIntakeSheetId(orgPipelines);
-    const allowedIntakeIds = new Set(intakeToPipeline.keys());
-    const sorted = all
-      .filter((s) => allowedIntakeIds.has(s._id))
+    const intakeDocs = await Promise.all(
+      [...intakeToPipeline.keys()].map((id) => ctx.db.get(id)),
+    );
+    const sorted = intakeDocs
+      .filter((s): s is Doc<"intakeSheets"> => s != null)
       .sort(
         (a, b) =>
           (b.updatedAt ?? b._creationTime) - (a.updatedAt ?? a._creationTime),
@@ -79,17 +84,20 @@ export const listSummary = query({
   handler: async (ctx, { search, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
     await assertOrgPermission(ctx, organizationId, memberUserKey, "files.view");
-    const [all, pipelines] = await Promise.all([
-      ctx.db.query("intakeSheets").collect(),
-      ctx.db.query("pipeline").collect(),
-    ]);
-    const orgPipelines = pipelines.filter(
-      (p) => p.organizationId === organizationId,
-    );
+    // Same org-scoped strategy as `list`: index the org's pipeline rows, then
+    // fetch only the linked intake sheets by id (no full intakeSheets scan).
+    const orgPipelines = await ctx.db
+      .query("pipeline")
+      .withIndex("by_organization_createdAt", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect(); // bounded: one org's pipeline rows via by_organization_createdAt
     const intakeToPipeline = pipelineIdByIntakeSheetId(orgPipelines);
-    const allowedIntakeIds = new Set(intakeToPipeline.keys());
-    const rows = all
-      .filter((s) => allowedIntakeIds.has(s._id))
+    const intakeDocs = await Promise.all(
+      [...intakeToPipeline.keys()].map((id) => ctx.db.get(id)),
+    );
+    const rows = intakeDocs
+      .filter((s): s is Doc<"intakeSheets"> => s != null)
       .map((s) => {
         const updatedAt = s.updatedAt ?? s._creationTime;
         return {
