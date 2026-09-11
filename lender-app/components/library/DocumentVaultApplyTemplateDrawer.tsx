@@ -88,8 +88,10 @@ export function DocumentVaultApplyTemplateDrawer({
   }, [open, organizationId, memberUserKey, seedStarter, seedLegacy]);
 
   // Seed optimistic cache on open; prefer server when it arrives.
+  // Skip while a toggle is in flight so a stale query snapshot cannot wipe it.
   useEffect(() => {
     if (!open || !organizationId || !memberUserKey) return;
+    if (favoriteBusyId) return;
     if (serverFavorites) {
       const ids = serverFavorites.templateIds.map(String);
       setFavoriteIds(new Set(ids));
@@ -103,7 +105,7 @@ export function DocumentVaultApplyTemplateDrawer({
     if (cached.length > 0) {
       setFavoriteIds(new Set(cached));
     }
-  }, [open, organizationId, memberUserKey, serverFavorites]);
+  }, [open, organizationId, memberUserKey, serverFavorites, favoriteBusyId]);
 
   const individualSorted = useMemo(() => {
     if (!library) return [];
