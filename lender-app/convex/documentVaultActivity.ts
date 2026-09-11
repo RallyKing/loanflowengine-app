@@ -236,6 +236,8 @@ export async function recordClientVaultUpload(
     libraryDocumentId: args.documentId,
   });
 
+  // Broker phone/in-app recipient = pipeline.ownerUserKey (via notifyPipelineBrokers).
+  // documentVaultFileTasks has no broker assigneeUserKey — assignedContactId/etc. are clients.
   await notifyPipelineBrokers(ctx, {
     pipeline: args.pipeline,
     category: "document_activity",

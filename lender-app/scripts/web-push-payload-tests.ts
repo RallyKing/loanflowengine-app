@@ -10,10 +10,12 @@ import {
   WEB_PUSH_CATEGORIES,
 } from "../convex/webPushPayload";
 
-assert.equal(isWebPushCategory("task_assignment"), true);
-assert.equal(isWebPushCategory("assignment_change"), true);
+assert.equal(isWebPushCategory("document_activity"), true);
+assert.equal(isWebPushCategory("task_assignment"), false);
+assert.equal(isWebPushCategory("assignment_change"), false);
 assert.equal(isWebPushCategory("deadline"), false);
-assert.ok(WEB_PUSH_CATEGORIES.has("task_assignment"));
+assert.ok(WEB_PUSH_CATEGORIES.has("document_activity"));
+assert.equal(WEB_PUSH_CATEGORIES.has("task_assignment"), false);
 
 assert.equal(
   webPushDeepLink({ category: "task_assignment", taskId: "j57abc" }),
@@ -33,13 +35,15 @@ assert.ok(
 
 const payload = buildWebPushPayload({
   _id: "n1",
-  category: "task_assignment",
-  summary: "Assigned to you: “Close docs”",
-  detail: "Due tomorrow",
-  taskId: "t1",
+  category: "document_activity",
+  summary: "Bank statements — client submission pending review",
+  detail: 'Client uploaded "statements.pdf" for Bank statements',
+  fileId: "file1",
+  libraryDocumentId: "doc1",
+  documentVaultFileTaskId: "task1",
 });
-assert.equal(payload.url, "/tasks?task=t1");
+assert.ok(payload.url.includes("tab=documents"));
 assert.equal(payload.tag, "user-notification:n1");
-assert.ok(payload.title.includes("Assigned"));
+assert.ok(payload.title.includes("pending review"));
 
 console.log("web-push-payload-tests: ok");
