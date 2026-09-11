@@ -32,6 +32,7 @@ import { simpleDeleteConfirm } from "@/lib/ui/confirmDestructive";
 import { OrganizationContactRolesPanel } from "@/components/settings/OrganizationContactRolesPanel";
 import { OrganizationTriageLabelsPanel } from "@/components/settings/OrganizationTriageLabelsPanel";
 import { OrganizationTaskSnoozeDefaultsPanel } from "@/components/settings/OrganizationTaskSnoozeDefaultsPanel";
+import { OrganizationClientUploadAutoReviewPanel } from "@/components/settings/OrganizationClientUploadAutoReviewPanel";
 
 function OrganizationBrandingSection({
   orgScope,
@@ -693,6 +694,10 @@ export function OrganizationSettingsPanel() {
 
       {orgScope && can("settings.manage") ? (
         <OrganizationTaskSnoozeDefaultsPanel orgScope={orgScope} />
+      ) : null}
+
+      {orgScope && can("settings.manage") ? (
+        <OrganizationClientUploadAutoReviewPanel orgScope={orgScope} />
       ) : null}
 
       {orgScope && can("settings.manage") ? (

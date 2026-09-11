@@ -3206,6 +3206,8 @@ function PipelineFileWorkspaceLoaded({
       documentCreatorTokenContext={documentCreatorTokenContext}
       navigationFocus={documentsVaultFocus}
       onNavigationFocusConsumed={clearDocumentsVaultFocus}
+      clientUploadAutoReviewEnabled={p.clientUploadAutoReviewEnabled}
+      readOnly={readOnly}
     />
   );
   const portalsProgressTabPanel = (

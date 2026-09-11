@@ -13,6 +13,7 @@ import type { DocumentVaultNavigationFocus } from "@/lib/pipeline/documentVaultN
 import type { DocumentCreatorTokenContext } from "@/lib/pipeline/documentVaultCreator";
 import { documentVaultBlockMeta } from "@/lib/pipeline/collapsibleBlockMetadata";
 import { DocumentVaultAuditPanel } from "@/components/library/DocumentVaultAuditPanel";
+import { PipelineClientUploadAutoReviewControl } from "@/components/pipeline/PipelineClientUploadAutoReviewControl";
 import { Shield } from "lucide-react";
 
 export type DocumentVaultTabProps = {
@@ -29,6 +30,9 @@ export type DocumentVaultTabProps = {
   /** Cross-tab focus from Client Portal promote / view-in-documents. */
   navigationFocus?: DocumentVaultNavigationFocus | null;
   onNavigationFocusConsumed?: () => void;
+  /** Per-file auto-review flag; unset means ON. */
+  clientUploadAutoReviewEnabled?: boolean;
+  readOnly?: boolean;
   className?: string;
 };
 
@@ -42,6 +46,8 @@ export function DocumentVaultTab({
   documentCreatorTokenContext,
   navigationFocus,
   onNavigationFocusConsumed,
+  clientUploadAutoReviewEnabled,
+  readOnly = false,
   className,
 }: DocumentVaultTabProps) {
   const listArgs = useMemo(() => {
@@ -84,6 +90,14 @@ export function DocumentVaultTab({
       data-workspace-layout="constrained"
       data-primary-borrower-contact-id={_primaryBorrowerContactId ?? undefined}
     >
+      <div className="mb-3">
+        <PipelineClientUploadAutoReviewControl
+          fileId={fileId}
+          enabled={clientUploadAutoReviewEnabled}
+          preferencesAccountId={memberUserKey}
+          readOnly={readOnly}
+        />
+      </div>
       {/*
         Vault nav state lives on PipelineFileWorkspace (above FloatingBlockWindow
         host) so “Open in window” does not mount LibraryDocumentsWorkspace outside
