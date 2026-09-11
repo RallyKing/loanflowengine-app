@@ -3327,6 +3327,23 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_org", ["organizationId"]),
 
+  /**
+   * Per-user favorites for Apply Template → Individual Tasks.
+   * Scoped to org + member. One row per favorited template.
+   */
+  documentTaskTemplateFavorites: defineTable({
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    templateId: v.id("documentTaskTemplates"),
+    favoritedAt: v.number(),
+  })
+    .index("by_org_user", ["organizationId", "memberUserKey"])
+    .index("by_org_user_template", [
+      "organizationId",
+      "memberUserKey",
+      "templateId",
+    ]),
+
   portalEmailTemplates: defineTable({
     organizationId: v.optional(v.id("organizations")),
     kind: v.union(

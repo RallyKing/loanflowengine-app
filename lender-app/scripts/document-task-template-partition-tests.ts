@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   partitionDocumentTaskTemplates,
+  sortIndividualTemplatesByFavorites,
   templateStackLabel,
 } from "../lib/library/partitionDocumentTaskTemplates";
 
@@ -71,6 +72,35 @@ test("templateStackLabel resolves live and orphan names", () => {
   assert.equal(templateStackLabel(undefined, stacks), null);
   assert.equal(templateStackLabel("s1", stacks), "MCA Pack");
   assert.equal(templateStackLabel("gone", stacks), "Orphaned stack");
+});
+
+test("sortIndividualTemplatesByFavorites pins favorites then sorts by name", () => {
+  const templates = [
+    { _id: "t1", title: "Zebra" },
+    { _id: "t2", title: "Apple" },
+    { _id: "t3", title: "Mango" },
+    { _id: "t4", title: "Banana" },
+  ];
+  const sorted = sortIndividualTemplatesByFavorites(
+    templates,
+    new Set(["t1", "t4"]),
+  );
+  assert.deepEqual(
+    sorted.map((t) => t._id),
+    ["t4", "t1", "t2", "t3"],
+  );
+});
+
+test("sortIndividualTemplatesByFavorites with no favorites sorts by name", () => {
+  const templates = [
+    { _id: "t1", title: "Zebra" },
+    { _id: "t2", title: "Apple" },
+  ];
+  const sorted = sortIndividualTemplatesByFavorites(templates, new Set());
+  assert.deepEqual(
+    sorted.map((t) => t._id),
+    ["t2", "t1"],
+  );
 });
 
 console.log(`\n${passed} passed`);
