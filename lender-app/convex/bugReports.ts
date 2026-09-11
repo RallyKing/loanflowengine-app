@@ -6,7 +6,6 @@ import {
 } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { assertOrgScopeArgs, resolveMemberUserKey } from "./organizationAccess";
 import {
@@ -27,21 +26,6 @@ const severityValidator = v.union(
   v.literal("medium"),
   v.literal("high"),
 );
-
-async function getStorageMetadataWithRetry(
-  storage: MutationCtx["storage"],
-  storageId: Id<"_storage">,
-  { attempts = 12, delayMs = 80 }: { attempts?: number; delayMs?: number } = {},
-) {
-  for (let i = 0; i < attempts; i++) {
-    const meta = await storage.getMetadata(storageId);
-    if (meta) return meta;
-    if (i < attempts - 1) {
-      await new Promise<void>((r) => setTimeout(r, delayMs));
-    }
-  }
-  return null;
-}
 
 async function consumeBugReportRateLimit(
   ctx: MutationCtx,
@@ -133,12 +117,12 @@ export const submitBugReport = mutation({
     let screenshotBytes: number | undefined;
     let screenshotMimeType: string | undefined;
     if (args.screenshotStorageId) {
-      const meta = await getStorageMetadataWithRetry(
-        ctx.storage,
-        args.screenshotStorageId,
-      );
+      // Single metadata read — mutations must not sleep/retry-loop.
+      const meta = await ctx.storage.getMetadata(args.screenshotStorageId);
       if (!meta) {
-        throw new Error("Screenshot upload not found. Try re-capturing.");
+        throw new Error(
+          "Screenshot upload not found yet. Wait a moment and try re-capturing, then submit again.",
+        );
       }
       const sizeErr = validateBugReportScreenshotSize(meta.size);
       if (sizeErr) throw new Error(sizeErr);
@@ -187,10 +171,11 @@ export const submitBugReport = mutation({
       createdAt,
     });
 
-    // One-shot delivery to GitHub (no cron / self-reschedule).
+    // One-shot delivery: GitHub issue (optional) then GrokBot webhook (optional).
+    // No cron / self-reschedule.
     await ctx.scheduler.runAfter(
       0,
-      internal.bugReportActions.createGitHubIssueForBugReport,
+      internal.bugReportActions.deliverBugReportOutbound,
       { reportId },
     );
 
@@ -274,6 +259,24 @@ export const internalPatchGitHubIssue = internalMutation({
       githubIssueUrl: args.githubIssueUrl,
       githubIssueNumber: args.githubIssueNumber,
       githubIssueError: args.githubIssueError,
+    });
+    return null;
+  },
+});
+
+export const internalPatchWebhookDelivery = internalMutation({
+  args: {
+    reportId: v.id("bugReports"),
+    webhookDeliveredAt: v.optional(v.number()),
+    webhookError: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.reportId);
+    if (!row) return null;
+    await ctx.db.patch(args.reportId, {
+      webhookDeliveredAt: args.webhookDeliveredAt,
+      webhookError: args.webhookError?.slice(0, 240),
     });
     return null;
   },
