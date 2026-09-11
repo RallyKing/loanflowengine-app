@@ -121,11 +121,18 @@ approved quiet-window follow-up.
 portal invite flows. Auto Phase 4 is only the quiet-window follow-up after
 approval.
 
-## Convex usage (fail closed)
+## Convex loop / usage audit (fail closed — Joshua blocking)
 
-- Event-driven `scheduler.runAfter(15m)` only — **no cron**, no idle pump
-- Generation token: stale jobs no-op
-- Bounded `.take()` on tasks / links / grants / contacts
-- Approve / dismiss do not schedule further reviews or outbound sends
-- Immediate upload notify does not re-enter the upload path
-- No writes to `documentTaskTemplates` / stacks from this feature
+Adversarial review of this feature’s Convex surface before merge:
+
+| Check | Finding |
+|-------|---------|
+| Self-rescheduling loop (`runAfter` that re-queues itself) | **None** — `runDebouncedReview` is terminal; no `scheduler.runAfter` / `runAt` inside the worker |
+| Polling / idle pump / cron fan-out | **None** — not registered in `crons.ts`; only upload-driven `runAfter(15m)` |
+| Generation debounce (stale 15m jobs no-op) | **Yes** — each upload bumps `generation`; worker returns immediately on mismatch → one effective job per quiet window |
+| Immediate upload notify → re-triggers upload path | **No** — layer 1 is `notifyPipelineBrokers` (in-app + Web Push) only; does not call `recordClientVaultUpload` again. Layer 2 review-ready notify likewise does not re-enter the upload path |
+| Bounded queries | **Yes** — gap/recipients/list use indexes + `.take()` (`MAX_FILE_TASKS`, links/grants/contacts caps). No unbounded `.collect()` in this module |
+| Approve / dismiss schedules more reviews | **No** — status patch only; `sendFollowUp` stub is never called from approve |
+| `npm run verify:resource-safety` | **Pass** |
+
+Fail closed: if any of the above regresses, fix before merge — do not ship a usage loop.

@@ -22,6 +22,14 @@
  * - File: `pipeline.clientUploadAutoReviewEnabled`
  *
  * No client email/SMS send and no task reassignment in this phase (Phase 4).
+ *
+ * ## Convex fail-closed (Joshua blocking acceptance)
+ * - `runDebouncedReview` MUST NOT call `scheduler.runAfter` / re-queue itself.
+ * - No cron / idle pump / polling for this feature (upload-driven `runAfter(15m)` only).
+ * - Debounce uses `generation`; stale quiet-window jobs no-op.
+ * - Layer-1 notify and layer-2 review-ready notify never re-enter `recordClientVaultUpload`.
+ * - All list reads use indexes + `.take()` (no unbounded `.collect()`).
+ * - `approve` / `requestChanges` / `dismiss` are status-only — no further schedules.
  */
 import {
   internalMutation,
@@ -434,6 +442,10 @@ function buildDrafts(args: {
 /**
  * Quiet-window worker. No-ops when `generation` no longer matches, or when
  * org/file flags turned off during the quiet window.
+ *
+ * FAIL CLOSED: this handler must never call `ctx.scheduler.runAfter` /
+ * `runAt` (no self-reschedule). Broker notify here is in-app/Web Push only and
+ * must not re-enter `recordClientVaultUpload`.
  */
 export const runDebouncedReview = internalMutation({
   args: {
@@ -449,6 +461,7 @@ export const runDebouncedReview = internalMutation({
       )
       .unique();
 
+    // Generation debounce: only the latest quiet-window job for this file runs.
     if (!debounce || debounce.generation !== args.generation) {
       return null;
     }
@@ -495,6 +508,8 @@ export const runDebouncedReview = internalMutation({
       "Draft follow-up ready for your approval (not sent).",
     ].filter(Boolean);
 
+    // Layer-2 broker notify only — must not call recordClientVaultUpload /
+    // scheduleClientUploadReview (would create a usage loop).
     await notifyPipelineBrokers(ctx, {
       pipeline,
       category: "document_activity",
@@ -504,6 +519,7 @@ export const runDebouncedReview = internalMutation({
       contextFileName: dealName,
     });
 
+    // Intentionally no ctx.scheduler.* here — worker is terminal.
     return null;
   },
 });
