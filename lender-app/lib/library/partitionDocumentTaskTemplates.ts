@@ -69,3 +69,19 @@ export function templateStackLabel(
   const hit = stacks.find((s) => String(s._id) === String(stackId));
   return hit?.name ?? "Orphaned stack";
 }
+
+/**
+ * Apply Template → Individual Tasks ordering:
+ * favorites first, then non-favorites; stable secondary sort by title.
+ * Does not change inject semantics — display order only.
+ */
+export function sortIndividualTemplatesByFavorites<
+  T extends { _id: string; title: string },
+>(templates: T[], favoriteIds: ReadonlySet<string>): T[] {
+  return [...templates].sort((a, b) => {
+    const aFav = favoriteIds.has(String(a._id));
+    const bFav = favoriteIds.has(String(b._id));
+    if (aFav !== bFav) return aFav ? -1 : 1;
+    return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+  });
+}
