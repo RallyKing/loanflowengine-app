@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAction, useMutation } from "convex/react";
+import { Loader2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/Button";
 import { Input, Label, Select, Textarea } from "@/components/ui/Input";
@@ -9,6 +10,7 @@ import {
   parseBoundedDcAwardRadarContactPayload,
   parseBoundedDcAwardRadarNationwidePayload,
 } from "@/lib/dcAwardRadarPayload";
+import { useActorUserKey } from "@/lib/useActorUserKey";
 
 type ScrapeMode = "nationwide" | "contacts" | "both";
 
@@ -24,7 +26,36 @@ const SCRAPE_MODE_LABEL: Record<ScrapeMode, string> = {
   both: "Nationwide + contacts",
 };
 
+function formatRequestedAt(ms: number): string {
+  try {
+    return new Date(ms).toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return new Date(ms).toISOString();
+  }
+}
+
+/** Accessible indeterminate track — Hermes % complete is unknown client-side. */
+function IndeterminateProgressBar({ label }: { label: string }) {
+  return (
+    <div className="mt-3 space-y-1.5" role="status" aria-live="polite">
+      <p className="text-xs text-muted-foreground">Running {label}…</p>
+      <div
+        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuetext="In progress"
+        aria-busy="true"
+      >
+        <div className="h-full w-1/3 rounded-full bg-primary motion-safe:animate-pulse motion-reduce:opacity-80" />
+      </div>
+    </div>
+  );
+}
+
 export function DcAwardRadarOpsPanel() {
+  const memberUserKey = useActorUserKey();
   const upsertRows = useMutation(api.dcAwardSignals.operatorUpsertRows);
   const upsertContacts = useMutation(api.dcAwardSignals.operatorUpsertContacts);
   const requestHermesScrape = useAction(
@@ -40,12 +71,13 @@ export function DcAwardRadarOpsPanel() {
 
   const secret = operatorSecret.trim();
   const busy = status.kind === "busy";
+  const scrapeBusy = busy && status.label === "Scrape with Hermes";
 
   async function runHermesScrape() {
     setStatus({ kind: "busy", label: "Scrape with Hermes" });
     try {
       const result = await requestHermesScrape({
-        operatorSecret: secret,
+        memberUserKey: memberUserKey || undefined,
         mode: scrapeMode,
         notes: scrapeNotes.trim() || undefined,
       });
@@ -67,7 +99,7 @@ export function DcAwardRadarOpsPanel() {
       setStatus({
         kind: "ok",
         label: "Scrape with Hermes",
-        detail: `Webhook accepted for ${SCRAPE_MODE_LABEL[result.mode]} (BOSSMAN routine dc-award-radar-hermes-scrape). BOSSMAN runs Hermes public research, then pings Minion for CSV import. No invented contacts; GHL out of scope.`,
+        detail: `Scrape requested — Hermes running via BOSSMAN; import lands after Minion gets CSVs (${SCRAPE_MODE_LABEL[result.mode]}, ${formatRequestedAt(result.requestedAt)}). No Convex polling; no invented contacts; GHL out of scope.`,
       });
     } catch (error) {
       setStatus({
@@ -137,8 +169,9 @@ export function DcAwardRadarOpsPanel() {
         Primary path: <strong className="font-medium text-foreground">Scrape with Hermes</strong>{" "}
         POSTs once to BOSSMAN&apos;s GrokBot routine{" "}
         <code className="rounded bg-muted px-1 py-0.5">dc-award-radar-hermes-scrape</code>
-        . BOSSMAN runs Hermes public-web research, then pings Minion for CSV
-        import. This app does not scrape, run cron, or poll inside Convex.
+        . Requires a signed-in session (same as the radar list) — not the migration
+        operator secret. BOSSMAN runs Hermes public-web research, then pings Minion
+        for CSV import. This app does not scrape, run cron, or poll inside Convex.
         Prefer owner/principal{" "}
         <strong className="font-medium text-foreground">cell / direct</strong>{" "}
         phone and <strong className="font-medium text-foreground">direct</strong> email —
@@ -149,25 +182,12 @@ export function DcAwardRadarOpsPanel() {
         <code className="rounded bg-muted px-1 py-0.5">
           npm run import:dc-award-radar -- path/to/file.csv
         </code>
-        . Operator secret matches{" "}
+        . Manual import still requires the operator secret (
         <code className="rounded bg-muted px-1 py-0.5">
           DATA_MIGRATION_ADMIN_SECRET
         </code>
-        .
+        ).
       </p>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Label>
-          Operator secret
-          <Input
-            type="password"
-            autoComplete="off"
-            value={operatorSecret}
-            onChange={(event) => setOperatorSecret(event.target.value)}
-            aria-label="Operator secret"
-          />
-        </Label>
-      </div>
 
       <div
         className="mt-4 space-y-3 rounded-lg border border-border/80 bg-muted/30 p-3"
@@ -186,7 +206,8 @@ export function DcAwardRadarOpsPanel() {
               dc-award-radar-hermes-scrape
             </code>
             . No Convex scrape or scheduler. After Hermes, BOSSMAN pings Minion
-            for import — not automatic GHL sync.
+            for import — not automatic GHL sync. Progress below is indeterminate:
+            true Hermes completion is async outside this app.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -198,6 +219,7 @@ export function DcAwardRadarOpsPanel() {
                 setScrapeMode(event.target.value as ScrapeMode)
               }
               aria-label="Hermes scrape mode"
+              disabled={busy}
             >
               <option value="both">Nationwide + contacts</option>
               <option value="nationwide">Nationwide refresh only</option>
@@ -212,15 +234,27 @@ export function DcAwardRadarOpsPanel() {
               aria-label="Hermes scrape notes"
               placeholder="e.g. focus Phoenix AZ awards this week"
               maxLength={500}
+              disabled={busy}
             />
           </Label>
         </div>
         <Button
           type="button"
-          disabled={busy || !secret}
+          disabled={busy}
           onClick={() => void runHermesScrape()}
+          aria-busy={scrapeBusy}
         >
-          Scrape with Hermes
+          {scrapeBusy ? (
+            <>
+              <Loader2
+                className="mr-2 h-4 w-4 shrink-0 animate-spin motion-reduce:animate-none"
+                aria-hidden
+              />
+              Requesting scrape…
+            </>
+          ) : (
+            "Scrape with Hermes"
+          )}
         </Button>
       </div>
 
@@ -234,66 +268,83 @@ export function DcAwardRadarOpsPanel() {
           {showManualImport ? "Hide manual CSV import" : "Manual CSV import (advanced)"}
         </button>
         {showManualImport ? (
-          <div className="mt-3 grid gap-4 lg:grid-cols-2">
-            <div className="space-y-2">
-              <Label>
-                Import nationwide refresh
-                <span className="block text-xs font-normal text-muted-foreground">
-                  JSON array or CSV. Upserts by sourceKey (url + project + stage).
-                  Any US market. Max 100 rows per submit.
-                </span>
-                <Textarea
-                  rows={8}
-                  value={nationwidePayload}
-                  onChange={(event) => setNationwidePayload(event.target.value)}
-                  aria-label="Nationwide refresh payload"
-                  placeholder="market,project_or_campus,stage_signal,..."
-                />
-              </Label>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy || !secret || !nationwidePayload.trim()}
-                onClick={() => void runNationwide()}
-              >
-                Import nationwide refresh
-              </Button>
-            </div>
-            <div className="space-y-2">
-              <Label>
-                Refresh contacts
-                <span className="block text-xs font-normal text-muted-foreground">
-                  JSON/CSV with sourceKey (or source_url + project + stage) plus
-                  owner/principal fields. Prefer cell/direct — not switchboard.
-                  Updates existing rows only — never creates duplicate projects.
-                </span>
-                <Textarea
-                  rows={8}
-                  value={contactPayload}
-                  onChange={(event) => setContactPayload(event.target.value)}
-                  aria-label="Contact refresh payload"
-                  placeholder="source_key,contact_name,contact_title,email,email_type,phone,phone_type,linkedin_url,contact_notes"
-                />
-              </Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy || !secret || !contactPayload.trim()}
-                onClick={() => void runContacts()}
-              >
-                Refresh contacts
-              </Button>
+          <div className="mt-3 space-y-4">
+            <Label className="max-w-md">
+              Operator secret
+              <span className="block text-xs font-normal text-muted-foreground">
+                Required only for Manual CSV import (nationwide upsert / contacts
+                upsert). Not used by Scrape with Hermes.
+              </span>
+              <Input
+                type="password"
+                autoComplete="off"
+                value={operatorSecret}
+                onChange={(event) => setOperatorSecret(event.target.value)}
+                aria-label="Operator secret for manual CSV import"
+                disabled={busy}
+              />
+            </Label>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-2">
+                <Label>
+                  Import nationwide refresh
+                  <span className="block text-xs font-normal text-muted-foreground">
+                    JSON array or CSV. Upserts by sourceKey (url + project + stage).
+                    Any US market. Max 100 rows per submit.
+                  </span>
+                  <Textarea
+                    rows={8}
+                    value={nationwidePayload}
+                    onChange={(event) => setNationwidePayload(event.target.value)}
+                    aria-label="Nationwide refresh payload"
+                    placeholder="market,project_or_campus,stage_signal,..."
+                    disabled={busy}
+                  />
+                </Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || !secret || !nationwidePayload.trim()}
+                  onClick={() => void runNationwide()}
+                >
+                  Import nationwide refresh
+                </Button>
+              </div>
+              <div className="space-y-2">
+                <Label>
+                  Refresh contacts
+                  <span className="block text-xs font-normal text-muted-foreground">
+                    JSON/CSV with sourceKey (or source_url + project + stage) plus
+                    owner/principal fields. Prefer cell/direct — not switchboard.
+                    Updates existing rows only — never creates duplicate projects.
+                  </span>
+                  <Textarea
+                    rows={8}
+                    value={contactPayload}
+                    onChange={(event) => setContactPayload(event.target.value)}
+                    aria-label="Contact refresh payload"
+                    placeholder="source_key,contact_name,contact_title,email,email_type,phone,phone_type,linkedin_url,contact_notes"
+                    disabled={busy}
+                  />
+                </Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || !secret || !contactPayload.trim()}
+                  onClick={() => void runContacts()}
+                >
+                  Refresh contacts
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}
       </div>
 
       {status.kind === "busy" ? (
-        <p className="mt-3 text-xs text-muted-foreground" role="status">
-          Running {status.label}…
-        </p>
+        <IndeterminateProgressBar label={status.label} />
       ) : null}
       {status.kind === "ok" ? (
         <p className="mt-3 text-xs text-emerald-800 dark:text-emerald-200" role="status">
