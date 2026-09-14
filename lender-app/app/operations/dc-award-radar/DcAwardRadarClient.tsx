@@ -40,8 +40,10 @@ import {
   readDcAwardRadarGroupExpansion,
   toggleDcAwardCampusGroup,
 } from "@/lib/dcAwardRadarGroupExpansion";
+import { summarizeDcAwardRadarLeads } from "@/lib/dcAwardRadarStats";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useUserSettings } from "@/lib/userSettingsContext";
+import { DcAwardRadarLeadStatsBar } from "./DcAwardRadarLeadStatsBar";
 import { DcAwardRadarOpsPanel } from "./DcAwardRadarOpsPanel";
 
 type RadarViewMode = "grouped" | "flat";
@@ -436,6 +438,10 @@ function RadarTable() {
     groupKeys,
     groupExpansion,
   );
+  const leadStats = useMemo(
+    () => summarizeDcAwardRadarLeads(signals ?? [], groups.length),
+    [signals, groups],
+  );
   const markets = useMemo(() => {
     const fromData = new Set<string>();
     for (const row of signals ?? []) {
@@ -597,21 +603,19 @@ function RadarTable() {
             </Button>
           </div>
         ) : null}
-        <p className="text-xs text-muted-foreground sm:ml-auto">
-          {viewMode === "grouped"
-            ? `${groups.length} campus${groups.length === 1 ? "" : "es"} · `
-            : ""}
-          {signals.length} signal{signals.length === 1 ? "" : "s"}
-          {market ? ` in ${market}` : ""}
-          {result?.truncated ? " (list capped)" : ""}
-        </p>
       </div>
+      <DcAwardRadarLeadStatsBar
+        stats={leadStats}
+        viewMode={viewMode}
+        truncated={result?.truncated === true}
+        market={market}
+      />
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
         list. Grouped view merges by campusKey (company fallback) and shows the
         owner/principal once — Equinix DC17 is not DC21. Collapse all hides
         child permits; owner/principal stays on the group header. Flat is the
-        raw permit list.
+        raw permit list. Contact chips dedupe campus children by company + name.
       </p>
 
       {signals.length === 0 ? (
