@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { ChevronDown, ChevronRight, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -29,6 +29,17 @@ import {
   type DcAwardRadarGroupableRow,
   type DcAwardRadarListContact,
 } from "@/lib/dcAwardRadarCampus";
+import {
+  DEFAULT_DC_AWARD_GROUP_EXPANSION,
+  areAllDcAwardCampusGroupsCollapsed,
+  areAllDcAwardCampusGroupsExpanded,
+  collapseAllDcAwardCampusGroups,
+  expandAllDcAwardCampusGroups,
+  isDcAwardCampusGroupExpanded,
+  persistDcAwardRadarGroupExpansion,
+  readDcAwardRadarGroupExpansion,
+  toggleDcAwardCampusGroup,
+} from "@/lib/dcAwardRadarGroupExpansion";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useUserSettings } from "@/lib/userSettingsContext";
 import { DcAwardRadarOpsPanel } from "./DcAwardRadarOpsPanel";
@@ -135,17 +146,20 @@ function ContactSummary({
   expanded,
   onToggle,
   buttonId,
+  testId,
 }: {
   contact: DcAwardRadarListContact;
   expanded: boolean;
   onToggle: () => void;
   buttonId: string;
+  testId?: string;
 }) {
   const hasContact = dcAwardRowHasContact(contact);
   return (
     <button
       type="button"
       id={buttonId}
+      data-testid={testId}
       className="inline-flex min-h-10 items-center gap-1 text-left"
       aria-expanded={expanded}
       onClick={onToggle}
@@ -257,6 +271,7 @@ function GroupedCampusRow({
         className="border-b border-border/60 align-top"
         data-testid="dc-award-campus-group"
         data-campus-key={group.campusKey ?? ""}
+        data-expanded={expanded ? "true" : "false"}
       >
         <td className="px-2 py-2 text-xs whitespace-nowrap">{group.market}</td>
         <td className="px-2 py-2 text-sm font-medium">
@@ -271,6 +286,7 @@ function GroupedCampusRow({
             expanded={expanded}
             onToggle={onToggle}
             buttonId={`dc-award-group-contact-${group.groupKey}`}
+            testId="dc-award-group-contact"
           />
         </td>
         <td className="px-2 py-2">
@@ -301,6 +317,7 @@ function GroupedCampusRow({
             <div
               id={`dc-award-group-children-${group.groupKey}`}
               className="space-y-3"
+              data-testid="dc-award-group-children"
             >
               <ContactExpanded
                 email={group.contact.email}
@@ -376,9 +393,20 @@ function RadarTable() {
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<
-    ReadonlySet<string>
-  >(() => new Set());
+  const [groupExpansion, setGroupExpansion] = useState(
+    DEFAULT_DC_AWARD_GROUP_EXPANSION,
+  );
+  const [groupExpansionHydrated, setGroupExpansionHydrated] = useState(false);
+
+  useEffect(() => {
+    setGroupExpansion(readDcAwardRadarGroupExpansion());
+    setGroupExpansionHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!groupExpansionHydrated) return;
+    persistDcAwardRadarGroupExpansion(groupExpansion);
+  }, [groupExpansion, groupExpansionHydrated]);
 
   const result = useQuery(
     api.dcAwardSignals.list,
@@ -395,6 +423,18 @@ function RadarTable() {
   const groups = useMemo(
     () => groupDcAwardRadarSignals(signals ?? []),
     [signals],
+  );
+  const groupKeys = useMemo(
+    () => groups.map((group) => group.groupKey),
+    [groups],
+  );
+  const allGroupsCollapsed = areAllDcAwardCampusGroupsCollapsed(
+    groupKeys,
+    groupExpansion,
+  );
+  const allGroupsExpanded = areAllDcAwardCampusGroupsExpanded(
+    groupKeys,
+    groupExpansion,
   );
   const markets = useMemo(() => {
     const fromData = new Set<string>();
@@ -418,12 +458,7 @@ function RadarTable() {
   }
 
   function toggleGroup(groupKey: string) {
-    setCollapsedGroupKeys((current) => {
-      const next = new Set(current);
-      if (next.has(groupKey)) next.delete(groupKey);
-      else next.add(groupKey);
-      return next;
-    });
+    setGroupExpansion((current) => toggleDcAwardCampusGroup(groupKey, current));
   }
 
   if (!memberUserKey) {
@@ -532,6 +567,36 @@ function RadarTable() {
             Flat
           </Button>
         </div>
+        {viewMode === "grouped" ? (
+          <div
+            className="flex flex-wrap gap-2"
+            role="group"
+            aria-label="Campus group expansion"
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setGroupExpansion(collapseAllDcAwardCampusGroups())}
+              disabled={groupKeys.length === 0 || allGroupsCollapsed}
+              aria-label="Collapse all campus groups"
+              data-testid="dc-award-collapse-all"
+            >
+              Collapse all
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setGroupExpansion(expandAllDcAwardCampusGroups())}
+              disabled={groupKeys.length === 0 || allGroupsExpanded}
+              aria-label="Expand all campus groups"
+              data-testid="dc-award-expand-all"
+            >
+              Expand all
+            </Button>
+          </div>
+        ) : null}
         <p className="text-xs text-muted-foreground sm:ml-auto">
           {viewMode === "grouped"
             ? `${groups.length} campus${groups.length === 1 ? "" : "es"} · `
@@ -544,8 +609,9 @@ function RadarTable() {
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
         list. Grouped view merges by campusKey (company fallback) and shows the
-        owner/principal once — Equinix DC17 is not DC21. Flat is the raw
-        permit list.
+        owner/principal once — Equinix DC17 is not DC21. Collapse all hides
+        child permits; owner/principal stays on the group header. Flat is the
+        raw permit list.
       </p>
 
       {signals.length === 0 ? (
@@ -581,7 +647,10 @@ function RadarTable() {
                   <GroupedCampusRow
                     key={group.groupKey}
                     group={group}
-                    expanded={!collapsedGroupKeys.has(group.groupKey)}
+                    expanded={isDcAwardCampusGroupExpanded(
+                      group.groupKey,
+                      groupExpansion,
+                    )}
                     onToggle={() => toggleGroup(group.groupKey)}
                   />
                 ))}

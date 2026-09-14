@@ -74,6 +74,17 @@ import {
   VANTAGE_OH1_CAMPUS_KEY,
 } from "../lib/dcAwardRadarCampus";
 import {
+  DEFAULT_DC_AWARD_GROUP_EXPANSION,
+  areAllDcAwardCampusGroupsCollapsed,
+  areAllDcAwardCampusGroupsExpanded,
+  collapseAllDcAwardCampusGroups,
+  expandAllDcAwardCampusGroups,
+  isDcAwardCampusGroupExpanded,
+  parseDcAwardRadarGroupExpansion,
+  serializeDcAwardRadarGroupExpansion,
+  toggleDcAwardCampusGroup,
+} from "../lib/dcAwardRadarGroupExpansion";
+import {
   DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
   assertBoundedOperatorRows,
   chunkOperatorRows,
@@ -1827,6 +1838,56 @@ console.log("dc award radar campus grouping + remaps");
         sourceUrl: "javascript:alert(1)",
       }),
     /sourceUrl must be http/,
+  );
+}
+passed += 1;
+
+console.log("dc award radar campus group collapse / expand all");
+{
+  const keys = ["equinix-dc21", "equinix-dc17", "ntt-va6"];
+  const expanded = DEFAULT_DC_AWARD_GROUP_EXPANSION;
+  assert.equal(areAllDcAwardCampusGroupsExpanded(keys, expanded), true);
+  assert.equal(areAllDcAwardCampusGroupsCollapsed(keys, expanded), false);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc21", expanded), true);
+
+  const collapsed = collapseAllDcAwardCampusGroups();
+  assert.equal(areAllDcAwardCampusGroupsCollapsed(keys, collapsed), true);
+  assert.equal(areAllDcAwardCampusGroupsExpanded(keys, collapsed), false);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc21", collapsed), false);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc17", collapsed), false);
+
+  const oneOpened = toggleDcAwardCampusGroup("equinix-dc21", collapsed);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc21", oneOpened), true);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc17", oneOpened), false);
+  assert.equal(areAllDcAwardCampusGroupsCollapsed(keys, oneOpened), false);
+  assert.equal(areAllDcAwardCampusGroupsExpanded(keys, oneOpened), false);
+
+  const reexpanded = expandAllDcAwardCampusGroups();
+  assert.equal(areAllDcAwardCampusGroupsExpanded(keys, reexpanded), true);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc17", reexpanded), true);
+
+  const oneClosed = toggleDcAwardCampusGroup("ntt-va6", reexpanded);
+  assert.equal(isDcAwardCampusGroupExpanded("ntt-va6", oneClosed), false);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc21", oneClosed), true);
+
+  assert.equal(areAllDcAwardCampusGroupsCollapsed([], collapsed), false);
+  assert.equal(areAllDcAwardCampusGroupsExpanded([], expanded), false);
+
+  const persisted = parseDcAwardRadarGroupExpansion(
+    serializeDcAwardRadarGroupExpansion(oneOpened),
+  );
+  assert.equal(persisted.collapsedByDefault, true);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc21", persisted), true);
+  assert.equal(isDcAwardCampusGroupExpanded("equinix-dc17", persisted), false);
+  assert.deepEqual(parseDcAwardRadarGroupExpansion(null), expanded);
+  assert.deepEqual(parseDcAwardRadarGroupExpansion({ version: 2 }), expanded);
+  assert.deepEqual(
+    parseDcAwardRadarGroupExpansion({
+      version: 1,
+      collapsedByDefault: true,
+      exceptions: ["", 12, "keep-me"],
+    }),
+    { collapsedByDefault: true, exceptions: new Set(["keep-me"]) },
   );
 }
 passed += 1;
