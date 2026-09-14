@@ -18,7 +18,7 @@ import {
   type DcAwardRadarConfidence,
 } from "@/lib/dcAwardRadar";
 import { useActorUserKey } from "@/lib/useActorUserKey";
-import { useUserPreferences } from "@/lib/userPreferencesContext";
+import { useUserSettings } from "@/lib/userSettingsContext";
 
 const CONFIDENCE_LABEL: Record<DcAwardRadarConfidence, string> = {
   high: "High",
@@ -43,7 +43,7 @@ function ConfidenceBadge({ value }: { value: DcAwardRadarConfidence }) {
 
 function RadarTable() {
   const memberUserKey = useActorUserKey().trim();
-  const { settings } = useUserPreferences();
+  const { settings } = useUserSettings();
   const [market, setMarket] = useState("");
   const [confidence, setConfidence] = useState<"" | DcAwardRadarConfidence>("");
 
@@ -118,7 +118,7 @@ function RadarTable() {
         </Label>
         <p className="text-xs text-muted-foreground sm:ml-auto">
           {signals.length} signal{signals.length === 1 ? "" : "s"}
-          {result.truncated ? " (list capped)" : ""}
+          {result?.truncated ? " (list capped)" : ""}
         </p>
       </div>
 
