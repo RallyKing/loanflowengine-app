@@ -1,17 +1,24 @@
 /**
  * One-shot Hermes scrape trigger for DC award radar.
  *
- * Ops click "Scrape with Hermes" → this action POSTs to the GrokBot /
- * Cursor Cloud Minion webhook. Hermes researches public sources outside
- * Convex; Minion (or ops) imports CSV later via operatorUpsert*.
+ * Ops click "Scrape with Hermes" → this action POSTs once to
+ * GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_URL (BOSSMAN GrokBot routine
+ * `dc-award-radar-hermes-scrape`). BOSSMAN runs Hermes public-web research,
+ * then pings Minion for CSV import. This app never scrapes, schedules, or
+ * imports from this path.
  *
  * Fail-closed: no scheduler, no cron, no polling, no scrape, no .collect().
  * Client calls this action directly (fetch requires an action; we do not
- * schedule an internalAction).
+ * schedule an internalAction). Kept as an action — not mutation+scheduler —
+ * so the one-shot POST stays fail-closed.
  */
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 import { assertDataMigrationAdmin } from "./migrationAdminAuth";
+
+/** BOSSMAN GrokBot routine name (webhook target). */
+export const DC_AWARD_RADAR_HERMES_SCRAPE_ROUTINE =
+  "dc-award-radar-hermes-scrape" as const;
 
 const scrapeModeV = v.union(
   v.literal("nationwide"),
@@ -55,7 +62,7 @@ function clampOptionalText(
 }
 
 /**
- * Operator-gated one-shot webhook POST. Wakes Hermes via GrokBot.
+ * Operator-gated one-shot webhook POST to BOSSMAN's Hermes scrape routine.
  * Does not scrape, schedule, or import rows.
  */
 export const requestHermesScrape = action({
@@ -94,6 +101,7 @@ export const requestHermesScrape = action({
 
     const payload: Record<string, unknown> = {
       kind: "dc_award_radar_scrape",
+      routine: DC_AWARD_RADAR_HERMES_SCRAPE_ROUTINE,
       mode: args.mode,
       requestedBy,
       requestedAt,
@@ -123,7 +131,7 @@ export const requestHermesScrape = action({
       if (!res.ok) {
         const errBody = (await res.text()).slice(0, 300);
         console.error(
-          "dcAwardRadar: Hermes scrape webhook failed",
+          "dcAwardRadar: BOSSMAN Hermes scrape webhook failed",
           res.status,
           errBody,
         );
@@ -142,7 +150,10 @@ export const requestHermesScrape = action({
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown_error";
-      console.error("dcAwardRadar: Hermes scrape webhook threw", message);
+      console.error(
+        "dcAwardRadar: BOSSMAN Hermes scrape webhook threw",
+        message,
+      );
       return {
         ok: false,
         reason: message.slice(0, 240),

@@ -53,7 +53,7 @@ export function DcAwardRadarOpsPanel() {
         setStatus({
           kind: "error",
           message:
-            "Hermes scrape webhook is not configured (GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_URL on Convex). Use Manual CSV import below, or set the env var and retry.",
+            "BOSSMAN Hermes scrape webhook is not configured (GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_URL on Convex → routine dc-award-radar-hermes-scrape). Use Manual CSV import below, or set the env var and retry.",
         });
         return;
       }
@@ -67,7 +67,7 @@ export function DcAwardRadarOpsPanel() {
       setStatus({
         kind: "ok",
         label: "Scrape with Hermes",
-        detail: `Webhook accepted for ${SCRAPE_MODE_LABEL[result.mode]}. Hermes researches public sources; Minion/ops import CSV when ready. No invented contacts; GHL out of scope.`,
+        detail: `Webhook accepted for ${SCRAPE_MODE_LABEL[result.mode]} (BOSSMAN routine dc-award-radar-hermes-scrape). BOSSMAN runs Hermes public research, then pings Minion for CSV import. No invented contacts; GHL out of scope.`,
       });
     } catch (error) {
       setStatus({
@@ -135,10 +135,12 @@ export function DcAwardRadarOpsPanel() {
       </h2>
       <p className="mt-2 text-xs text-muted-foreground">
         Primary path: <strong className="font-medium text-foreground">Scrape with Hermes</strong>{" "}
-        wakes Cursor Cloud Minion / Hermes via GrokBot webhook. Hermes researches
-        public web sources; Minion (or ops) imports the resulting CSV. This app
-        does not scrape the web, run cron, or poll inside Convex. Prefer
-        owner/principal <strong className="font-medium text-foreground">cell / direct</strong>{" "}
+        POSTs once to BOSSMAN&apos;s GrokBot routine{" "}
+        <code className="rounded bg-muted px-1 py-0.5">dc-award-radar-hermes-scrape</code>
+        . BOSSMAN runs Hermes public-web research, then pings Minion for CSV
+        import. This app does not scrape, run cron, or poll inside Convex.
+        Prefer owner/principal{" "}
+        <strong className="font-medium text-foreground">cell / direct</strong>{" "}
         phone and <strong className="font-medium text-foreground">direct</strong> email —
         no invented contacts. GHL and outbound messaging are out of scope.
       </p>
@@ -179,8 +181,12 @@ export function DcAwardRadarOpsPanel() {
             Scrape with Hermes
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            One-shot webhook to GrokBot. No Convex scrape or scheduler. Results
-            land via Minion/ops import — not automatic GHL sync.
+            One-shot POST to BOSSMAN routine{" "}
+            <code className="rounded bg-muted px-1 py-0.5">
+              dc-award-radar-hermes-scrape
+            </code>
+            . No Convex scrape or scheduler. After Hermes, BOSSMAN pings Minion
+            for import — not automatic GHL sync.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
