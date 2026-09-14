@@ -45,6 +45,13 @@ import {
 import JSZip from "jszip";
 import { isDealBackedPipelineRow } from "../lib/pipeline/dealBackedRow";
 import {
+  PHASE2_DC_AWARD_SIGNAL_COUNT,
+  PHASE2_DC_AWARD_SIGNAL_SEEDS,
+  normalizeSourceUrl,
+  prepareDcAwardRadarSeedRow,
+  uniquePreparedPhase2SourceKeys,
+} from "../lib/dcAwardRadar";
+import {
   buildDealCommitRow,
   subjectAddressEditorValue,
 } from "../lib/pipeline/pipelineTableCommits";
@@ -1360,5 +1367,38 @@ console.log("vault zip path hierarchy");
     2,
   );
 }
+
+console.log("dc award radar phase 2 seed uniqueness");
+{
+  assert.equal(PHASE2_DC_AWARD_SIGNAL_COUNT, 29);
+  assert.equal(PHASE2_DC_AWARD_SIGNAL_SEEDS.length, 29);
+  const keys = uniquePreparedPhase2SourceKeys();
+  assert.equal(keys.length, 29);
+  const again = PHASE2_DC_AWARD_SIGNAL_SEEDS.map(
+    (row) => prepareDcAwardRadarSeedRow(row).sourceKey,
+  );
+  assert.deepEqual(again, PHASE2_DC_AWARD_SIGNAL_SEEDS.map(
+    (row) => prepareDcAwardRadarSeedRow(row).sourceKey,
+  ));
+  assert.equal(
+    normalizeSourceUrl(
+      "https://mlq.ai/permit-filings/usa/virginia/loudoun-county/bldc-2025-046039/",
+    ),
+    "https://mlq.ai/permit-filings/usa/virginia/loudoun-county/bldc-2025-046039",
+  );
+  const sharedUrlRows = PHASE2_DC_AWARD_SIGNAL_SEEDS.filter(
+    (row) =>
+      normalizeSourceUrl(row.sourceUrl) ===
+      normalizeSourceUrl(
+        "https://newalbanyohio.org/community-development/project-updates",
+      ),
+  );
+  assert.ok(sharedUrlRows.length > 1);
+  const sharedKeys = new Set(
+    sharedUrlRows.map((row) => prepareDcAwardRadarSeedRow(row).sourceKey),
+  );
+  assert.equal(sharedKeys.size, sharedUrlRows.length);
+}
+passed += 1;
 
 console.log(`\ncore-edge-tests: ${passed} cases passed.\n`);

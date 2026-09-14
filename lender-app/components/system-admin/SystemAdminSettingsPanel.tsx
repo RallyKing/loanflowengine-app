@@ -30,6 +30,18 @@ export function SystemAdminSettingsPanel() {
             </Link>
             .
           </p>
+          <p className="text-sm">
+            <Link
+              href="/operations/dc-award-radar"
+              className="font-medium text-primary underline"
+            >
+              Data-center award radar
+            </Link>
+            {" — "}
+            <span className="text-muted-foreground">
+              read-only Phase 2 public DC signals. GHL sync is out of scope.
+            </span>
+          </p>
         </>
       )}
     </div>

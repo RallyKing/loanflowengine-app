@@ -8,7 +8,7 @@ import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { PageErrorBoundary } from "@/components/PageErrorBoundary";
 import { ActivityTimeline } from "@/components/collaboration/ActivityTimeline";
 import { cn } from "@/lib/cn";
-import { BarChart3, Users } from "lucide-react";
+import { BarChart3, Radar, Users } from "lucide-react";
 
 export default function OperationsPage() {
   const { accountId } = useUserPreferences();
@@ -46,6 +46,15 @@ export default function OperationsPage() {
               <p className="text-sm text-muted-foreground">
                 Live coordination — presence, workload, and recent operational
                 events. Requires an active organization.
+              </p>
+              <p className="mt-2">
+                <Link
+                  href="/operations/dc-award-radar"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                >
+                  <Radar className="h-3.5 w-3.5" aria-hidden />
+                  Data-center award radar
+                </Link>
               </p>
             </div>
           </div>

@@ -77,6 +77,7 @@
     "rebuild:search": "npx convex run lenders:rebuildLenderSearchText",
     "enrich:all": "tsx scripts/enrich-all.mts",
     "seed": "tsx scripts/seed.mts",
+    "import:dc-award-radar": "tsx scripts/import-dc-award-radar.mts",
     "restore:data-backup": "tsx scripts/restore-data-backup.mts",
     "validate:system": "npm run verify:regression && npm run verify:env && npm run test:core && npm run test:perf && npm run live:smoke && npx tsc --noEmit && npx next lint && npx next build",
     "verify:governance:docs": "node scripts/verify-repo-governance.mjs",
