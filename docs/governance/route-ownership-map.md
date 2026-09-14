@@ -13,6 +13,8 @@
 | `/pipeline` | `AppChrome` | `<main>` (hub table horizontal only) | Route | Session | Wide shell classes |
 | `/pipeline/[convexFileId]` (file workspace) | `AppChrome` + `PipelineFileWorkspaceShell` | **`[data-pipeline-workspace-scroll]`** — `<main>` is `overflow-y-hidden` (not the file body scroller) | Route + suspense | Session | **`PipelineWorkspaceMobileVaulFrame`** below `md`; see **`runtime-workspace-scroll-authority.md`** |
 | `/activity`, `/analytics`, `/ledger`, `/documents`, `/settings` | `AppChrome` | `<main>` | Route | Session | |
+| `/operations` | `AppChrome` | `<main>` | Route | Session | |
+| `/operations/dc-award-radar` | `AppChrome` | `<main>` (table is `overflow-x-auto` only) | Route | Session + Convex `requireAuthenticatedCaller` | Filters stack on mobile; no nested page scroll |
 | `/portal/*` | Portal shell | Portal `<main>` variant | Route | Portal grant | Constrained nav |
 | `/api/*` | N/A | N/A | N/A | Route-defined | N/A |
 

@@ -4923,4 +4923,38 @@ export default defineSchema({
     lastReadPublishedAt: v.number(),
     updatedAt: v.number(),
   }).index("by_userKey", ["userKey"]),
+
+  /**
+   * DLC public data-center award radar (Phase 2).
+   * Platform catalog — not org-scoped. CSV columns plus createdAt/updatedAt.
+   * `sourceUrl` is indexed for lookup but is not unique (shared reports/dashboards).
+   * Idempotent upserts use `sourceKey` (normalized sourceUrl + project + stage).
+   * GHL sync is out of scope.
+   */
+  dcAwardSignals: defineTable({
+    market: v.string(),
+    projectOrCampus: v.string(),
+    stageSignal: v.string(),
+    tradeFocus: v.string(),
+    company: v.string(),
+    roleIfKnown: v.string(),
+    signalDate: v.string(),
+    sourceUrl: v.string(),
+    sourceType: v.string(),
+    confidence: v.union(
+      v.literal("high"),
+      v.literal("med"),
+      v.literal("low"),
+    ),
+    whyItMattersForDlc: v.string(),
+    notes: v.string(),
+    sourceKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_sourceUrl", ["sourceUrl"])
+    .index("by_sourceKey", ["sourceKey"])
+    .index("by_market", ["market"])
+    .index("by_confidence", ["confidence"])
+    .index("by_market_and_confidence", ["market", "confidence"]),
 });
