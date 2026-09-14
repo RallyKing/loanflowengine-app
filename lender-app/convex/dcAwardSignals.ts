@@ -5,8 +5,14 @@ import type { Doc } from "./_generated/dataModel";
 import { requireAuthenticatedCaller } from "./callerAuth";
 import { assertDataMigrationAdmin } from "./migrationAdminAuth";
 import {
+  DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
   PHASE2_DC_AWARD_SIGNAL_SEEDS,
+  buildDcAwardSignalSourceKey,
+  pickDefinedContactFields,
   prepareDcAwardRadarSeedRow,
+  type DcAwardRadarContactFields,
+  type DcAwardRadarPreparedRow,
+  type DcAwardRadarSeedRow,
 } from "../lib/dcAwardRadar";
 
 const LIST_TAKE_LIMIT = 200;
@@ -16,6 +22,31 @@ const confidenceV = v.union(
   v.literal("med"),
   v.literal("low"),
 );
+
+const phoneTypeV = v.union(
+  v.literal("cell"),
+  v.literal("direct"),
+  v.literal("main"),
+  v.literal("unknown"),
+);
+
+const emailTypeV = v.union(
+  v.literal("direct"),
+  v.literal("generic"),
+  v.literal("unknown"),
+);
+
+const contactFieldsV = {
+  contactName: v.optional(v.string()),
+  contactTitle: v.optional(v.string()),
+  email: v.optional(v.string()),
+  emailType: v.optional(emailTypeV),
+  phone: v.optional(v.string()),
+  phoneType: v.optional(phoneTypeV),
+  linkedinUrl: v.optional(v.string()),
+  companyWebsite: v.optional(v.string()),
+  contactNotes: v.optional(v.string()),
+};
 
 const dcAwardSignalPublicV = v.object({
   _id: v.id("dcAwardSignals"),
@@ -32,13 +63,47 @@ const dcAwardSignalPublicV = v.object({
   whyItMattersForDlc: v.string(),
   notes: v.string(),
   sourceKey: v.string(),
+  contactName: v.optional(v.string()),
+  contactTitle: v.optional(v.string()),
+  email: v.optional(v.string()),
+  emailType: v.optional(emailTypeV),
+  phone: v.optional(v.string()),
+  phoneType: v.optional(phoneTypeV),
+  linkedinUrl: v.optional(v.string()),
+  companyWebsite: v.optional(v.string()),
+  contactNotes: v.optional(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
+});
+
+const seedRowV = v.object({
+  market: v.string(),
+  projectOrCampus: v.string(),
+  stageSignal: v.string(),
+  tradeFocus: v.string(),
+  company: v.string(),
+  roleIfKnown: v.string(),
+  signalDate: v.string(),
+  sourceUrl: v.string(),
+  sourceType: v.string(),
+  confidence: confidenceV,
+  whyItMattersForDlc: v.string(),
+  notes: v.string(),
+  ...contactFieldsV,
+});
+
+const contactOnlyRowV = v.object({
+  sourceKey: v.optional(v.string()),
+  sourceUrl: v.optional(v.string()),
+  projectOrCampus: v.optional(v.string()),
+  stageSignal: v.optional(v.string()),
+  ...contactFieldsV,
 });
 
 const importResultV = v.object({
   inserted: v.number(),
   updated: v.number(),
+  skipped: v.number(),
   total: v.number(),
 });
 
@@ -58,29 +123,73 @@ function toPublicRow(row: Doc<"dcAwardSignals">) {
     whyItMattersForDlc: row.whyItMattersForDlc,
     notes: row.notes,
     sourceKey: row.sourceKey,
+    contactName: row.contactName,
+    contactTitle: row.contactTitle,
+    email: row.email,
+    emailType: row.emailType,
+    phone: row.phone,
+    phoneType: row.phoneType,
+    linkedinUrl: row.linkedinUrl,
+    companyWebsite: row.companyWebsite,
+    contactNotes: row.contactNotes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
+function assertBoundedRows(rowCount: number, label: string) {
+  if (rowCount < 1) {
+    throw new Error(`${label}: payload has no rows.`);
+  }
+  if (rowCount > DC_AWARD_OPERATOR_UPSERT_MAX_ROWS) {
+    throw new Error(
+      `${label}: ${rowCount} rows exceeds the ${DC_AWARD_OPERATOR_UPSERT_MAX_ROWS}-row one-shot cap.`,
+    );
+  }
+}
+
+async function findBySourceKey(ctx: MutationCtx, sourceKey: string) {
+  return await ctx.db
+    .query("dcAwardSignals")
+    .withIndex("by_sourceKey", (q) => q.eq("sourceKey", sourceKey))
+    .unique();
+}
+
+function resolveContactLookupKey(row: {
+  sourceKey?: string;
+  sourceUrl?: string;
+  projectOrCampus?: string;
+  stageSignal?: string;
+}): string | null {
+  const explicit = row.sourceKey?.trim();
+  if (explicit) return explicit;
+  const sourceUrl = row.sourceUrl?.trim();
+  const projectOrCampus = row.projectOrCampus?.trim();
+  const stageSignal = row.stageSignal?.trim();
+  if (!sourceUrl || !projectOrCampus || !stageSignal) return null;
+  return buildDcAwardSignalSourceKey({
+    sourceUrl,
+    projectOrCampus,
+    stageSignal,
+  });
+}
+
 /**
  * One-shot Phase 2 upsert. Indexed lookups only — no collect, cron, or scheduler.
+ * Contact fields on the bundled seed are omitted so re-runs do not wipe Hermes
+ * enrichment.
  */
-async function upsertPhase2Seed(ctx: MutationCtx): Promise<{
-  inserted: number;
-  updated: number;
-  total: number;
-}> {
+async function upsertPreparedRows(
+  ctx: MutationCtx,
+  rows: readonly DcAwardRadarPreparedRow[],
+): Promise<{ inserted: number; updated: number; skipped: number; total: number }> {
   const now = Date.now();
   let inserted = 0;
   let updated = 0;
 
-  for (const raw of PHASE2_DC_AWARD_SIGNAL_SEEDS) {
-    const prepared = prepareDcAwardRadarSeedRow(raw);
-    const existing = await ctx.db
-      .query("dcAwardSignals")
-      .withIndex("by_sourceKey", (q) => q.eq("sourceKey", prepared.sourceKey))
-      .unique();
+  for (const prepared of rows) {
+    const existing = await findBySourceKey(ctx, prepared.sourceKey);
+    const contacts = pickDefinedContactFields(prepared);
 
     if (existing) {
       await ctx.db.patch(existing._id, {
@@ -97,6 +206,7 @@ async function upsertPhase2Seed(ctx: MutationCtx): Promise<{
         whyItMattersForDlc: prepared.whyItMattersForDlc,
         notes: prepared.notes,
         sourceKey: prepared.sourceKey,
+        ...contacts,
         updatedAt: now,
       });
       updated += 1;
@@ -105,6 +215,7 @@ async function upsertPhase2Seed(ctx: MutationCtx): Promise<{
 
     await ctx.db.insert("dcAwardSignals", {
       ...prepared,
+      ...contacts,
       createdAt: now,
       updatedAt: now,
     });
@@ -114,7 +225,66 @@ async function upsertPhase2Seed(ctx: MutationCtx): Promise<{
   return {
     inserted,
     updated,
-    total: PHASE2_DC_AWARD_SIGNAL_SEEDS.length,
+    skipped: 0,
+    total: rows.length,
+  };
+}
+
+async function upsertPhase2Seed(ctx: MutationCtx) {
+  const prepared = PHASE2_DC_AWARD_SIGNAL_SEEDS.map((row) =>
+    prepareDcAwardRadarSeedRow(row),
+  );
+  return await upsertPreparedRows(ctx, prepared);
+}
+
+async function upsertNationwideRows(
+  ctx: MutationCtx,
+  rows: DcAwardRadarSeedRow[],
+) {
+  assertBoundedRows(rows.length, "Import nationwide refresh");
+  const prepared = rows.map((row) => prepareDcAwardRadarSeedRow(row));
+  return await upsertPreparedRows(ctx, prepared);
+}
+
+async function upsertContactOnlyRows(
+  ctx: MutationCtx,
+  rows: Array<
+    DcAwardRadarContactFields & {
+      sourceKey?: string;
+      sourceUrl?: string;
+      projectOrCampus?: string;
+      stageSignal?: string;
+    }
+  >,
+) {
+  assertBoundedRows(rows.length, "Refresh contacts");
+  const now = Date.now();
+  let updated = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const sourceKey = resolveContactLookupKey(row);
+    if (!sourceKey) {
+      skipped += 1;
+      continue;
+    }
+    const existing = await findBySourceKey(ctx, sourceKey);
+    if (!existing) {
+      skipped += 1;
+      continue;
+    }
+    await ctx.db.patch(existing._id, {
+      ...pickDefinedContactFields(row),
+      updatedAt: now,
+    });
+    updated += 1;
+  }
+
+  return {
+    inserted: 0,
+    updated,
+    skipped,
+    total: rows.length,
   };
 }
 
@@ -190,5 +360,37 @@ export const importPhase2Seed = internalMutation({
   returns: importResultV,
   handler: async (ctx) => {
     return await upsertPhase2Seed(ctx);
+  },
+});
+
+/**
+ * One-shot nationwide upsert from a pasted/CLI JSON payload (any US market).
+ * Idempotent on sourceKey. No scrape, cron, or scheduler.
+ */
+export const operatorUpsertRows = mutation({
+  args: {
+    operatorSecret: v.string(),
+    rows: v.array(seedRowV),
+  },
+  returns: importResultV,
+  handler: async (ctx, args) => {
+    assertDataMigrationAdmin(args.operatorSecret);
+    return await upsertNationwideRows(ctx, args.rows);
+  },
+});
+
+/**
+ * Contact-only patch. Looks up sourceKey (or url+project+stage) and never
+ * inserts a new project row.
+ */
+export const operatorUpsertContacts = mutation({
+  args: {
+    operatorSecret: v.string(),
+    rows: v.array(contactOnlyRowV),
+  },
+  returns: importResultV,
+  handler: async (ctx, args) => {
+    assertDataMigrationAdmin(args.operatorSecret);
+    return await upsertContactOnlyRows(ctx, args.rows);
   },
 });

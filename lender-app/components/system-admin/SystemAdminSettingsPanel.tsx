@@ -39,7 +39,8 @@ export function SystemAdminSettingsPanel() {
             </Link>
             {" — "}
             <span className="text-muted-foreground">
-              read-only Phase 2 public DC signals. GHL sync is out of scope.
+              nationwide public DC signals + Hermes contact refresh. GHL sync is
+              out of scope.
             </span>
           </p>
         </>

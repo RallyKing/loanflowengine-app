@@ -15,7 +15,7 @@
 | File shared fields | `fileSharedState` | Blocks, summaries |
 | Drawer layout | `fileDrawerLayout` / globals | `PipelineDrawer` |
 | User/org prefs | preferences / org tables | Settings, shell |
-| DC award radar | `dcAwardSignals` one-shot import + `list` query | `/operations/dc-award-radar` (read-only; no GHL) |
+| DC award radar | `dcAwardSignals` `list` + operator one-shot upserts (`operatorImportPhase2`, `operatorUpsertRows`, `operatorUpsertContacts`) | `/operations/dc-award-radar` (nationwide + contacts; no GHL) |
 
 ---
 
