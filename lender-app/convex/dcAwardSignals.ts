@@ -342,6 +342,20 @@ export const list = query({
   },
 });
 
+/**
+ * Session gate for the Hermes scrape action (same auth as `list`).
+ * Actions cannot call `requireAuthenticatedCaller` directly — they runQuery this.
+ */
+export const assertHermesScrapeAccessForAction = query({
+  args: {
+    memberUserKey: v.optional(v.string()),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    return await requireAuthenticatedCaller(ctx, args.memberUserKey);
+  },
+});
+
 /** Operator CLI / Convex dashboard. Secret matches data-migration admin. */
 export const operatorImportPhase2 = mutation({
   args: {

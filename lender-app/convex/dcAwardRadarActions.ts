@@ -7,6 +7,10 @@
  * then pings Minion for CSV import. This app never scrapes, schedules, or
  * imports from this path.
  *
+ * Auth: authenticated member session (`memberUserKey` / JWT), same gate as
+ * `dcAwardSignals.list`. Operator migration secret is NOT required here —
+ * that secret remains for Manual CSV import mutations only.
+ *
  * Fail-closed: no scheduler, no cron, no polling, no scrape, no .collect().
  * Client calls this action directly (fetch requires an action; we do not
  * schedule an internalAction). Kept as an action — not mutation+scheduler —
@@ -14,7 +18,7 @@
  */
 import { action } from "./_generated/server";
 import { v } from "convex/values";
-import { assertDataMigrationAdmin } from "./migrationAdminAuth";
+import { api } from "./_generated/api";
 
 /** BOSSMAN GrokBot routine name (webhook target). */
 export const DC_AWARD_RADAR_HERMES_SCRAPE_ROUTINE =
@@ -62,12 +66,12 @@ function clampOptionalText(
 }
 
 /**
- * Operator-gated one-shot webhook POST to BOSSMAN's Hermes scrape routine.
- * Does not scrape, schedule, or import rows.
+ * Session-authenticated one-shot webhook POST to BOSSMAN's Hermes scrape routine.
+ * Does not scrape, schedule, or import rows. Does not require migration admin secret.
  */
 export const requestHermesScrape = action({
   args: {
-    operatorSecret: v.string(),
+    memberUserKey: v.optional(v.string()),
     mode: scrapeModeV,
     requestedBy: v.optional(v.string()),
     notes: v.optional(v.string()),
@@ -79,13 +83,16 @@ export const requestHermesScrape = action({
     mode: scrapeModeV,
     requestedAt: v.number(),
   }),
-  handler: async (_ctx, args) => {
-    assertDataMigrationAdmin(args.operatorSecret);
+  handler: async (ctx, args) => {
+    const callerKey = await ctx.runQuery(
+      api.dcAwardSignals.assertHermesScrapeAccessForAction,
+      { memberUserKey: args.memberUserKey },
+    );
 
     const requestedAt = Date.now();
     const requestedBy =
       clampOptionalText(args.requestedBy, REQUESTED_BY_MAX_CHARS, "requestedBy") ??
-      "dc_award_radar_ops";
+      callerKey.slice(0, REQUESTED_BY_MAX_CHARS);
     const notes = clampOptionalText(args.notes, NOTES_MAX_CHARS, "notes");
 
     const url = resolveHermesScrapeWebhookUrl();

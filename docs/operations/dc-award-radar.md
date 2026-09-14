@@ -21,12 +21,12 @@ GHL sync and outbound messages are **out of scope**. Convex does **not** scrape 
 
 Ops refresh is a **BOSSMAN GrokBot → Hermes** webhook, not paste-CSV-only.
 
-1. On `/operations/dc-award-radar`, enter the operator secret and click **Scrape with Hermes** (mode: nationwide / contacts / both).
+1. On `/operations/dc-award-radar`, while signed in, click **Scrape with Hermes** (mode: nationwide / contacts / both). **No operator / migration secret** is required for scrape — auth matches `dcAwardSignals.list` (session `memberUserKey` / JWT via `assertHermesScrapeAccessForAction`).
 2. Convex action `dcAwardRadarActions.requestHermesScrape` POSTs **one-shot** JSON to `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_URL` (set on the **Convex** dashboard). Optional auth: `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_AUTHORIZATION` or `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_KEY`.
 3. Target is **BOSSMAN’s** routine `dc-award-radar-hermes-scrape` (not Cursor Cloud Minion’s webhook).
 4. Payload shape: `{ kind: "dc_award_radar_scrape", routine: "dc-award-radar-hermes-scrape", mode, requestedBy, requestedAt, notes?, source: "lfe_dc_award_radar_ops" }`.
-5. Flow: LFE → GrokBot/BOSSMAN → Hermes public-web research → **BOSSMAN pings Minion** for CSV import. This app does **not** scrape, cron, poll, or schedule.
-6. If the webhook URL is unset, the UI errors clearly and **Manual CSV import** remains available.
+5. Flow: LFE → GrokBot/BOSSMAN → Hermes public-web research → **BOSSMAN pings Minion** for CSV import. This app does **not** scrape, cron, poll, or schedule. The UI shows an **indeterminate** progress bar while the wake action runs, then a durable “scrape requested / Hermes via BOSSMAN / Minion import later” status — it does **not** poll Convex for Hermes % complete.
+6. If the webhook URL is unset, the UI errors clearly and **Manual CSV import** remains available (operator secret still required for CSV upserts only).
 
 Implemented as a Convex **action** (not mutation + scheduler) so the POST stays one-shot and fail-closed.
 
