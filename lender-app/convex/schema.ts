@@ -4930,7 +4930,8 @@ export default defineSchema({
    * `market` is free-text (any US market), not limited to Ashburn/DFW/Columbus.
    * `sourceUrl` is indexed for lookup but is not unique (shared reports/dashboards).
    * Idempotent upserts use `sourceKey` (normalized sourceUrl + project + stage).
-   * Contact fields are optional Hermes/ops enrichment — empty string allowed.
+   * Owner/principal contact fields are optional Hermes/ops enrichment.
+   * Prefer cell/direct (phoneType/emailType); empty string allowed on text.
    * Contact-only patches must not insert new projects.
    * GHL sync is out of scope. No cron / scrape from Convex.
    */
@@ -4955,7 +4956,22 @@ export default defineSchema({
     contactName: v.optional(v.string()),
     contactTitle: v.optional(v.string()),
     email: v.optional(v.string()),
+    emailType: v.optional(
+      v.union(
+        v.literal("direct"),
+        v.literal("generic"),
+        v.literal("unknown"),
+      ),
+    ),
     phone: v.optional(v.string()),
+    phoneType: v.optional(
+      v.union(
+        v.literal("cell"),
+        v.literal("direct"),
+        v.literal("main"),
+        v.literal("unknown"),
+      ),
+    ),
     linkedinUrl: v.optional(v.string()),
     companyWebsite: v.optional(v.string()),
     contactNotes: v.optional(v.string()),

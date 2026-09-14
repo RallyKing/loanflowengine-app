@@ -25,7 +25,13 @@ export const DC_AWARD_RADAR_MARKETS = PHASE2_DC_AWARD_RADAR_MARKETS;
 /** Hard cap per operator mutation call — fail closed, no unbounded loops. */
 export const DC_AWARD_OPERATOR_UPSERT_MAX_ROWS = 100;
 
-export const DC_AWARD_CONTACT_FIELD_KEYS = [
+export const DC_AWARD_PHONE_TYPES = ["cell", "direct", "main", "unknown"] as const;
+export type DcAwardRadarPhoneType = (typeof DC_AWARD_PHONE_TYPES)[number];
+
+export const DC_AWARD_EMAIL_TYPES = ["direct", "generic", "unknown"] as const;
+export type DcAwardRadarEmailType = (typeof DC_AWARD_EMAIL_TYPES)[number];
+
+export const DC_AWARD_CONTACT_STRING_KEYS = [
   "contactName",
   "contactTitle",
   "email",
@@ -35,14 +41,19 @@ export const DC_AWARD_CONTACT_FIELD_KEYS = [
   "contactNotes",
 ] as const;
 
+/** @deprecated Use DC_AWARD_CONTACT_STRING_KEYS; types are handled separately. */
+export const DC_AWARD_CONTACT_FIELD_KEYS = DC_AWARD_CONTACT_STRING_KEYS;
+
 export type DcAwardRadarContactFieldKey =
-  (typeof DC_AWARD_CONTACT_FIELD_KEYS)[number];
+  (typeof DC_AWARD_CONTACT_STRING_KEYS)[number];
 
 export type DcAwardRadarContactFields = {
   contactName?: string;
   contactTitle?: string;
   email?: string;
+  emailType?: DcAwardRadarEmailType;
   phone?: string;
+  phoneType?: DcAwardRadarPhoneType;
   linkedinUrl?: string;
   companyWebsite?: string;
   contactNotes?: string;
@@ -100,19 +111,95 @@ export function collapseWs(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
+export function isDcAwardRadarPhoneType(
+  value: string,
+): value is DcAwardRadarPhoneType {
+  return (DC_AWARD_PHONE_TYPES as readonly string[]).includes(value);
+}
+
+export function isDcAwardRadarEmailType(
+  value: string,
+): value is DcAwardRadarEmailType {
+  return (DC_AWARD_EMAIL_TYPES as readonly string[]).includes(value);
+}
+
+export function parseDcAwardRadarPhoneType(
+  value: string,
+): DcAwardRadarPhoneType {
+  const normalized = value.trim().toLowerCase();
+  if (!isDcAwardRadarPhoneType(normalized)) {
+    throw new Error(`Invalid phoneType: ${value}`);
+  }
+  return normalized;
+}
+
+export function parseDcAwardRadarEmailType(
+  value: string,
+): DcAwardRadarEmailType {
+  const normalized = value.trim().toLowerCase();
+  if (!isDcAwardRadarEmailType(normalized)) {
+    throw new Error(`Invalid emailType: ${value}`);
+  }
+  return normalized;
+}
+
+/** Prefer owner/principal cell language over generic "contact". */
+export function dcAwardPhoneUiLabel(
+  phoneType: DcAwardRadarPhoneType | undefined,
+): string {
+  switch (phoneType) {
+    case "direct":
+      return "Direct line";
+    case "main":
+      return "Main / switchboard";
+    case "cell":
+    case "unknown":
+    case undefined:
+      return "Cell (likely)";
+    default: {
+      const _exhaustive: never = phoneType;
+      return _exhaustive;
+    }
+  }
+}
+
+export function dcAwardEmailUiLabel(
+  emailType: DcAwardRadarEmailType | undefined,
+): string {
+  switch (emailType) {
+    case "generic":
+      return "Generic / company email";
+    case "direct":
+    case "unknown":
+    case undefined:
+      return "Direct email";
+    default: {
+      const _exhaustive: never = emailType;
+      return _exhaustive;
+    }
+  }
+}
+
 /**
- * Contact fields are optional; empty string is allowed. `undefined` means
- * "leave existing value" on upsert so Phase 2 re-runs do not wipe enrichment.
+ * Contact fields are optional; empty string is allowed on text fields.
+ * `undefined` means "leave existing value" on upsert so Phase 2 re-runs
+ * do not wipe Hermes enrichment.
  */
 export function pickDefinedContactFields(
   row: DcAwardRadarContactFields,
 ): DcAwardRadarContactFields {
   const out: DcAwardRadarContactFields = {};
-  for (const key of DC_AWARD_CONTACT_FIELD_KEYS) {
+  for (const key of DC_AWARD_CONTACT_STRING_KEYS) {
     const value = row[key];
     if (value !== undefined) {
       out[key] = collapseWs(value);
     }
+  }
+  if (row.phoneType !== undefined) {
+    out.phoneType = row.phoneType;
+  }
+  if (row.emailType !== undefined) {
+    out.emailType = row.emailType;
   }
   return out;
 }

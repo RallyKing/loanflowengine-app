@@ -23,11 +23,26 @@ const confidenceV = v.union(
   v.literal("low"),
 );
 
+const phoneTypeV = v.union(
+  v.literal("cell"),
+  v.literal("direct"),
+  v.literal("main"),
+  v.literal("unknown"),
+);
+
+const emailTypeV = v.union(
+  v.literal("direct"),
+  v.literal("generic"),
+  v.literal("unknown"),
+);
+
 const contactFieldsV = {
   contactName: v.optional(v.string()),
   contactTitle: v.optional(v.string()),
   email: v.optional(v.string()),
+  emailType: v.optional(emailTypeV),
   phone: v.optional(v.string()),
+  phoneType: v.optional(phoneTypeV),
   linkedinUrl: v.optional(v.string()),
   companyWebsite: v.optional(v.string()),
   contactNotes: v.optional(v.string()),
@@ -51,7 +66,9 @@ const dcAwardSignalPublicV = v.object({
   contactName: v.optional(v.string()),
   contactTitle: v.optional(v.string()),
   email: v.optional(v.string()),
+  emailType: v.optional(emailTypeV),
   phone: v.optional(v.string()),
+  phoneType: v.optional(phoneTypeV),
   linkedinUrl: v.optional(v.string()),
   companyWebsite: v.optional(v.string()),
   contactNotes: v.optional(v.string()),
@@ -109,7 +126,9 @@ function toPublicRow(row: Doc<"dcAwardSignals">) {
     contactName: row.contactName,
     contactTitle: row.contactTitle,
     email: row.email,
+    emailType: row.emailType,
     phone: row.phone,
+    phoneType: row.phoneType,
     linkedinUrl: row.linkedinUrl,
     companyWebsite: row.companyWebsite,
     contactNotes: row.contactNotes,

@@ -48,6 +48,8 @@ import {
   PHASE2_DC_AWARD_SIGNAL_COUNT,
   PHASE2_DC_AWARD_SIGNAL_SEEDS,
   buildDcAwardSignalSourceKey,
+  dcAwardEmailUiLabel,
+  dcAwardPhoneUiLabel,
   normalizeSourceUrl,
   pickDefinedContactFields,
   prepareDcAwardRadarSeedRow,
@@ -1421,7 +1423,9 @@ console.log("dc award radar contacts + nationwide payload");
     contactName: "Jane Operator",
     contactTitle: "BD Lead",
     email: "jane@example.com",
+    emailType: "direct",
     phone: "555-0100",
+    phoneType: "cell",
     linkedinUrl: "https://www.linkedin.com/in/jane",
     companyWebsite: "https://example.com",
     contactNotes: "Hermes: permit applicant; med confidence",
@@ -1436,20 +1440,28 @@ console.log("dc award radar contacts + nationwide payload");
     }),
   );
   assert.equal(withContact.contactName, "Jane Operator");
+  assert.equal(withContact.phoneType, "cell");
+  assert.equal(withContact.emailType, "direct");
+  assert.equal(dcAwardPhoneUiLabel("cell"), "Cell (likely)");
+  assert.equal(dcAwardPhoneUiLabel(undefined), "Cell (likely)");
+  assert.equal(dcAwardEmailUiLabel("direct"), "Direct email");
+  assert.equal(dcAwardEmailUiLabel("generic"), "Generic / company email");
   assert.deepEqual(pickDefinedContactFields(base), {});
   assert.deepEqual(pickDefinedContactFields({ phone: "  555-0100  " }), {
     phone: "555-0100",
   });
 
   const csv = [
-    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,contact_name,phone,contact_notes",
-    "Phoenix AZ,Example Campus,Permit Issued,Electrical,Acme GC,GC,2026-09-01,https://example.com/permit/1,County permit,high,New market signal,n,Pat Contact,480-555-0199,Hermes LinkedIn; high",
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,contact_name,email,email_type,phone,phone_type,contact_notes",
+    "Phoenix AZ,Example Campus,Permit Issued,Electrical,Acme GC,GC,2026-09-01,https://example.com/permit/1,County permit,high,New market signal,n,Pat Contact,pat@example.com,direct,480-555-0199,cell,Hermes mobile on LinkedIn; high — not switchboard",
   ].join("\n");
   const nationwide = parseDcAwardRadarNationwidePayload(csv);
   assert.equal(nationwide.format, "csv");
   assert.equal(nationwide.rows[0]?.market, "Phoenix AZ");
   assert.equal(nationwide.rows[0]?.contactName, "Pat Contact");
   assert.equal(nationwide.rows[0]?.phone, "480-555-0199");
+  assert.equal(nationwide.rows[0]?.phoneType, "cell");
+  assert.equal(nationwide.rows[0]?.emailType, "direct");
   const preparedNationwide = prepareDcAwardRadarSeedRow(nationwide.rows[0]!);
   assert.equal(preparedNationwide.market, "Phoenix AZ");
 

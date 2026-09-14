@@ -6,9 +6,11 @@
  */
 
 import {
-  DC_AWARD_CONTACT_FIELD_KEYS,
+  DC_AWARD_CONTACT_STRING_KEYS,
   DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
   isDcAwardRadarConfidence,
+  parseDcAwardRadarEmailType,
+  parseDcAwardRadarPhoneType,
   pickDefinedContactFields,
   type DcAwardRadarContactFields,
   type DcAwardRadarSeedRow,
@@ -57,7 +59,11 @@ const HEADER_ALIASES: Record<string, string> = {
   contact_title: "contactTitle",
   contacttitle: "contactTitle",
   email: "email",
+  email_type: "emailType",
+  emailtype: "emailType",
   phone: "phone",
+  phone_type: "phoneType",
+  phonetype: "phoneType",
   linkedin_url: "linkedinUrl",
   linkedinurl: "linkedinUrl",
   linkedin: "linkedinUrl",
@@ -168,9 +174,17 @@ function contactFieldsFromRecord(
   record: Record<string, unknown>,
 ): DcAwardRadarContactFields {
   const raw: DcAwardRadarContactFields = {};
-  for (const key of DC_AWARD_CONTACT_FIELD_KEYS) {
+  for (const key of DC_AWARD_CONTACT_STRING_KEYS) {
     const value = stringField(record, key);
     if (value !== undefined) raw[key] = value;
+  }
+  const phoneTypeRaw = stringField(record, "phoneType")?.trim();
+  if (phoneTypeRaw) {
+    raw.phoneType = parseDcAwardRadarPhoneType(phoneTypeRaw);
+  }
+  const emailTypeRaw = stringField(record, "emailType")?.trim();
+  if (emailTypeRaw) {
+    raw.emailType = parseDcAwardRadarEmailType(emailTypeRaw);
   }
   return pickDefinedContactFields(raw);
 }

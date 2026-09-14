@@ -67,13 +67,15 @@ A Phase 2 re-import does not wipe Hermes contacts: bundled seed rows omit contac
 | `confidence` | `confidence` | `high` / `med` / `low` |
 | `why_it_matters_for_DLC` | `whyItMattersForDlc` | |
 | `notes` | `notes` | |
-| `contact_name` | `contactName` | Optional; empty OK |
+| `contact_name` | `contactName` | Owner / principal; optional; empty OK |
 | `contact_title` | `contactTitle` | Optional |
-| `email` | `email` | Optional |
-| `phone` | `phone` | Cell or main — labeled in UI |
+| `email` | `email` | Prefer owner/principal **direct** email, not info@ |
+| `email_type` | `emailType` | `direct` / `generic` / `unknown` |
+| `phone` | `phone` | Prefer highly likely **cell / direct**, not switchboard |
+| `phone_type` | `phoneType` | `cell` / `direct` / `main` / `unknown` |
 | `linkedin_url` | `linkedinUrl` | Optional |
 | `company_website` | `companyWebsite` | Optional |
-| `contact_notes` | `contactNotes` | Cite how found / confidence |
+| `contact_notes` | `contactNotes` | Why the number/email is believed cell/direct; source / confidence |
 | `source_key` | lookup only | Contact-only rows |
 
 JSON may use the camelCase field names. Payload may also be `{ "rows": [ ... ] }`.
@@ -81,7 +83,7 @@ JSON may use the camelCase field names. Payload may also be `{ "rows": [ ... ] }
 ## UI
 
 - Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.
-- Contact name/title/phone show in the table; email, LinkedIn, website, and contact notes expand per row.
+- **Owner / principal** column shows name, title, **Cell (likely)** / typed phone, and direct vs generic email. Expand for LinkedIn, website, and why-cell/direct notes.
 - Operator secret matches `DATA_MIGRATION_ADMIN_SECRET` (fallback `ORG_INTEGRITY_ADMIN_SECRET`).
 
 ## Convex deploy

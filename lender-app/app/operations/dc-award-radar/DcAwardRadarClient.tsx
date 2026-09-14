@@ -15,7 +15,11 @@ import { cn } from "@/lib/cn";
 import { dataTableClassNames } from "@/lib/dataTableClasses";
 import {
   DC_AWARD_RADAR_CONFIDENCE,
+  dcAwardEmailUiLabel,
+  dcAwardPhoneUiLabel,
   type DcAwardRadarConfidence,
+  type DcAwardRadarEmailType,
+  type DcAwardRadarPhoneType,
 } from "@/lib/dcAwardRadar";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useUserSettings } from "@/lib/userSettingsContext";
@@ -46,13 +50,17 @@ function ConfidenceBadge({ value }: { value: DcAwardRadarConfidence }) {
 
 function ContactExpanded({
   email,
+  emailType,
   phone,
+  phoneType,
   linkedinUrl,
   companyWebsite,
   contactNotes,
 }: {
   email?: string;
+  emailType?: DcAwardRadarEmailType;
   phone?: string;
+  phoneType?: DcAwardRadarPhoneType;
   linkedinUrl?: string;
   companyWebsite?: string;
   contactNotes?: string;
@@ -60,11 +68,11 @@ function ContactExpanded({
   return (
     <dl className="grid gap-2 text-xs sm:grid-cols-2">
       <div>
-        <dt className="text-muted-foreground">Email</dt>
+        <dt className="text-muted-foreground">{dcAwardEmailUiLabel(emailType)}</dt>
         <dd>{email || "—"}</dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Phone (cell or main)</dt>
+        <dt className="text-muted-foreground">{dcAwardPhoneUiLabel(phoneType)}</dt>
         <dd>{phone || "—"}</dd>
       </div>
       <div>
@@ -103,7 +111,7 @@ function ContactExpanded({
       </div>
       <div className="sm:col-span-2">
         <dt className="text-muted-foreground">
-          Contact notes (source / confidence)
+          Why this is cell/direct (source / confidence)
         </dt>
         <dd>{contactNotes || "—"}</dd>
       </div>
@@ -262,7 +270,7 @@ function RadarTable() {
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Project</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Stage</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Company</th>
-                <th className="sticky top-0 bg-card px-2 py-2 font-medium">Contact</th>
+                <th className="sticky top-0 bg-card px-2 py-2 font-medium">Owner / principal</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Why it matters</th>
@@ -301,7 +309,8 @@ function RadarTable() {
                           )}
                           <span>
                             <span className="block font-medium">
-                              {row.contactName || (hasContact ? "Contact on file" : "No contact")}
+                              {row.contactName ||
+                                (hasContact ? "Owner / principal on file" : "No owner / principal")}
                             </span>
                             {row.contactTitle ? (
                               <span className="block text-muted-foreground">
@@ -310,7 +319,12 @@ function RadarTable() {
                             ) : null}
                             {row.phone ? (
                               <span className="block text-muted-foreground">
-                                Phone (cell or main): {row.phone}
+                                {dcAwardPhoneUiLabel(row.phoneType)}: {row.phone}
+                              </span>
+                            ) : null}
+                            {row.email ? (
+                              <span className="block text-muted-foreground">
+                                {dcAwardEmailUiLabel(row.emailType)}: {row.email}
                               </span>
                             ) : null}
                           </span>
@@ -344,7 +358,9 @@ function RadarTable() {
                         <td colSpan={9} className="px-3 py-3">
                           <ContactExpanded
                             email={row.email}
+                            emailType={row.emailType}
                             phone={row.phone}
+                            phoneType={row.phoneType}
                             linkedinUrl={row.linkedinUrl}
                             companyWebsite={row.companyWebsite}
                             contactNotes={row.contactNotes}
@@ -383,8 +399,9 @@ export function DcAwardRadarClient() {
               </h1>
               <p className="text-sm text-muted-foreground">
                 Public permit, registration, and construction signals for DLC —
-                nationwide. Contact fields are Hermes/ops enrichment. GHL sync
-                and outbound messages are out of scope.
+                nationwide. Owner / principal contacts prefer cell and direct
+                email (Hermes/ops). GHL sync and outbound messages are out of
+                scope.
               </p>
             </div>
           </div>

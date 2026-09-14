@@ -147,15 +147,15 @@ export function DcAwardRadarOpsPanel() {
             Refresh contacts
             <span className="block text-xs font-normal text-muted-foreground">
               JSON/CSV with sourceKey (or source_url + project + stage) plus
-              contact fields. Updates existing rows only — never creates
-              duplicate projects.
+              owner/principal fields. Prefer cell/direct — not switchboard.
+              Updates existing rows only — never creates duplicate projects.
             </span>
             <Textarea
               rows={8}
               value={contactPayload}
               onChange={(event) => setContactPayload(event.target.value)}
               aria-label="Contact refresh payload"
-              placeholder="source_key,contact_name,contact_title,email,phone,linkedin_url,company_website,contact_notes"
+              placeholder="source_key,contact_name,contact_title,email,email_type,phone,phone_type,linkedin_url,contact_notes"
             />
           </Label>
           <Button
