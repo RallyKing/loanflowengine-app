@@ -14,7 +14,7 @@
 | `/pipeline/[convexFileId]` (file workspace) | `AppChrome` + `PipelineFileWorkspaceShell` | **`[data-pipeline-workspace-scroll]`** — `<main>` is `overflow-y-hidden` (not the file body scroller) | Route + suspense | Session | **`PipelineWorkspaceMobileVaulFrame`** below `md`; see **`runtime-workspace-scroll-authority.md`** |
 | `/activity`, `/analytics`, `/ledger`, `/documents`, `/settings` | `AppChrome` | `<main>` | Route | Session | |
 | `/operations` | `AppChrome` | `<main>` | Route | Session | |
-| `/operations/dc-award-radar` | `AppChrome` | `<main>` (table is `overflow-x-auto` only) | Route | Session + Convex `requireAuthenticatedCaller`; operator upserts secret-gated | Filters + ops controls stack on mobile; expandable contact row stays in table flow; no nested page scroll |
+| `/operations/dc-award-radar` | `AppChrome` | `<main>` (table is `overflow-x-auto` only) | Route | Session + Convex `requireAuthenticatedCaller`; operator upserts secret-gated | Filters + Grouped/Flat toggle + ops controls stack on mobile; campus header keeps owner/principal visible; expandable child signals stay in table flow; no nested page scroll |
 | `/portal/*` | Portal shell | Portal `<main>` variant | Route | Portal grant | Constrained nav |
 | `/api/*` | N/A | N/A | N/A | Route-defined | N/A |
 

@@ -11,7 +11,7 @@ GHL sync and outbound messages are **out of scope**. Convex does **not** scrape 
 | Rule | How this feature complies |
 |------|---------------------------|
 | No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron. Hermes wake is a **client-called** one-shot action (`requestHermesScrape`) — never scheduled |
-| No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence indexes |
+| No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence indexes. `by_campusKey` exists for lookups; grouping is client-side on the capped page |
 | No polling | One-shot mutations/actions only; UI uses a single `useQuery` |
 | Bounded writes | Operator payloads capped at **100 rows** per mutation |
 | Idempotency | `sourceKey` = normalized `sourceUrl` + project + stage |
@@ -47,6 +47,12 @@ Phase 2 bundled seed (29 rows) remains available with no file argument:
 
 ```bash
 npm run import:dc-award-radar
+```
+
+Campus stamp + known remaps (does not insert rows or wipe contacts):
+
+```bash
+npm run import:dc-award-radar -- --backfill-campus
 ```
 
 ## Contact refresh (no duplicate projects)
@@ -91,13 +97,35 @@ A Phase 2 re-import does not wipe Hermes contacts: bundled seed rows omit contac
 | `company_website` | `companyWebsite` | Optional |
 | `contact_notes` | `contactNotes` | Why the number/email is believed cell/direct; source / confidence |
 | `source_key` | lookup only | Contact-only rows |
+| `campus_key` | `campusKey` | Optional stable campus/project-family id. Preserved on upsert when present. |
+| `campus_name` | `campusName` | Optional group header. Preserved on upsert when present. |
+| `is_primary_in_campus` | `isPrimaryInCampus` | Optional. `true`/`false`/`1`/`0`/`yes`/`no`/`primary`. Preferred contact row for the group. |
 
 JSON may use the camelCase field names. Payload may also be `{ "rows": [ ... ] }`.
 
+Campus columns are **display-merge only**. Import never deletes child permit rows. Known families (also applied when the project name matches, even if campus columns are omitted):
+
+| Family | `campusKey` | `campusName` | Notes |
+|--------|-------------|--------------|-------|
+| Equinix DC21-P2 + DC21-P3 | `equinix-dc21-22175-beaumeade` | `Equinix DC21 (22175 Beaumeade Cir)` | Same address. P3 is primary. |
+| Equinix DC17 (was Beaumeade Parcel C2) | `equinix-dc17-44710-performance` | `Equinix DC17 (44710 Performance Cir)` | **Not DC21** — 44710 Performance Cir vs 22175 Beaumeade Cir. |
+| NTT/VA6 HITT + Gensler | `ntt-va6-22280-randolph` | `NTT/VA6 (22280 Randolph Dr)` | HITT row is primary. |
+| Vantage OH1 buildings 1–3 + campus | `vantage-oh1-new-albany` | `Vantage OH1 (New Albany)` | Campus row is primary. |
+
+After Convex schema deploy, stamp existing rows without a full seed overwrite:
+
+```bash
+npm run import:dc-award-radar -- --backfill-campus
+```
+
+DC21-P2 `sourceUrl` must be the BLDC-2025-030931 MLQ filing — not P3’s BLDC-2025-046039 URL. Backfill remaps the legacy key so a re-import does not insert a duplicate.
+
 ## UI
 
+- Default view is **Grouped** by `campusKey` (fallback: company). **Flat** is the raw permit list.
+- Group header shows campus/company and the **owner / principal once** (primary row’s contact, else first non-empty). Expand for child signals (stage, date, trade, source, confidence) plus full contact details.
 - Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.
-- **Owner / principal** column shows name, title, **Cell (likely)** / typed phone, and direct vs generic email. Expand for LinkedIn, website, and why-cell/direct notes.
+- **Owner / principal** stays visible in grouped mode (Joshua). Expand for LinkedIn, website, and why-cell/direct notes.
 - Operator secret matches `DATA_MIGRATION_ADMIN_SECRET` (fallback `ORG_INTEGRITY_ADMIN_SECRET`).
 - **Scrape with Hermes** is the primary refresh control; paste/CLI import is the fallback when the webhook is unset or Hermes is unavailable.
 

@@ -11,10 +11,16 @@ import {
   isDcAwardRadarConfidence,
   parseDcAwardRadarEmailType,
   parseDcAwardRadarPhoneType,
+  pickDefinedCampusFields,
   pickDefinedContactFields,
+  type DcAwardRadarCampusFields,
   type DcAwardRadarContactFields,
   type DcAwardRadarSeedRow,
 } from "./dcAwardRadar";
+import {
+  applyKnownCampusAndRemaps,
+  parseOptionalCampusPrimary,
+} from "./dcAwardRadarCampus";
 
 export { DC_AWARD_OPERATOR_UPSERT_MAX_ROWS };
 
@@ -74,6 +80,13 @@ const HEADER_ALIASES: Record<string, string> = {
   contactnotes: "contactNotes",
   source_key: "sourceKey",
   sourcekey: "sourceKey",
+  campus_key: "campusKey",
+  campuskey: "campusKey",
+  campus_name: "campusName",
+  campusname: "campusName",
+  is_primary_in_campus: "isPrimaryInCampus",
+  isprimaryincampus: "isPrimaryInCampus",
+  primary_in_campus: "isPrimaryInCampus",
 };
 
 function normalizeHeader(raw: string): string {
@@ -170,6 +183,21 @@ function requiredString(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function campusFieldsFromRecord(
+  record: Record<string, unknown>,
+): DcAwardRadarCampusFields {
+  const raw: DcAwardRadarCampusFields = {};
+  const campusKey = stringField(record, "campusKey");
+  const campusName = stringField(record, "campusName");
+  if (campusKey !== undefined) raw.campusKey = campusKey;
+  if (campusName !== undefined) raw.campusName = campusName;
+  const primaryRaw = stringField(record, "isPrimaryInCampus");
+  if (primaryRaw !== undefined) {
+    raw.isPrimaryInCampus = parseOptionalCampusPrimary(primaryRaw);
+  }
+  return pickDefinedCampusFields(raw);
+}
+
 function contactFieldsFromRecord(
   record: Record<string, unknown>,
 ): DcAwardRadarContactFields {
@@ -194,7 +222,7 @@ export function recordToSeedRow(record: Record<string, unknown>): DcAwardRadarSe
   if (!isDcAwardRadarConfidence(confidenceRaw)) {
     throw new Error(`Invalid confidence: ${confidenceRaw}`);
   }
-  return {
+  return applyKnownCampusAndRemaps({
     market: requiredString(record, "market"),
     projectOrCampus: requiredString(record, "projectOrCampus"),
     stageSignal: requiredString(record, "stageSignal"),
@@ -208,7 +236,8 @@ export function recordToSeedRow(record: Record<string, unknown>): DcAwardRadarSe
     whyItMattersForDlc: requiredString(record, "whyItMattersForDlc"),
     notes: requiredString(record, "notes"),
     ...contactFieldsFromRecord(record),
-  };
+    ...campusFieldsFromRecord(record),
+  });
 }
 
 export function recordToContactOnlyRow(

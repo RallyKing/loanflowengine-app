@@ -5,6 +5,7 @@
  *   npm run import:dc-award-radar
  *   npm run import:dc-award-radar -- ./data/dc-award-radar-nationwide.csv
  *   npm run import:dc-award-radar -- --contacts ./data/dc-award-radar-contacts.csv
+ *   npm run import:dc-award-radar -- --backfill-campus
  *
  * Requires DATA_MIGRATION_ADMIN_SECRET (or ORG_INTEGRITY_ADMIN_SECRET) on the
  * Convex deployment and in local env. Idempotent on sourceKey — re-run updates
@@ -43,9 +44,11 @@ function loadEnv() {
 
 function parseArgs(argv: string[]) {
   const contactsFlag = argv.includes("--contacts");
+  const backfillCampus = argv.includes("--backfill-campus");
   const pathArg = argv.find((arg) => !arg.startsWith("-"));
   return {
     contactsOnly: contactsFlag,
+    backfillCampus,
     filePath: pathArg ? resolve(process.cwd(), pathArg) : null,
   };
 }
@@ -60,9 +63,35 @@ async function main() {
     process.exit(1);
   }
 
-  const { contactsOnly, filePath } = parseArgs(process.argv.slice(2));
+  const { contactsOnly, backfillCampus, filePath } = parseArgs(
+    process.argv.slice(2),
+  );
   const client = new ConvexHttpClient(url);
   const operatorSecret = loadOperatorSecret();
+
+  if (backfillCampus) {
+    if (contactsOnly || filePath) {
+      console.error(
+        "--backfill-campus cannot be combined with --contacts or a CSV path.",
+      );
+      process.exit(1);
+    }
+    const result = await client.mutation(
+      api.dcAwardSignals.operatorBackfillCampusGroups,
+      { operatorSecret },
+    );
+    console.log(
+      JSON.stringify(
+        {
+          mode: "backfill-campus",
+          ...result,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
 
   if (!filePath) {
     if (contactsOnly) {

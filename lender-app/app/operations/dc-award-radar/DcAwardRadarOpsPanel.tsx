@@ -290,7 +290,9 @@ export function DcAwardRadarOpsPanel() {
                   Import nationwide refresh
                   <span className="block text-xs font-normal text-muted-foreground">
                     JSON array or CSV. Upserts by sourceKey (url + project + stage).
-                    Any US market. Max 100 rows per submit.
+                    Campus columns (`campus_key`, `campus_name`,
+                    `is_primary_in_campus`) are preserved when present. Any US
+                    market. Max 100 rows per submit.
                   </span>
                   <Textarea
                     rows={8}
