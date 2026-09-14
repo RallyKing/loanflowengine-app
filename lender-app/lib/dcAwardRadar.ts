@@ -1,18 +1,52 @@
 /**
- * DLC public data-center award radar — Phase 2 seed + idempotency helpers.
+ * DLC public data-center award radar — seed + idempotency helpers.
  *
- * GHL / outbound messaging is out of scope (Stacy later: high-confidence only,
- * tag `dc-award-radar`, no auto-blast).
+ * Markets are free-text (any US market). Phase 2 originally seeded Ashburn /
+ * DFW / Columbus; nationwide refresh is not limited to those three.
+ *
+ * Contact enrichment is Hermes/ops-driven (CSV → operator upsert). No Convex
+ * web-scrape, cron, or scheduler. GHL / outbound messaging is out of scope
+ * (Stacy later: high-confidence only, tag `dc-award-radar`, no auto-blast).
  */
 
 export const DC_AWARD_RADAR_CONFIDENCE = ["high", "med", "low"] as const;
 export type DcAwardRadarConfidence = (typeof DC_AWARD_RADAR_CONFIDENCE)[number];
 
-export const DC_AWARD_RADAR_MARKETS = [
+/** Historical Phase 2 corpus labels only — do not hard-code the UI filter to these. */
+export const PHASE2_DC_AWARD_RADAR_MARKETS = [
   "Ashburn VA",
   "Dallas-Fort Worth TX",
   "Columbus OH",
 ] as const;
+
+/** @deprecated Use PHASE2_DC_AWARD_RADAR_MARKETS for corpus docs; UI must not lock to these. */
+export const DC_AWARD_RADAR_MARKETS = PHASE2_DC_AWARD_RADAR_MARKETS;
+
+/** Hard cap per operator mutation call — fail closed, no unbounded loops. */
+export const DC_AWARD_OPERATOR_UPSERT_MAX_ROWS = 100;
+
+export const DC_AWARD_CONTACT_FIELD_KEYS = [
+  "contactName",
+  "contactTitle",
+  "email",
+  "phone",
+  "linkedinUrl",
+  "companyWebsite",
+  "contactNotes",
+] as const;
+
+export type DcAwardRadarContactFieldKey =
+  (typeof DC_AWARD_CONTACT_FIELD_KEYS)[number];
+
+export type DcAwardRadarContactFields = {
+  contactName?: string;
+  contactTitle?: string;
+  email?: string;
+  phone?: string;
+  linkedinUrl?: string;
+  companyWebsite?: string;
+  contactNotes?: string;
+};
 
 export type DcAwardRadarSeedRow = {
   market: string;
@@ -27,7 +61,23 @@ export type DcAwardRadarSeedRow = {
   confidence: DcAwardRadarConfidence;
   whyItMattersForDlc: string;
   notes: string;
-};
+} & DcAwardRadarContactFields;
+
+export type DcAwardRadarPreparedRow = {
+  sourceKey: string;
+  sourceUrl: string;
+  market: string;
+  projectOrCampus: string;
+  stageSignal: string;
+  tradeFocus: string;
+  company: string;
+  roleIfKnown: string;
+  signalDate: string;
+  sourceType: string;
+  confidence: DcAwardRadarConfidence;
+  whyItMattersForDlc: string;
+  notes: string;
+} & DcAwardRadarContactFields;
 
 const SOURCE_KEY_SEP = "::";
 
@@ -46,8 +96,25 @@ export function normalizeSourceUrl(raw: string): string {
   }
 }
 
-function collapseWs(value: string): string {
+export function collapseWs(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Contact fields are optional; empty string is allowed. `undefined` means
+ * "leave existing value" on upsert so Phase 2 re-runs do not wipe enrichment.
+ */
+export function pickDefinedContactFields(
+  row: DcAwardRadarContactFields,
+): DcAwardRadarContactFields {
+  const out: DcAwardRadarContactFields = {};
+  for (const key of DC_AWARD_CONTACT_FIELD_KEYS) {
+    const value = row[key];
+    if (value !== undefined) {
+      out[key] = collapseWs(value);
+    }
+  }
+  return out;
 }
 
 /**
@@ -73,21 +140,9 @@ export function isDcAwardRadarConfidence(
   return (DC_AWARD_RADAR_CONFIDENCE as readonly string[]).includes(value);
 }
 
-export function prepareDcAwardRadarSeedRow(row: DcAwardRadarSeedRow): {
-  sourceKey: string;
-  sourceUrl: string;
-  market: string;
-  projectOrCampus: string;
-  stageSignal: string;
-  tradeFocus: string;
-  company: string;
-  roleIfKnown: string;
-  signalDate: string;
-  sourceType: string;
-  confidence: DcAwardRadarConfidence;
-  whyItMattersForDlc: string;
-  notes: string;
-} {
+export function prepareDcAwardRadarSeedRow(
+  row: DcAwardRadarSeedRow,
+): DcAwardRadarPreparedRow {
   const sourceUrl = normalizeSourceUrl(row.sourceUrl);
   if (!sourceUrl) {
     throw new Error("dcAwardSignals seed row is missing sourceUrl.");
@@ -115,6 +170,7 @@ export function prepareDcAwardRadarSeedRow(row: DcAwardRadarSeedRow): {
     confidence: row.confidence,
     whyItMattersForDlc: collapseWs(row.whyItMattersForDlc),
     notes: collapseWs(row.notes),
+    ...pickDefinedContactFields(row),
   };
 }
 

@@ -1,30 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
-import { Radar } from "lucide-react";
+import { ChevronDown, ChevronRight, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { PageErrorBoundary } from "@/components/PageErrorBoundary";
 import { ConvexQueryBoundary } from "@/components/ConvexQueryBoundary";
-import { Label, Select } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
+import { Input, Label, Select } from "@/components/ui/Input";
 import { OperationalEmptyState } from "@/components/ui/OperationalEmptyState";
 import { OperationalSkeletonList } from "@/components/ui/OperationalSkeleton";
 import { cn } from "@/lib/cn";
 import { dataTableClassNames } from "@/lib/dataTableClasses";
 import {
   DC_AWARD_RADAR_CONFIDENCE,
-  DC_AWARD_RADAR_MARKETS,
   type DcAwardRadarConfidence,
 } from "@/lib/dcAwardRadar";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useUserSettings } from "@/lib/userSettingsContext";
+import { DcAwardRadarOpsPanel } from "./DcAwardRadarOpsPanel";
 
 const CONFIDENCE_LABEL: Record<DcAwardRadarConfidence, string> = {
   high: "High",
   med: "Med",
   low: "Low",
 };
+
+const MARKET_DATALIST_ID = "dc-award-radar-markets";
 
 function ConfidenceBadge({ value }: { value: DcAwardRadarConfidence }) {
   return (
@@ -41,11 +44,82 @@ function ConfidenceBadge({ value }: { value: DcAwardRadarConfidence }) {
   );
 }
 
+function ContactExpanded({
+  email,
+  phone,
+  linkedinUrl,
+  companyWebsite,
+  contactNotes,
+}: {
+  email?: string;
+  phone?: string;
+  linkedinUrl?: string;
+  companyWebsite?: string;
+  contactNotes?: string;
+}) {
+  return (
+    <dl className="grid gap-2 text-xs sm:grid-cols-2">
+      <div>
+        <dt className="text-muted-foreground">Email</dt>
+        <dd>{email || "—"}</dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Phone (cell or main)</dt>
+        <dd>{phone || "—"}</dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">LinkedIn</dt>
+        <dd>
+          {linkedinUrl ? (
+            <a
+              href={linkedinUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="break-all text-primary hover:underline"
+            >
+              {linkedinUrl}
+            </a>
+          ) : (
+            "—"
+          )}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Company website</dt>
+        <dd>
+          {companyWebsite ? (
+            <a
+              href={companyWebsite}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="break-all text-primary hover:underline"
+            >
+              {companyWebsite}
+            </a>
+          ) : (
+            "—"
+          )}
+        </dd>
+      </div>
+      <div className="sm:col-span-2">
+        <dt className="text-muted-foreground">
+          Contact notes (source / confidence)
+        </dt>
+        <dd>{contactNotes || "—"}</dd>
+      </div>
+    </dl>
+  );
+}
+
 function RadarTable() {
   const memberUserKey = useActorUserKey().trim();
   const { settings } = useUserSettings();
+  const [marketDraft, setMarketDraft] = useState("");
   const [market, setMarket] = useState("");
   const [confidence, setConfidence] = useState<"" | DcAwardRadarConfidence>("");
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const result = useQuery(
     api.dcAwardSignals.list,
@@ -60,12 +134,25 @@ function RadarTable() {
 
   const signals = result?.signals;
   const markets = useMemo(() => {
-    const fromData = new Set<string>(DC_AWARD_RADAR_MARKETS);
+    const fromData = new Set<string>();
     for (const row of signals ?? []) {
       if (row.market) fromData.add(row.market);
     }
     return [...fromData].sort((a, b) => a.localeCompare(b));
   }, [signals]);
+
+  function applyMarketFilter() {
+    setMarket(marketDraft.trim());
+  }
+
+  function toggleExpanded(id: string) {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   if (!memberUserKey) {
     return (
@@ -81,22 +168,53 @@ function RadarTable() {
 
   return (
     <div className="space-y-4">
+      <DcAwardRadarOpsPanel />
+
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-        <Label className="min-w-[12rem] flex-1">
+        <Label className="min-w-[14rem] flex-1">
           Market
-          <Select
-            aria-label="Filter by market"
-            value={market}
-            onChange={(event) => setMarket(event.target.value)}
-          >
-            <option value="">All markets</option>
-            {markets.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </Select>
+          <Input
+            list={MARKET_DATALIST_ID}
+            aria-label="Filter by market (any US market)"
+            placeholder="Any US market (exact name)"
+            value={marketDraft}
+            onChange={(event) => setMarketDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                applyMarketFilter();
+              }
+            }}
+          />
         </Label>
+        <datalist id={MARKET_DATALIST_ID}>
+          {markets.map((item) => (
+            <option key={item} value={item} />
+          ))}
+        </datalist>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={applyMarketFilter}
+          >
+            Apply market
+          </Button>
+          {market ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setMarketDraft("");
+                setMarket("");
+              }}
+            >
+              Clear
+            </Button>
+          ) : null}
+        </div>
         <Label className="min-w-[10rem]">
           Confidence
           <Select
@@ -118,19 +236,25 @@ function RadarTable() {
         </Label>
         <p className="text-xs text-muted-foreground sm:ml-auto">
           {signals.length} signal{signals.length === 1 ? "" : "s"}
+          {market ? ` in ${market}` : ""}
           {result?.truncated ? " (list capped)" : ""}
         </p>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Market filter is exact free-text (indexed), not a hard-coded three-market
+        list. Suggestions come from the current page; type any imported US
+        market.
+      </p>
 
       {signals.length === 0 ? (
         <OperationalEmptyState
           title="No award signals"
-          description="Nothing matches these filters. Run the one-shot Phase 2 import if the table is empty."
+          description="Nothing matches these filters. Import a nationwide Hermes CSV or run the one-shot Phase 2 seed if the table is empty."
         />
       ) : (
         <div className="overflow-x-auto max-md:touch-pan-x">
           <table
-            className={dataTableClassNames(settings.tableDensity, "w-full min-w-[72rem] text-left")}
+            className={dataTableClassNames(settings.tableDensity, "w-full min-w-[80rem] text-left")}
           >
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
@@ -138,6 +262,7 @@ function RadarTable() {
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Project</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Stage</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Company</th>
+                <th className="sticky top-0 bg-card px-2 py-2 font-medium">Contact</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
                 <th className="sticky top-0 bg-card px-2 py-2 font-medium">Why it matters</th>
@@ -145,39 +270,91 @@ function RadarTable() {
               </tr>
             </thead>
             <tbody>
-              {signals.map((row) => (
-                <tr key={row._id} className="border-b border-border/60 align-top">
-                  <td className="px-2 py-2 text-xs whitespace-nowrap">{row.market}</td>
-                  <td className="px-2 py-2 text-sm font-medium">{row.projectOrCampus}</td>
-                  <td className="px-2 py-2 text-xs">{row.stageSignal}</td>
-                  <td className="px-2 py-2 text-xs">
-                    <div>{row.company}</div>
-                    <div className="text-muted-foreground">{row.roleIfKnown}</div>
-                  </td>
-                  <td className="px-2 py-2">
-                    <ConfidenceBadge value={row.confidence} />
-                  </td>
-                  <td className="px-2 py-2 text-xs whitespace-nowrap">{row.signalDate}</td>
-                  <td className="px-2 py-2 text-xs">
-                    <div>{row.whyItMattersForDlc}</div>
-                    {row.notes ? (
-                      <div className="mt-1 text-muted-foreground">{row.notes}</div>
+              {signals.map((row) => {
+                const expanded = expandedIds.has(row._id);
+                const hasContact =
+                  Boolean(row.contactName) ||
+                  Boolean(row.email) ||
+                  Boolean(row.phone) ||
+                  Boolean(row.linkedinUrl);
+                return (
+                  <Fragment key={row._id}>
+                    <tr className="border-b border-border/60 align-top">
+                      <td className="px-2 py-2 text-xs whitespace-nowrap">{row.market}</td>
+                      <td className="px-2 py-2 text-sm font-medium">{row.projectOrCampus}</td>
+                      <td className="px-2 py-2 text-xs">{row.stageSignal}</td>
+                      <td className="px-2 py-2 text-xs">
+                        <div>{row.company}</div>
+                        <div className="text-muted-foreground">{row.roleIfKnown}</div>
+                      </td>
+                      <td className="px-2 py-2 text-xs">
+                        <button
+                          type="button"
+                          className="inline-flex min-h-10 items-center gap-1 text-left"
+                          aria-expanded={expanded}
+                          onClick={() => toggleExpanded(row._id)}
+                        >
+                          {expanded ? (
+                            <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          )}
+                          <span>
+                            <span className="block font-medium">
+                              {row.contactName || (hasContact ? "Contact on file" : "No contact")}
+                            </span>
+                            {row.contactTitle ? (
+                              <span className="block text-muted-foreground">
+                                {row.contactTitle}
+                              </span>
+                            ) : null}
+                            {row.phone ? (
+                              <span className="block text-muted-foreground">
+                                Phone (cell or main): {row.phone}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      </td>
+                      <td className="px-2 py-2">
+                        <ConfidenceBadge value={row.confidence} />
+                      </td>
+                      <td className="px-2 py-2 text-xs whitespace-nowrap">{row.signalDate}</td>
+                      <td className="px-2 py-2 text-xs">
+                        <div>{row.whyItMattersForDlc}</div>
+                        {row.notes ? (
+                          <div className="mt-1 text-muted-foreground">{row.notes}</div>
+                        ) : null}
+                        <div className="mt-1 text-muted-foreground">{row.tradeFocus}</div>
+                      </td>
+                      <td className="px-2 py-2 text-xs">
+                        <div>{row.sourceType}</div>
+                        <a
+                          href={row.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="break-all text-primary hover:underline"
+                        >
+                          Open source
+                        </a>
+                      </td>
+                    </tr>
+                    {expanded ? (
+                      <tr className="border-b border-border/60 bg-muted/30">
+                        <td colSpan={9} className="px-3 py-3">
+                          <ContactExpanded
+                            email={row.email}
+                            phone={row.phone}
+                            linkedinUrl={row.linkedinUrl}
+                            companyWebsite={row.companyWebsite}
+                            contactNotes={row.contactNotes}
+                          />
+                        </td>
+                      </tr>
                     ) : null}
-                    <div className="mt-1 text-muted-foreground">{row.tradeFocus}</div>
-                  </td>
-                  <td className="px-2 py-2 text-xs">
-                    <div>{row.sourceType}</div>
-                    <a
-                      href={row.sourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="break-all text-primary hover:underline"
-                    >
-                      Open source
-                    </a>
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -205,8 +382,9 @@ export function DcAwardRadarClient() {
                 Data-center award radar
               </h1>
               <p className="text-sm text-muted-foreground">
-                Public permit, registration, and construction signals for DLC.
-                Read-only. GHL sync and outbound messages are out of scope.
+                Public permit, registration, and construction signals for DLC —
+                nationwide. Contact fields are Hermes/ops enrichment. GHL sync
+                and outbound messages are out of scope.
               </p>
             </div>
           </div>

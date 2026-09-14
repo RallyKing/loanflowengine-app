@@ -4925,11 +4925,14 @@ export default defineSchema({
   }).index("by_userKey", ["userKey"]),
 
   /**
-   * DLC public data-center award radar (Phase 2).
+   * DLC public data-center award radar (nationwide).
    * Platform catalog — not org-scoped. CSV columns plus createdAt/updatedAt.
+   * `market` is free-text (any US market), not limited to Ashburn/DFW/Columbus.
    * `sourceUrl` is indexed for lookup but is not unique (shared reports/dashboards).
    * Idempotent upserts use `sourceKey` (normalized sourceUrl + project + stage).
-   * GHL sync is out of scope.
+   * Contact fields are optional Hermes/ops enrichment — empty string allowed.
+   * Contact-only patches must not insert new projects.
+   * GHL sync is out of scope. No cron / scrape from Convex.
    */
   dcAwardSignals: defineTable({
     market: v.string(),
@@ -4949,6 +4952,13 @@ export default defineSchema({
     whyItMattersForDlc: v.string(),
     notes: v.string(),
     sourceKey: v.string(),
+    contactName: v.optional(v.string()),
+    contactTitle: v.optional(v.string()),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    linkedinUrl: v.optional(v.string()),
+    companyWebsite: v.optional(v.string()),
+    contactNotes: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

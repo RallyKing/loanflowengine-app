@@ -47,10 +47,20 @@ import { isDealBackedPipelineRow } from "../lib/pipeline/dealBackedRow";
 import {
   PHASE2_DC_AWARD_SIGNAL_COUNT,
   PHASE2_DC_AWARD_SIGNAL_SEEDS,
+  buildDcAwardSignalSourceKey,
   normalizeSourceUrl,
+  pickDefinedContactFields,
   prepareDcAwardRadarSeedRow,
   uniquePreparedPhase2SourceKeys,
 } from "../lib/dcAwardRadar";
+import {
+  DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
+  assertBoundedOperatorRows,
+  chunkOperatorRows,
+  parseBoundedDcAwardRadarNationwidePayload,
+  parseDcAwardRadarContactPayload,
+  parseDcAwardRadarNationwidePayload,
+} from "../lib/dcAwardRadarPayload";
 import {
   buildDealCommitRow,
   subjectAddressEditorValue,
@@ -1398,6 +1408,94 @@ console.log("dc award radar phase 2 seed uniqueness");
     sharedUrlRows.map((row) => prepareDcAwardRadarSeedRow(row).sourceKey),
   );
   assert.equal(sharedKeys.size, sharedUrlRows.length);
+}
+passed += 1;
+
+console.log("dc award radar contacts + nationwide payload");
+{
+  const base = PHASE2_DC_AWARD_SIGNAL_SEEDS[0];
+  assert.ok(base);
+  const withoutContact = prepareDcAwardRadarSeedRow(base);
+  const withContact = prepareDcAwardRadarSeedRow({
+    ...base,
+    contactName: "Jane Operator",
+    contactTitle: "BD Lead",
+    email: "jane@example.com",
+    phone: "555-0100",
+    linkedinUrl: "https://www.linkedin.com/in/jane",
+    companyWebsite: "https://example.com",
+    contactNotes: "Hermes: permit applicant; med confidence",
+  });
+  assert.equal(withoutContact.sourceKey, withContact.sourceKey);
+  assert.equal(
+    withContact.sourceKey,
+    buildDcAwardSignalSourceKey({
+      sourceUrl: base.sourceUrl,
+      projectOrCampus: base.projectOrCampus,
+      stageSignal: base.stageSignal,
+    }),
+  );
+  assert.equal(withContact.contactName, "Jane Operator");
+  assert.deepEqual(pickDefinedContactFields(base), {});
+  assert.deepEqual(pickDefinedContactFields({ phone: "  555-0100  " }), {
+    phone: "555-0100",
+  });
+
+  const csv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,contact_name,phone,contact_notes",
+    "Phoenix AZ,Example Campus,Permit Issued,Electrical,Acme GC,GC,2026-09-01,https://example.com/permit/1,County permit,high,New market signal,n,Pat Contact,480-555-0199,Hermes LinkedIn; high",
+  ].join("\n");
+  const nationwide = parseDcAwardRadarNationwidePayload(csv);
+  assert.equal(nationwide.format, "csv");
+  assert.equal(nationwide.rows[0]?.market, "Phoenix AZ");
+  assert.equal(nationwide.rows[0]?.contactName, "Pat Contact");
+  assert.equal(nationwide.rows[0]?.phone, "480-555-0199");
+  const preparedNationwide = prepareDcAwardRadarSeedRow(nationwide.rows[0]!);
+  assert.equal(preparedNationwide.market, "Phoenix AZ");
+
+  const contactCsv = [
+    "source_url,project_or_campus,stage_signal,contact_name,email",
+    `${base.sourceUrl},${base.projectOrCampus},${base.stageSignal},Pat Contact,pat@example.com`,
+  ].join("\n");
+  const contacts = parseDcAwardRadarContactPayload(contactCsv);
+  assert.equal(contacts.rows[0]?.contactName, "Pat Contact");
+  assert.equal(
+    buildDcAwardSignalSourceKey({
+      sourceUrl: contacts.rows[0]!.sourceUrl!,
+      projectOrCampus: contacts.rows[0]!.projectOrCampus!,
+      stageSignal: contacts.rows[0]!.stageSignal!,
+    }),
+    withoutContact.sourceKey,
+  );
+
+  assert.equal(DC_AWARD_OPERATOR_UPSERT_MAX_ROWS, 100);
+  assert.equal(chunkOperatorRows(new Array(120).fill(0)).length, 2);
+  assert.throws(
+    () => assertBoundedOperatorRows(101, "Import nationwide refresh"),
+    /100-row one-shot cap/,
+  );
+  assert.throws(
+    () =>
+      parseBoundedDcAwardRadarNationwidePayload(
+        JSON.stringify(
+          new Array(101).fill(null).map((_, i) => ({
+            market: "Phoenix AZ",
+            projectOrCampus: `Campus ${i}`,
+            stageSignal: "Permit Issued",
+            tradeFocus: "Electrical",
+            company: "Acme",
+            roleIfKnown: "GC",
+            signalDate: "2026-09-01",
+            sourceUrl: `https://example.com/p/${i}`,
+            sourceType: "County permit",
+            confidence: "high",
+            whyItMattersForDlc: "x",
+            notes: "y",
+          })),
+        ),
+      ),
+    /100-row one-shot cap/,
+  );
 }
 passed += 1;
 

@@ -1,0 +1,89 @@
+# DC award radar — nationwide + contact enrichment
+
+**Route:** `/operations/dc-award-radar`  
+**Table:** Convex `dcAwardSignals` (platform catalog, not org-scoped)  
+**CLI:** `npm run import:dc-award-radar` (from `lender-app/`)
+
+GHL sync and outbound messages are **out of scope**. Convex does **not** scrape the web, poll, or schedule cron/scheduler pumps.
+
+## Loop / usage fail-closed
+
+| Rule | How this feature complies |
+|------|---------------------------|
+| No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron |
+| No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence indexes |
+| No polling | One-shot mutations only; UI uses a single `useQuery` |
+| Bounded writes | Operator payloads capped at **100 rows** per mutation |
+| Idempotency | `sourceKey` = normalized `sourceUrl` + project + stage |
+
+## Hermes → CSV → import (nationwide)
+
+Research and contact finding run **outside Convex** (Hermes / ops). The radar only stores the result.
+
+1. Hermes (or an operator) researches any **US market** — not limited to Ashburn VA, Dallas–Fort Worth TX, or Columbus OH.
+2. Export a CSV or JSON array (headers below). Empty contact cells are allowed.
+3. Import:
+   - **CLI:** `npm run import:dc-award-radar -- ./path/to/nationwide.csv`
+   - **UI:** signed-in operator controls on the radar page → paste payload → **Import nationwide refresh** (operator secret).
+4. Re-runs upsert the same `sourceKey`. Contact-only updates never insert a new project.
+
+Example payload: `docs/operations/dc-award-radar.nationwide.example.csv` (Phoenix AZ — proves markets are not locked to the original three).
+
+Phase 2 bundled seed (29 rows) remains available with no file argument:
+
+```bash
+npm run import:dc-award-radar
+```
+
+## Contact refresh (no duplicate projects)
+
+Contact enrichment is Hermes/ops-driven. Use a contact-only payload keyed by `source_key` **or** `source_url` + `project_or_campus` + `stage_signal`.
+
+```bash
+npm run import:dc-award-radar -- --contacts ./path/to/contacts.csv
+```
+
+Or paste the same payload into **Refresh contacts** on the radar page.
+
+- Matching rows are patched (contact fields only).
+- Missing keys are **skipped**.
+- **No insert** — this path cannot create a second project.
+
+A Phase 2 re-import does not wipe Hermes contacts: bundled seed rows omit contact fields, so existing values are left in place.
+
+## CSV / JSON columns
+
+| CSV | Stored field | Notes |
+|-----|----------------|-------|
+| `market` | `market` | Free-text; any US market |
+| `project_or_campus` | `projectOrCampus` | Part of `sourceKey` |
+| `stage_signal` | `stageSignal` | Part of `sourceKey` |
+| `trade_focus` | `tradeFocus` | |
+| `company` | `company` | |
+| `role_if_known` | `roleIfKnown` | |
+| `signal_date` | `signalDate` | |
+| `source_url` | `sourceUrl` | Part of `sourceKey` (normalized) |
+| `source_type` | `sourceType` | |
+| `confidence` | `confidence` | `high` / `med` / `low` |
+| `why_it_matters_for_DLC` | `whyItMattersForDlc` | |
+| `notes` | `notes` | |
+| `contact_name` | `contactName` | Optional; empty OK |
+| `contact_title` | `contactTitle` | Optional |
+| `email` | `email` | Optional |
+| `phone` | `phone` | Cell or main — labeled in UI |
+| `linkedin_url` | `linkedinUrl` | Optional |
+| `company_website` | `companyWebsite` | Optional |
+| `contact_notes` | `contactNotes` | Cite how found / confidence |
+| `source_key` | lookup only | Contact-only rows |
+
+JSON may use the camelCase field names. Payload may also be `{ "rows": [ ... ] }`.
+
+## UI
+
+- Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.
+- Contact name/title/phone show in the table; email, LinkedIn, website, and contact notes expand per row.
+- Operator secret matches `DATA_MIGRATION_ADMIN_SECRET` (fallback `ORG_INTEGRITY_ADMIN_SECRET`).
+
+## Convex deploy
+
+Schema/function changes must be on the target deployment (`npx convex dev` locally, or production Convex deploy when shipping) **before** import. This PR does not merge or deploy to production unless explicitly asked.
