@@ -10,21 +10,32 @@ GHL sync and outbound messages are **out of scope**. Convex does **not** scrape 
 
 | Rule | How this feature complies |
 |------|---------------------------|
-| No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron |
+| No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron. Hermes wake is a **client-called** one-shot action (`requestHermesScrape`) — never scheduled |
 | No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence indexes |
-| No polling | One-shot mutations only; UI uses a single `useQuery` |
+| No polling | One-shot mutations/actions only; UI uses a single `useQuery` |
 | Bounded writes | Operator payloads capped at **100 rows** per mutation |
 | Idempotency | `sourceKey` = normalized `sourceUrl` + project + stage |
+| No in-app scrape | Web research stays in Hermes; Convex only POSTs the webhook or stores imported rows |
+
+## Hermes scrape trigger (primary)
+
+Ops refresh is a **Hermes scrape webhook**, not paste-CSV-only.
+
+1. On `/operations/dc-award-radar`, enter the operator secret and click **Scrape with Hermes** (mode: nationwide / contacts / both).
+2. Convex action `dcAwardRadarActions.requestHermesScrape` POSTs one-shot JSON to `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_URL` (set on the **Convex** dashboard). Optional auth: `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_AUTHORIZATION` or `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_KEY`.
+3. Payload shape: `{ kind: "dc_award_radar_scrape", mode, requestedBy, requestedAt, notes?, source: "lfe_dc_award_radar_ops" }`.
+4. GrokBot wakes Cursor Cloud Minion / Hermes. Hermes researches **public** sources outside this app. Minion (or ops) imports CSV afterward.
+5. This app does **not** scrape, cron, poll, or schedule. If the webhook URL is unset, the UI errors clearly and **Manual CSV import** remains available.
 
 ## Hermes → CSV → import (nationwide)
 
 Research and contact finding run **outside Convex** (Hermes / ops). The radar only stores the result.
 
-1. Hermes (or an operator) researches any **US market** — not limited to Ashburn VA, Dallas–Fort Worth TX, or Columbus OH.
-2. Export a CSV or JSON array (headers below). Empty contact cells are allowed.
+1. Trigger Hermes via **Scrape with Hermes**, or have an operator research any **US market** — not limited to Ashburn VA, Dallas–Fort Worth TX, or Columbus OH.
+2. Export a CSV or JSON array (headers below). Empty contact cells are allowed; do not invent contacts. Prefer owner/principal cell/direct phone and direct email (`phoneType` / `emailType`).
 3. Import:
    - **CLI:** `npm run import:dc-award-radar -- ./path/to/nationwide.csv`
-   - **UI:** signed-in operator controls on the radar page → paste payload → **Import nationwide refresh** (operator secret).
+   - **UI:** **Manual CSV import (advanced)** on the radar page → paste payload → **Import nationwide refresh** (operator secret).
 4. Re-runs upsert the same `sourceKey`. Contact-only updates never insert a new project.
 
 Example payload: `docs/operations/dc-award-radar.nationwide.example.csv` (Phoenix AZ — proves markets are not locked to the original three).
@@ -43,7 +54,7 @@ Contact enrichment is Hermes/ops-driven. Use a contact-only payload keyed by `so
 npm run import:dc-award-radar -- --contacts ./path/to/contacts.csv
 ```
 
-Or paste the same payload into **Refresh contacts** on the radar page.
+Or paste the same payload into **Manual CSV import → Refresh contacts** on the radar page.
 
 - Matching rows are patched (contact fields only).
 - Missing keys are **skipped**.
@@ -85,6 +96,7 @@ JSON may use the camelCase field names. Payload may also be `{ "rows": [ ... ] }
 - Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.
 - **Owner / principal** column shows name, title, **Cell (likely)** / typed phone, and direct vs generic email. Expand for LinkedIn, website, and why-cell/direct notes.
 - Operator secret matches `DATA_MIGRATION_ADMIN_SECRET` (fallback `ORG_INTEGRITY_ADMIN_SECRET`).
+- **Scrape with Hermes** is the primary refresh control; paste/CLI import is the fallback when the webhook is unset or Hermes is unavailable.
 
 ## Convex deploy
 

@@ -1,0 +1,154 @@
+/**
+ * One-shot Hermes scrape trigger for DC award radar.
+ *
+ * Ops click "Scrape with Hermes" → this action POSTs to the GrokBot /
+ * Cursor Cloud Minion webhook. Hermes researches public sources outside
+ * Convex; Minion (or ops) imports CSV later via operatorUpsert*.
+ *
+ * Fail-closed: no scheduler, no cron, no polling, no scrape, no .collect().
+ * Client calls this action directly (fetch requires an action; we do not
+ * schedule an internalAction).
+ */
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+import { assertDataMigrationAdmin } from "./migrationAdminAuth";
+
+const scrapeModeV = v.union(
+  v.literal("nationwide"),
+  v.literal("contacts"),
+  v.literal("both"),
+);
+
+const NOTES_MAX_CHARS = 500;
+const REQUESTED_BY_MAX_CHARS = 120;
+
+function resolveHermesScrapeWebhookUrl(): string | null {
+  const url = process.env.GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_URL?.trim() ?? "";
+  return url || null;
+}
+
+/**
+ * Prefer full Authorization header from routine panel env.
+ * Else Bearer from key env. Never log the resolved value.
+ */
+function resolveHermesScrapeAuthorizationHeader(): string | null {
+  const raw =
+    process.env.GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_AUTHORIZATION?.trim() ?? "";
+  if (raw) return raw;
+  const key = process.env.GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_KEY?.trim() ?? "";
+  if (!key) return null;
+  if (/^bearer\s+/i.test(key)) return key;
+  return `Bearer ${key}`;
+}
+
+function clampOptionalText(
+  value: string | undefined,
+  maxChars: number,
+  label: string,
+): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length > maxChars) {
+    throw new Error(`${label} must be at most ${maxChars} characters.`);
+  }
+  return trimmed;
+}
+
+/**
+ * Operator-gated one-shot webhook POST. Wakes Hermes via GrokBot.
+ * Does not scrape, schedule, or import rows.
+ */
+export const requestHermesScrape = action({
+  args: {
+    operatorSecret: v.string(),
+    mode: scrapeModeV,
+    requestedBy: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+  returns: v.object({
+    ok: v.boolean(),
+    skipped: v.optional(v.boolean()),
+    reason: v.optional(v.string()),
+    mode: scrapeModeV,
+    requestedAt: v.number(),
+  }),
+  handler: async (_ctx, args) => {
+    assertDataMigrationAdmin(args.operatorSecret);
+
+    const requestedAt = Date.now();
+    const requestedBy =
+      clampOptionalText(args.requestedBy, REQUESTED_BY_MAX_CHARS, "requestedBy") ??
+      "dc_award_radar_ops";
+    const notes = clampOptionalText(args.notes, NOTES_MAX_CHARS, "notes");
+
+    const url = resolveHermesScrapeWebhookUrl();
+    if (!url) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: "missing_url",
+        mode: args.mode,
+        requestedAt,
+      };
+    }
+
+    const payload: Record<string, unknown> = {
+      kind: "dc_award_radar_scrape",
+      mode: args.mode,
+      requestedBy,
+      requestedAt,
+      source: "lfe_dc_award_radar_ops",
+    };
+    if (notes) {
+      payload.notes = notes;
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "User-Agent": "loanflowengine-dc-award-radar",
+    };
+    const authorization = resolveHermesScrapeAuthorizationHeader();
+    if (authorization) {
+      headers.Authorization = authorization;
+    }
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errBody = (await res.text()).slice(0, 300);
+        console.error(
+          "dcAwardRadar: Hermes scrape webhook failed",
+          res.status,
+          errBody,
+        );
+        return {
+          ok: false,
+          reason: `http_${res.status}`,
+          mode: args.mode,
+          requestedAt,
+        };
+      }
+
+      return {
+        ok: true,
+        mode: args.mode,
+        requestedAt,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown_error";
+      console.error("dcAwardRadar: Hermes scrape webhook threw", message);
+      return {
+        ok: false,
+        reason: message.slice(0, 240),
+        mode: args.mode,
+        requestedAt,
+      };
+    }
+  },
+});
