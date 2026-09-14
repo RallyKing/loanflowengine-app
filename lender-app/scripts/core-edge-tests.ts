@@ -51,10 +51,27 @@ import {
   dcAwardEmailUiLabel,
   dcAwardPhoneUiLabel,
   normalizeSourceUrl,
+  pickDefinedCampusFields,
   pickDefinedContactFields,
   prepareDcAwardRadarSeedRow,
   uniquePreparedPhase2SourceKeys,
 } from "../lib/dcAwardRadar";
+import {
+  applyKnownCampusAndRemaps,
+  DC21_P2_LEGACY_SOURCE_URL,
+  DC21_P2_PROJECT,
+  DC21_P2_SOURCE_URL,
+  DC21_P2_STAGE,
+  DC21_P3_SOURCE_URL,
+  EQUINIX_DC17_CAMPUS_KEY,
+  EQUINIX_DC17_PROJECT,
+  EQUINIX_DC21_CAMPUS_KEY,
+  groupDcAwardRadarSignals,
+  legacySourceKeysForPrepared,
+  NTT_VA6_CAMPUS_KEY,
+  pickCampusGroupContact,
+  VANTAGE_OH1_CAMPUS_KEY,
+} from "../lib/dcAwardRadarCampus";
 import {
   DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
   assertBoundedOperatorRows,
@@ -1508,6 +1525,254 @@ console.log("dc award radar contacts + nationwide payload");
       ),
     /100-row one-shot cap/,
   );
+}
+passed += 1;
+
+console.log("dc award radar campus grouping + remaps");
+{
+  const p2 = PHASE2_DC_AWARD_SIGNAL_SEEDS.find((row) =>
+    row.projectOrCampus.includes("DC21-P2"),
+  );
+  const p3 = PHASE2_DC_AWARD_SIGNAL_SEEDS.find((row) =>
+    row.projectOrCampus.includes("DC21-P3"),
+  );
+  const dc17 = PHASE2_DC_AWARD_SIGNAL_SEEDS.find((row) =>
+    row.projectOrCampus.includes("DC17"),
+  );
+  assert.ok(p2 && p3 && dc17);
+  assert.equal(p2.sourceUrl, DC21_P2_SOURCE_URL);
+  assert.notEqual(normalizeSourceUrl(p2.sourceUrl), normalizeSourceUrl(p3.sourceUrl));
+  assert.equal(
+    normalizeSourceUrl(p3.sourceUrl),
+    normalizeSourceUrl(DC21_P3_SOURCE_URL),
+  );
+  assert.equal(dc17.projectOrCampus, EQUINIX_DC17_PROJECT);
+  assert.equal(
+    PHASE2_DC_AWARD_SIGNAL_SEEDS.some((row) =>
+      row.projectOrCampus.includes("Beaumeade Parcel C2"),
+    ),
+    false,
+  );
+  assert.equal(p2.campusKey, EQUINIX_DC21_CAMPUS_KEY);
+  assert.equal(dc17.campusKey, EQUINIX_DC17_CAMPUS_KEY);
+  assert.notEqual(p2.campusKey, dc17.campusKey);
+  assert.equal(p3.isPrimaryInCampus, true);
+  assert.equal(p2.isPrimaryInCampus, false);
+
+  const nttKeys = new Set(
+    PHASE2_DC_AWARD_SIGNAL_SEEDS.filter((row) =>
+      row.projectOrCampus.includes("NTT/VA6"),
+    ).map((row) => row.campusKey),
+  );
+  assert.deepEqual([...nttKeys], [NTT_VA6_CAMPUS_KEY]);
+
+  const vantageKeys = new Set(
+    PHASE2_DC_AWARD_SIGNAL_SEEDS.filter((row) =>
+      row.projectOrCampus.toLowerCase().includes("vantage oh1"),
+    ).map((row) => row.campusKey),
+  );
+  assert.deepEqual([...vantageKeys], [VANTAGE_OH1_CAMPUS_KEY]);
+
+  const remappedP2 = applyKnownCampusAndRemaps({
+    market: "Ashburn VA",
+    projectOrCampus: DC21_P2_PROJECT,
+    stageSignal: DC21_P2_STAGE,
+    tradeFocus: "Electrical",
+    company: "DPR Construction",
+    roleIfKnown: "GC",
+    signalDate: "2025-11-07",
+    sourceUrl: DC21_P2_LEGACY_SOURCE_URL,
+    sourceType: "County permit (MLQ.ai)",
+    confidence: "high",
+    whyItMattersForDlc: "x",
+    notes: "Permit BLDC-2025-030931",
+  });
+  assert.equal(normalizeSourceUrl(remappedP2.sourceUrl), normalizeSourceUrl(DC21_P2_SOURCE_URL));
+  assert.equal(remappedP2.campusKey, EQUINIX_DC21_CAMPUS_KEY);
+
+  const remappedDc17 = applyKnownCampusAndRemaps({
+    ...dc17,
+    projectOrCampus: "Beaumeade Parcel C2 (44710 Performance Cir)",
+    campusKey: undefined,
+    campusName: undefined,
+    isPrimaryInCampus: undefined,
+  });
+  assert.equal(remappedDc17.projectOrCampus, EQUINIX_DC17_PROJECT);
+  assert.equal(remappedDc17.campusKey, EQUINIX_DC17_CAMPUS_KEY);
+
+  const preparedP2 = prepareDcAwardRadarSeedRow(p2);
+  const legacyKeys = legacySourceKeysForPrepared(preparedP2);
+  assert.ok(legacyKeys.length >= 1);
+  assert.ok(
+    legacyKeys.includes(
+      buildDcAwardSignalSourceKey({
+        sourceUrl: DC21_P2_LEGACY_SOURCE_URL,
+        projectOrCampus: DC21_P2_PROJECT,
+        stageSignal: DC21_P2_STAGE,
+      }),
+    ),
+  );
+
+  const grouped = groupDcAwardRadarSignals([
+    {
+      _id: "p3",
+      market: "Ashburn VA",
+      projectOrCampus: p3.projectOrCampus,
+      stageSignal: p3.stageSignal,
+      tradeFocus: p3.tradeFocus,
+      company: "DPR Construction",
+      roleIfKnown: "GC",
+      signalDate: p3.signalDate,
+      sourceUrl: p3.sourceUrl,
+      sourceType: p3.sourceType,
+      confidence: "high",
+      whyItMattersForDlc: p3.whyItMattersForDlc,
+      notes: p3.notes,
+      campusKey: EQUINIX_DC21_CAMPUS_KEY,
+      campusName: "Equinix DC21 (22175 Beaumeade Cir)",
+      isPrimaryInCampus: true,
+      contactName: "George Pfeffer",
+      contactTitle: "CEO",
+    },
+    {
+      _id: "p2",
+      market: "Ashburn VA",
+      projectOrCampus: p2.projectOrCampus,
+      stageSignal: p2.stageSignal,
+      tradeFocus: p2.tradeFocus,
+      company: "DPR Construction",
+      roleIfKnown: "GC",
+      signalDate: p2.signalDate,
+      sourceUrl: p2.sourceUrl,
+      sourceType: p2.sourceType,
+      confidence: "high",
+      whyItMattersForDlc: p2.whyItMattersForDlc,
+      notes: p2.notes,
+      campusKey: EQUINIX_DC21_CAMPUS_KEY,
+      campusName: "Equinix DC21 (22175 Beaumeade Cir)",
+      isPrimaryInCampus: false,
+      contactName: "George Pfeffer",
+    },
+    {
+      _id: "dc17",
+      market: "Ashburn VA",
+      projectOrCampus: dc17.projectOrCampus,
+      stageSignal: dc17.stageSignal,
+      tradeFocus: dc17.tradeFocus,
+      company: "DPR Construction",
+      roleIfKnown: "GC",
+      signalDate: dc17.signalDate,
+      sourceUrl: dc17.sourceUrl,
+      sourceType: dc17.sourceType,
+      confidence: "high",
+      whyItMattersForDlc: dc17.whyItMattersForDlc,
+      notes: dc17.notes,
+      campusKey: EQUINIX_DC17_CAMPUS_KEY,
+      campusName: "Equinix DC17 (44710 Performance Cir)",
+      isPrimaryInCampus: true,
+      contactName: "George Pfeffer",
+    },
+  ]);
+  assert.equal(grouped.length, 2);
+  const dc21Group = grouped.find((g) => g.campusKey === EQUINIX_DC21_CAMPUS_KEY);
+  const dc17Group = grouped.find((g) => g.campusKey === EQUINIX_DC17_CAMPUS_KEY);
+  assert.ok(dc21Group && dc17Group);
+  assert.equal(dc21Group.signals.length, 2);
+  assert.equal(dc17Group.signals.length, 1);
+  assert.equal(dc21Group.contact.contactName, "George Pfeffer");
+  assert.equal(dc17Group.contact.contactName, "George Pfeffer");
+
+  const primaryWins = pickCampusGroupContact([
+    {
+      ...grouped[0]!.signals[0]!,
+      _id: "empty",
+      isPrimaryInCampus: false,
+      contactName: undefined,
+      email: undefined,
+      phone: undefined,
+      linkedinUrl: undefined,
+    },
+    {
+      ...grouped[0]!.signals[0]!,
+      _id: "secondary",
+      isPrimaryInCampus: false,
+      contactName: "Other Person",
+    },
+    {
+      ...grouped[0]!.signals[0]!,
+      _id: "primary",
+      isPrimaryInCampus: true,
+      contactName: "Preferred Contact",
+    },
+  ]);
+  assert.equal(primaryWins.contactName, "Preferred Contact");
+
+  const companyFallback = groupDcAwardRadarSignals([
+    {
+      _id: "a1",
+      market: "Phoenix AZ",
+      projectOrCampus: "Campus A",
+      stageSignal: "Permit Issued",
+      tradeFocus: "Electrical",
+      company: "Acme Construction",
+      roleIfKnown: "GC",
+      signalDate: "2026-01-01",
+      sourceUrl: "https://example.com/a1",
+      sourceType: "County permit",
+      confidence: "high",
+      whyItMattersForDlc: "x",
+      notes: "n",
+      contactName: "Pat Contact",
+    },
+    {
+      _id: "a2",
+      market: "Phoenix AZ",
+      projectOrCampus: "Campus B",
+      stageSignal: "Permit Issued",
+      tradeFocus: "Electrical",
+      company: "Acme Construction",
+      roleIfKnown: "GC",
+      signalDate: "2026-02-01",
+      sourceUrl: "https://example.com/a2",
+      sourceType: "County permit",
+      confidence: "med",
+      whyItMattersForDlc: "x",
+      notes: "n",
+    },
+    {
+      _id: "b1",
+      market: "Phoenix AZ",
+      projectOrCampus: "Other",
+      stageSignal: "Permit Issued",
+      tradeFocus: "Electrical",
+      company: "Beta GC",
+      roleIfKnown: "GC",
+      signalDate: "2026-03-01",
+      sourceUrl: "https://example.com/b1",
+      sourceType: "County permit",
+      confidence: "low",
+      whyItMattersForDlc: "x",
+      notes: "n",
+    },
+  ]);
+  assert.equal(companyFallback.length, 2);
+  const acme = companyFallback.find((g) => g.campusName === "Acme Construction");
+  assert.ok(acme);
+  assert.equal(acme.signals.length, 2);
+  assert.equal(acme.contact.contactName, "Pat Contact");
+
+  const campusCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,campus_key,campus_name,is_primary_in_campus",
+    "Phoenix AZ,Example Campus,Permit Issued,Electrical,Acme GC,GC,2026-09-01,https://example.com/permit/2,County permit,high,New market signal,n,custom-campus,Custom Campus,true",
+  ].join("\n");
+  const campusParsed = parseDcAwardRadarNationwidePayload(campusCsv);
+  assert.equal(campusParsed.rows[0]?.campusKey, "custom-campus");
+  assert.equal(campusParsed.rows[0]?.campusName, "Custom Campus");
+  assert.equal(campusParsed.rows[0]?.isPrimaryInCampus, true);
+  assert.deepEqual(pickDefinedCampusFields({ campusKey: "  keep-me  " }), {
+    campusKey: "keep-me",
+  });
+  assert.deepEqual(pickDefinedCampusFields({}), {});
 }
 passed += 1;
 

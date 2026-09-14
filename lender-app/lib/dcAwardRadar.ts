@@ -59,6 +59,13 @@ export type DcAwardRadarContactFields = {
   contactNotes?: string;
 };
 
+/** Display-merge only — does not delete permit history rows. */
+export type DcAwardRadarCampusFields = {
+  campusKey?: string;
+  campusName?: string;
+  isPrimaryInCampus?: boolean;
+};
+
 export type DcAwardRadarSeedRow = {
   market: string;
   projectOrCampus: string;
@@ -72,7 +79,8 @@ export type DcAwardRadarSeedRow = {
   confidence: DcAwardRadarConfidence;
   whyItMattersForDlc: string;
   notes: string;
-} & DcAwardRadarContactFields;
+} & DcAwardRadarContactFields &
+  DcAwardRadarCampusFields;
 
 export type DcAwardRadarPreparedRow = {
   sourceKey: string;
@@ -88,7 +96,8 @@ export type DcAwardRadarPreparedRow = {
   confidence: DcAwardRadarConfidence;
   whyItMattersForDlc: string;
   notes: string;
-} & DcAwardRadarContactFields;
+} & DcAwardRadarContactFields &
+  DcAwardRadarCampusFields;
 
 const SOURCE_KEY_SEP = "::";
 
@@ -185,6 +194,24 @@ export function dcAwardEmailUiLabel(
  * `undefined` means "leave existing value" on upsert so Phase 2 re-runs
  * do not wipe Hermes enrichment.
  */
+export function pickDefinedCampusFields(
+  row: DcAwardRadarCampusFields,
+): DcAwardRadarCampusFields {
+  const out: DcAwardRadarCampusFields = {};
+  if (row.campusKey !== undefined) {
+    const campusKey = collapseWs(row.campusKey);
+    if (campusKey) out.campusKey = campusKey;
+  }
+  if (row.campusName !== undefined) {
+    const campusName = collapseWs(row.campusName);
+    if (campusName) out.campusName = campusName;
+  }
+  if (row.isPrimaryInCampus !== undefined) {
+    out.isPrimaryInCampus = row.isPrimaryInCampus;
+  }
+  return out;
+}
+
 export function pickDefinedContactFields(
   row: DcAwardRadarContactFields,
 ): DcAwardRadarContactFields {
@@ -258,6 +285,7 @@ export function prepareDcAwardRadarSeedRow(
     whyItMattersForDlc: collapseWs(row.whyItMattersForDlc),
     notes: collapseWs(row.notes),
     ...pickDefinedContactFields(row),
+    ...pickDefinedCampusFields(row),
   };
 }
 
@@ -280,6 +308,9 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
       "DPR is GC on active Equinix campus expansion; generator/chiller install signals MEP mobilization",
     notes:
       "Permit BLDC-2025-046039; 4 air-cooled chillers + 2 generators + LV skids",
+    campusKey: "equinix-dc21-22175-beaumeade",
+    campusName: "Equinix DC21 (22175 Beaumeade Cir)",
+    isPrimaryInCampus: true,
   },
   {
     market: "Ashburn VA",
@@ -290,12 +321,16 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
     roleIfKnown: "GC (permit applicant)",
     signalDate: "2025-11-07",
     sourceUrl:
-      "https://mlq.ai/permit-filings/usa/virginia/loudoun-county/bldc-2025-046039/",
+      "https://mlq.ai/permit-filings/usa/virginia/loudoun-county/bldc-2025-030931/",
     sourceType: "County permit (MLQ.ai)",
     confidence: "high",
     whyItMattersForDlc:
       "Follow-on to P3; generator install = critical power path",
-    notes: "Permit BLDC-2025-030931; $1.3M estimated cost",
+    notes:
+      "Permit BLDC-2025-030931; $1.3M estimated cost. Source URL is the BLDC-2025-030931 MLQ filing (not P3 BLDC-2025-046039).",
+    campusKey: "equinix-dc21-22175-beaumeade",
+    campusName: "Equinix DC21 (22175 Beaumeade Cir)",
+    isPrimaryInCampus: false,
   },
   {
     market: "Ashburn VA",
@@ -361,6 +396,9 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
     whyItMattersForDlc:
       "HITT is GC on NTT campus; Phase 12 fit-out = active MEP mobilization",
     notes: "Permit BLDC-2024-035654; $10.6M est., 21,594 SF",
+    campusKey: "ntt-va6-22280-randolph",
+    campusName: "NTT/VA6 (22280 Randolph Dr)",
+    isPrimaryInCampus: true,
   },
   {
     market: "Ashburn VA",
@@ -377,10 +415,13 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
     whyItMattersForDlc:
       "Major systems buildout in 304k SF; West/East data halls multi-level",
     notes: "Permit BLDC-2024-046848; $37M est.",
+    campusKey: "ntt-va6-22280-randolph",
+    campusName: "NTT/VA6 (22280 Randolph Dr)",
+    isPrimaryInCampus: false,
   },
   {
     market: "Ashburn VA",
-    projectOrCampus: "Beaumeade Parcel C2 (44710 Performance Cir)",
+    projectOrCampus: "Equinix DC17 (44710 Performance Cir)",
     stageSignal: "Permit Issued — NEW 4-story data center (12 data halls)",
     tradeFocus:
       "Electrical + Mechanical (generators, power equipment, mechanical penthouse)",
@@ -392,8 +433,12 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
     sourceType: "Loudoun County permit report",
     confidence: "high",
     whyItMattersForDlc:
-      "Ground-up 330k SF new build; 12 data halls + generators + power centers = major MEP package",
-    notes: "Permit BLDC-2024-057229; $89.5M est.",
+      "Ground-up 330k SF Equinix DC17 (not DC21); 12 data halls + generators + power centers = major MEP package",
+    notes:
+      "Permit BLDC-2024-057229; $89.5M est. Verified Equinix DC17 at 44710 Performance Cir — not DC21 (22175 Beaumeade Cir).",
+    campusKey: "equinix-dc17-44710-performance",
+    campusName: "Equinix DC17 (44710 Performance Cir)",
+    isPrimaryInCampus: true,
   },
   {
     market: "Dallas-Fort Worth TX",
@@ -504,6 +549,9 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
     whyItMattersForDlc:
       "$2B+ campus; 192MW; 1.5M SF; 3 buildings; 1st building 2025",
     notes: "Turner + Vantage press; AEP Ohio power",
+    campusKey: "vantage-oh1-new-albany",
+    campusName: "Vantage OH1 (New Albany)",
+    isPrimaryInCampus: true,
   },
   {
     market: "Columbus OH",
@@ -518,6 +566,9 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
     confidence: "high",
     whyItMattersForDlc: "500k SF; Turner GC confirmed; Building 1 of 3",
     notes: 'City dashboard: "Vantage, Building 1"',
+    campusKey: "vantage-oh1-new-albany",
+    campusName: "Vantage OH1 (New Albany)",
+    isPrimaryInCampus: false,
   },
   {
     market: "Columbus OH",
@@ -532,6 +583,9 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
     confidence: "high",
     whyItMattersForDlc: "500k SF; Turner GC; Building 2 of 3",
     notes: 'City dashboard: "Vantage, Building 2"',
+    campusKey: "vantage-oh1-new-albany",
+    campusName: "Vantage OH1 (New Albany)",
+    isPrimaryInCampus: false,
   },
   {
     market: "Columbus OH",
@@ -546,6 +600,9 @@ export const PHASE2_DC_AWARD_SIGNAL_SEEDS: readonly DcAwardRadarSeedRow[] = [
     confidence: "high",
     whyItMattersForDlc: "500k SF; Turner GC; Building 3 of 3",
     notes: 'City dashboard: "Vantage, Building 3"',
+    campusKey: "vantage-oh1-new-albany",
+    campusName: "Vantage OH1 (New Albany)",
+    isPrimaryInCampus: false,
   },
   {
     market: "Columbus OH",

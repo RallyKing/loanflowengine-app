@@ -8,12 +8,17 @@ import {
   DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
   PHASE2_DC_AWARD_SIGNAL_SEEDS,
   buildDcAwardSignalSourceKey,
+  pickDefinedCampusFields,
   pickDefinedContactFields,
   prepareDcAwardRadarSeedRow,
   type DcAwardRadarContactFields,
   type DcAwardRadarPreparedRow,
   type DcAwardRadarSeedRow,
 } from "../lib/dcAwardRadar";
+import {
+  applyKnownCampusAndRemaps,
+  legacySourceKeysForPrepared,
+} from "../lib/dcAwardRadarCampus";
 
 const LIST_TAKE_LIMIT = 200;
 
@@ -48,6 +53,12 @@ const contactFieldsV = {
   contactNotes: v.optional(v.string()),
 };
 
+const campusFieldsV = {
+  campusKey: v.optional(v.string()),
+  campusName: v.optional(v.string()),
+  isPrimaryInCampus: v.optional(v.boolean()),
+};
+
 const dcAwardSignalPublicV = v.object({
   _id: v.id("dcAwardSignals"),
   market: v.string(),
@@ -72,6 +83,9 @@ const dcAwardSignalPublicV = v.object({
   linkedinUrl: v.optional(v.string()),
   companyWebsite: v.optional(v.string()),
   contactNotes: v.optional(v.string()),
+  campusKey: v.optional(v.string()),
+  campusName: v.optional(v.string()),
+  isPrimaryInCampus: v.optional(v.boolean()),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
@@ -90,6 +104,7 @@ const seedRowV = v.object({
   whyItMattersForDlc: v.string(),
   notes: v.string(),
   ...contactFieldsV,
+  ...campusFieldsV,
 });
 
 const contactOnlyRowV = v.object({
@@ -132,6 +147,9 @@ function toPublicRow(row: Doc<"dcAwardSignals">) {
     linkedinUrl: row.linkedinUrl,
     companyWebsite: row.companyWebsite,
     contactNotes: row.contactNotes,
+    campusKey: row.campusKey,
+    campusName: row.campusName,
+    isPrimaryInCampus: row.isPrimaryInCampus,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -155,23 +173,68 @@ async function findBySourceKey(ctx: MutationCtx, sourceKey: string) {
     .unique();
 }
 
-function resolveContactLookupKey(row: {
+/** Indexed lookups only — try current sourceKey, then known remaps (P2 URL / DC17 rename). */
+async function findExistingPreparedRow(
+  ctx: MutationCtx,
+  prepared: DcAwardRadarPreparedRow,
+) {
+  const current = await findBySourceKey(ctx, prepared.sourceKey);
+  if (current) return current;
+  const legacyKeys = legacySourceKeysForPrepared(prepared);
+  for (const legacyKey of legacyKeys) {
+    const legacy = await findBySourceKey(ctx, legacyKey);
+    if (legacy) return legacy;
+  }
+  return null;
+}
+
+function prepareImportRow(row: DcAwardRadarSeedRow): DcAwardRadarPreparedRow {
+  return prepareDcAwardRadarSeedRow(applyKnownCampusAndRemaps(row));
+}
+
+function resolveContactLookupKeys(row: {
   sourceKey?: string;
   sourceUrl?: string;
   projectOrCampus?: string;
   stageSignal?: string;
-}): string | null {
+}): string[] {
+  const keys: string[] = [];
   const explicit = row.sourceKey?.trim();
-  if (explicit) return explicit;
+  if (explicit) keys.push(explicit);
   const sourceUrl = row.sourceUrl?.trim();
   const projectOrCampus = row.projectOrCampus?.trim();
   const stageSignal = row.stageSignal?.trim();
-  if (!sourceUrl || !projectOrCampus || !stageSignal) return null;
-  return buildDcAwardSignalSourceKey({
-    sourceUrl,
-    projectOrCampus,
-    stageSignal,
-  });
+  if (sourceUrl && projectOrCampus && stageSignal) {
+    keys.push(
+      buildDcAwardSignalSourceKey({
+        sourceUrl,
+        projectOrCampus,
+        stageSignal,
+      }),
+    );
+    const remapped = applyKnownCampusAndRemaps({
+      market: "lookup",
+      projectOrCampus,
+      stageSignal,
+      tradeFocus: "lookup",
+      company: "lookup",
+      roleIfKnown: "lookup",
+      signalDate: "lookup",
+      sourceUrl,
+      sourceType: "lookup",
+      confidence: "med",
+      whyItMattersForDlc: "lookup",
+      notes: "lookup",
+    });
+    keys.push(
+      buildDcAwardSignalSourceKey({
+        sourceUrl: remapped.sourceUrl,
+        projectOrCampus: remapped.projectOrCampus,
+        stageSignal: remapped.stageSignal,
+      }),
+    );
+  }
+  return [...new Set(keys)];
 }
 
 /**
@@ -188,8 +251,9 @@ async function upsertPreparedRows(
   let updated = 0;
 
   for (const prepared of rows) {
-    const existing = await findBySourceKey(ctx, prepared.sourceKey);
+    const existing = await findExistingPreparedRow(ctx, prepared);
     const contacts = pickDefinedContactFields(prepared);
+    const campus = pickDefinedCampusFields(prepared);
 
     if (existing) {
       await ctx.db.patch(existing._id, {
@@ -207,6 +271,7 @@ async function upsertPreparedRows(
         notes: prepared.notes,
         sourceKey: prepared.sourceKey,
         ...contacts,
+        ...campus,
         updatedAt: now,
       });
       updated += 1;
@@ -216,6 +281,7 @@ async function upsertPreparedRows(
     await ctx.db.insert("dcAwardSignals", {
       ...prepared,
       ...contacts,
+      ...campus,
       createdAt: now,
       updatedAt: now,
     });
@@ -232,7 +298,7 @@ async function upsertPreparedRows(
 
 async function upsertPhase2Seed(ctx: MutationCtx) {
   const prepared = PHASE2_DC_AWARD_SIGNAL_SEEDS.map((row) =>
-    prepareDcAwardRadarSeedRow(row),
+    prepareImportRow(row),
   );
   return await upsertPreparedRows(ctx, prepared);
 }
@@ -242,8 +308,49 @@ async function upsertNationwideRows(
   rows: DcAwardRadarSeedRow[],
 ) {
   assertBoundedRows(rows.length, "Import nationwide refresh");
-  const prepared = rows.map((row) => prepareDcAwardRadarSeedRow(row));
+  const prepared = rows.map((row) => prepareImportRow(row));
   return await upsertPreparedRows(ctx, prepared);
+}
+
+/**
+ * Stamp campusKey/campusName + known remaps (DC21-P2 URL, Parcel C2 → DC17)
+ * without overwriting Hermes contacts or unrelated seed fields.
+ * Indexed lookups only — Phase 2 corpus is 29 rows, fail-closed above cap.
+ */
+async function backfillCampusGroups(ctx: MutationCtx) {
+  assertBoundedRows(
+    PHASE2_DC_AWARD_SIGNAL_SEEDS.length,
+    "Backfill campus groups",
+  );
+  const now = Date.now();
+  let updated = 0;
+  let skipped = 0;
+
+  for (const seed of PHASE2_DC_AWARD_SIGNAL_SEEDS) {
+    const prepared = prepareImportRow(seed);
+    const existing = await findExistingPreparedRow(ctx, prepared);
+    if (!existing) {
+      skipped += 1;
+      continue;
+    }
+    const campus = pickDefinedCampusFields(prepared);
+    await ctx.db.patch(existing._id, {
+      projectOrCampus: prepared.projectOrCampus,
+      sourceUrl: prepared.sourceUrl,
+      sourceKey: prepared.sourceKey,
+      notes: prepared.notes,
+      ...campus,
+      updatedAt: now,
+    });
+    updated += 1;
+  }
+
+  return {
+    inserted: 0,
+    updated,
+    skipped,
+    total: PHASE2_DC_AWARD_SIGNAL_SEEDS.length,
+  };
 }
 
 async function upsertContactOnlyRows(
@@ -263,12 +370,16 @@ async function upsertContactOnlyRows(
   let skipped = 0;
 
   for (const row of rows) {
-    const sourceKey = resolveContactLookupKey(row);
-    if (!sourceKey) {
+    const lookupKeys = resolveContactLookupKeys(row);
+    if (lookupKeys.length === 0) {
       skipped += 1;
       continue;
     }
-    const existing = await findBySourceKey(ctx, sourceKey);
+    let existing = null;
+    for (const sourceKey of lookupKeys) {
+      existing = await findBySourceKey(ctx, sourceKey);
+      if (existing) break;
+    }
     if (!existing) {
       skipped += 1;
       continue;
@@ -406,5 +517,28 @@ export const operatorUpsertContacts = mutation({
   handler: async (ctx, args) => {
     assertDataMigrationAdmin(args.operatorSecret);
     return await upsertContactOnlyRows(ctx, args.rows);
+  },
+});
+
+/**
+ * One-shot campus stamp + known remaps. Does not insert rows or wipe contacts.
+ * No collect, cron, or scheduler.
+ */
+export const operatorBackfillCampusGroups = mutation({
+  args: {
+    operatorSecret: v.string(),
+  },
+  returns: importResultV,
+  handler: async (ctx, args) => {
+    assertDataMigrationAdmin(args.operatorSecret);
+    return await backfillCampusGroups(ctx);
+  },
+});
+
+export const backfillCampusGroupsInternal = internalMutation({
+  args: {},
+  returns: importResultV,
+  handler: async (ctx) => {
+    return await backfillCampusGroups(ctx);
   },
 });

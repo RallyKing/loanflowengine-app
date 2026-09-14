@@ -4933,6 +4933,8 @@ export default defineSchema({
    * Owner/principal contact fields are optional Hermes/ops enrichment.
    * Prefer cell/direct (phoneType/emailType); empty string allowed on text.
    * Contact-only patches must not insert new projects.
+   * campusKey/campusName/isPrimaryInCampus are display-merge only — do not
+   * delete child permit rows. DC17 ≠ DC21 (different addresses).
    * GHL sync is out of scope. No cron / scrape from Convex.
    */
   dcAwardSignals: defineTable({
@@ -4975,6 +4977,9 @@ export default defineSchema({
     linkedinUrl: v.optional(v.string()),
     companyWebsite: v.optional(v.string()),
     contactNotes: v.optional(v.string()),
+    campusKey: v.optional(v.string()),
+    campusName: v.optional(v.string()),
+    isPrimaryInCampus: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -4982,5 +4987,6 @@ export default defineSchema({
     .index("by_sourceKey", ["sourceKey"])
     .index("by_market", ["market"])
     .index("by_confidence", ["confidence"])
-    .index("by_market_and_confidence", ["market", "confidence"]),
+    .index("by_market_and_confidence", ["market", "confidence"])
+    .index("by_campusKey", ["campusKey"]),
 });
