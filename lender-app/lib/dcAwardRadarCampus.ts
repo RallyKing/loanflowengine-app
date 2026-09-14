@@ -50,6 +50,10 @@ export const DC21_P2_URL_NOTE =
   "Source URL is the BLDC-2025-030931 MLQ filing (not P3 BLDC-2025-046039).";
 export const DC17_IDENTITY_NOTE =
   "Verified Equinix DC17 at 44710 Performance Cir — not DC21 (22175 Beaumeade Cir).";
+export const EQUINIX_DC17_STAGE =
+  "Permit Issued — NEW 4-story data center (12 data halls)";
+export const EQUINIX_DC17_SOURCE_URL =
+  "https://www.loudoun.gov/DocumentCenter/View/215564/Building-Permits-Issued-May-1-31-2025";
 
 export type { DcAwardRadarCampusFields };
 
@@ -271,12 +275,78 @@ export function legacySourceKeysForPrepared(prepared: {
   return [...new Set(keys)].filter((key) => key !== prepared.sourceKey);
 }
 
+/** Stored campusKey wins; else known-family match so DC17≠DC21 before backfill. */
+export function resolveCampusGroupIdentity(
+  row: Pick<
+    DcAwardRadarGroupableRow,
+    "campusKey" | "campusName" | "company" | "projectOrCampus"
+  >,
+): { campusKey?: string; campusName?: string } {
+  const storedKey = row.campusKey?.trim();
+  const storedName = row.campusName?.trim();
+  if (storedKey) {
+    return {
+      campusKey: storedKey,
+      ...(storedName ? { campusName: storedName } : {}),
+    };
+  }
+  const matched = matchKnownCampusFamily(row);
+  if (!matched) return storedName ? { campusName: storedName } : {};
+  return {
+    campusKey: matched.campusKey,
+    campusName: storedName || matched.campusName,
+  };
+}
+
 export function dcAwardCampusGroupKey(
-  row: Pick<DcAwardRadarGroupableRow, "campusKey" | "company">,
+  row: Pick<
+    DcAwardRadarGroupableRow,
+    "campusKey" | "campusName" | "company" | "projectOrCampus"
+  >,
 ): string {
-  const campusKey = row.campusKey?.trim();
+  const campusKey = resolveCampusGroupIdentity(row).campusKey;
   if (campusKey) return `campus:${campusKey}`;
   return `company:${collapseWs(row.company).toLowerCase()}`;
+}
+
+export function knownLegacySourceKeyAliases(): ReadonlyMap<string, string> {
+  const p2New = buildDcAwardSignalSourceKey({
+    sourceUrl: DC21_P2_SOURCE_URL,
+    projectOrCampus: DC21_P2_PROJECT,
+    stageSignal: DC21_P2_STAGE,
+  });
+  const p2Legacy = buildDcAwardSignalSourceKey({
+    sourceUrl: DC21_P2_LEGACY_SOURCE_URL,
+    projectOrCampus: DC21_P2_PROJECT,
+    stageSignal: DC21_P2_STAGE,
+  });
+  const dc17New = buildDcAwardSignalSourceKey({
+    sourceUrl: EQUINIX_DC17_SOURCE_URL,
+    projectOrCampus: EQUINIX_DC17_PROJECT,
+    stageSignal: EQUINIX_DC17_STAGE,
+  });
+  const dc17Legacy = buildDcAwardSignalSourceKey({
+    sourceUrl: EQUINIX_DC17_SOURCE_URL,
+    projectOrCampus: BEAUMEADE_PARCEL_C2_LEGACY_PROJECT,
+    stageSignal: EQUINIX_DC17_STAGE,
+  });
+  return new Map([
+    [p2Legacy, p2New],
+    [dc17Legacy, dc17New],
+  ]);
+}
+
+export function mergeCampusRemapNotes(
+  existingNotes: string,
+  preparedNotes: string,
+): string {
+  let next = existingNotes.trim();
+  for (const extra of [DC21_P2_URL_NOTE, DC17_IDENTITY_NOTE]) {
+    if (preparedNotes.includes(extra) && !next.includes(extra)) {
+      next = next ? `${next} ${extra}` : extra;
+    }
+  }
+  return next;
 }
 
 export function dcAwardRowHasContact(
@@ -355,9 +425,12 @@ export function groupDcAwardRadarSignals(
     });
     const head = sortedSignals[0];
     if (!head) continue;
-    const campusKey = head.campusKey?.trim() || undefined;
+    const resolved = sortedSignals
+      .map((row) => resolveCampusGroupIdentity(row))
+      .find((identity) => identity.campusKey || identity.campusName);
+    const campusKey = resolved?.campusKey;
     const campusName =
-      sortedSignals.find((row) => row.campusName?.trim())?.campusName?.trim() ||
+      resolved?.campusName ||
       uniqueCompanies(sortedSignals)[0] ||
       head.company;
     groups.push({

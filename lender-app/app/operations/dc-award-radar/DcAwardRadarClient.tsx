@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { ChevronDown, ChevronRight, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -17,6 +17,7 @@ import {
   DC_AWARD_RADAR_CONFIDENCE,
   dcAwardEmailUiLabel,
   dcAwardPhoneUiLabel,
+  dcAwardSafeHttpUrl,
   type DcAwardRadarConfidence,
   type DcAwardRadarEmailType,
   type DcAwardRadarPhoneType,
@@ -41,6 +42,27 @@ const CONFIDENCE_LABEL: Record<DcAwardRadarConfidence, string> = {
 };
 
 const MARKET_DATALIST_ID = "dc-award-radar-markets";
+
+function SafeExternalLink({
+  href,
+  children,
+}: {
+  href?: string;
+  children: ReactNode;
+}) {
+  const safe = dcAwardSafeHttpUrl(href);
+  if (!safe) return <>{href || "—"}</>;
+  return (
+    <a
+      href={safe}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="break-all text-primary hover:underline"
+    >
+      {children}
+    </a>
+  );
+}
 
 function ConfidenceBadge({ value }: { value: DcAwardRadarConfidence }) {
   return (
@@ -87,35 +109,15 @@ function ContactExpanded({
       <div>
         <dt className="text-muted-foreground">LinkedIn</dt>
         <dd>
-          {linkedinUrl ? (
-            <a
-              href={linkedinUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="break-all text-primary hover:underline"
-            >
-              {linkedinUrl}
-            </a>
-          ) : (
-            "—"
-          )}
+          <SafeExternalLink href={linkedinUrl}>{linkedinUrl}</SafeExternalLink>
         </dd>
       </div>
       <div>
         <dt className="text-muted-foreground">Company website</dt>
         <dd>
-          {companyWebsite ? (
-            <a
-              href={companyWebsite}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="break-all text-primary hover:underline"
-            >
-              {companyWebsite}
-            </a>
-          ) : (
-            "—"
-          )}
+          <SafeExternalLink href={companyWebsite}>
+            {companyWebsite}
+          </SafeExternalLink>
         </dd>
       </div>
       <div className="sm:col-span-2">
@@ -218,14 +220,7 @@ function FlatSignalRow({
         </td>
         <td className="px-2 py-2 text-xs">
           <div>{row.sourceType}</div>
-          <a
-            href={row.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="break-all text-primary hover:underline"
-          >
-            Open source
-          </a>
+          <SafeExternalLink href={row.sourceUrl}>Open source</SafeExternalLink>
         </td>
       </tr>
       {expanded ? (
@@ -316,7 +311,7 @@ function GroupedCampusRow({
                 companyWebsite={group.contact.companyWebsite}
                 contactNotes={group.contact.contactNotes}
               />
-              <div className="overflow-x-auto max-md:touch-pan-x">
+              <div>
                 <table className="w-full min-w-[48rem] text-left text-xs">
                   <caption className="sr-only">
                     Child signals for {group.campusName}
@@ -354,14 +349,9 @@ function GroupedCampusRow({
                         </td>
                         <td className="px-2 py-1.5">
                           <div>{child.sourceType}</div>
-                          <a
-                            href={child.sourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="break-all text-primary hover:underline"
-                          >
+                          <SafeExternalLink href={child.sourceUrl}>
                             Open source
-                          </a>
+                          </SafeExternalLink>
                         </td>
                       </tr>
                     ))}

@@ -116,6 +116,19 @@ export function normalizeSourceUrl(raw: string): string {
   }
 }
 
+/** Fail closed for rendered hrefs — http(s) only. */
+export function dcAwardSafeHttpUrl(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export function collapseWs(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -260,6 +273,9 @@ export function prepareDcAwardRadarSeedRow(
   const sourceUrl = normalizeSourceUrl(row.sourceUrl);
   if (!sourceUrl) {
     throw new Error("dcAwardSignals seed row is missing sourceUrl.");
+  }
+  if (!dcAwardSafeHttpUrl(sourceUrl)) {
+    throw new Error("dcAwardSignals seed row sourceUrl must be http(s).");
   }
   if (!isDcAwardRadarConfidence(row.confidence)) {
     throw new Error(`Invalid confidence: ${row.confidence}`);

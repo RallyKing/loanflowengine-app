@@ -11,7 +11,7 @@ GHL sync and outbound messages are **out of scope**. Convex does **not** scrape 
 | Rule | How this feature complies |
 |------|---------------------------|
 | No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron. Hermes wake is a **client-called** one-shot action (`requestHermesScrape`) — never scheduled |
-| No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence/campusKey indexes |
+| No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence indexes. `by_campusKey` exists for lookups; grouping is client-side on the capped page |
 | No polling | One-shot mutations/actions only; UI uses a single `useQuery` |
 | Bounded writes | Operator payloads capped at **100 rows** per mutation |
 | Idempotency | `sourceKey` = normalized `sourceUrl` + project + stage |

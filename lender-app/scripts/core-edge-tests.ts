@@ -51,6 +51,7 @@ import {
   dcAwardEmailUiLabel,
   dcAwardPhoneUiLabel,
   normalizeSourceUrl,
+  dcAwardSafeHttpUrl,
   pickDefinedCampusFields,
   pickDefinedContactFields,
   prepareDcAwardRadarSeedRow,
@@ -1773,6 +1774,60 @@ console.log("dc award radar campus grouping + remaps");
     campusKey: "keep-me",
   });
   assert.deepEqual(pickDefinedCampusFields({}), {});
+
+  const unstamped = groupDcAwardRadarSignals([
+    {
+      _id: "p3-raw",
+      market: "Ashburn VA",
+      projectOrCampus: p3.projectOrCampus,
+      stageSignal: p3.stageSignal,
+      tradeFocus: p3.tradeFocus,
+      company: "DPR Construction",
+      roleIfKnown: "GC",
+      signalDate: p3.signalDate,
+      sourceUrl: p3.sourceUrl,
+      sourceType: p3.sourceType,
+      confidence: "high",
+      whyItMattersForDlc: p3.whyItMattersForDlc,
+      notes: p3.notes,
+    },
+    {
+      _id: "dc17-raw",
+      market: "Ashburn VA",
+      projectOrCampus: dc17.projectOrCampus,
+      stageSignal: dc17.stageSignal,
+      tradeFocus: dc17.tradeFocus,
+      company: "DPR Construction",
+      roleIfKnown: "GC",
+      signalDate: dc17.signalDate,
+      sourceUrl: dc17.sourceUrl,
+      sourceType: dc17.sourceType,
+      confidence: "high",
+      whyItMattersForDlc: dc17.whyItMattersForDlc,
+      notes: dc17.notes,
+    },
+  ]);
+  assert.equal(unstamped.length, 2);
+  assert.ok(unstamped.some((g) => g.campusKey === EQUINIX_DC21_CAMPUS_KEY));
+  assert.ok(unstamped.some((g) => g.campusKey === EQUINIX_DC17_CAMPUS_KEY));
+
+  assert.equal(
+    dcAwardSafeHttpUrl("https://mlq.ai/permit-filings/x"),
+    "https://mlq.ai/permit-filings/x",
+  );
+  assert.equal(dcAwardSafeHttpUrl("javascript:alert(1)"), undefined);
+  assert.equal(
+    dcAwardSafeHttpUrl("javascript://example.com/%0aalert(1)"),
+    undefined,
+  );
+  assert.throws(
+    () =>
+      prepareDcAwardRadarSeedRow({
+        ...p2,
+        sourceUrl: "javascript:alert(1)",
+      }),
+    /sourceUrl must be http/,
+  );
 }
 passed += 1;
 

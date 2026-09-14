@@ -17,7 +17,9 @@ import {
 } from "../lib/dcAwardRadar";
 import {
   applyKnownCampusAndRemaps,
+  knownLegacySourceKeyAliases,
   legacySourceKeysForPrepared,
+  mergeCampusRemapNotes,
 } from "../lib/dcAwardRadarCampus";
 
 const LIST_TAKE_LIMIT = 200;
@@ -201,6 +203,11 @@ function resolveContactLookupKeys(row: {
   const keys: string[] = [];
   const explicit = row.sourceKey?.trim();
   if (explicit) keys.push(explicit);
+  const aliases = knownLegacySourceKeyAliases();
+  if (explicit) {
+    const remapped = aliases.get(explicit);
+    if (remapped) keys.push(remapped);
+  }
   const sourceUrl = row.sourceUrl?.trim();
   const projectOrCampus = row.projectOrCampus?.trim();
   const stageSignal = row.stageSignal?.trim();
@@ -297,6 +304,7 @@ async function upsertPreparedRows(
 }
 
 async function upsertPhase2Seed(ctx: MutationCtx) {
+  assertBoundedRows(PHASE2_DC_AWARD_SIGNAL_SEEDS.length, "Phase 2 seed");
   const prepared = PHASE2_DC_AWARD_SIGNAL_SEEDS.map((row) =>
     prepareImportRow(row),
   );
@@ -334,12 +342,20 @@ async function backfillCampusGroups(ctx: MutationCtx) {
       continue;
     }
     const campus = pickDefinedCampusFields(prepared);
+    const remappedIdentity =
+      existing.projectOrCampus !== prepared.projectOrCampus ||
+      existing.sourceUrl !== prepared.sourceUrl ||
+      existing.sourceKey !== prepared.sourceKey;
     await ctx.db.patch(existing._id, {
-      projectOrCampus: prepared.projectOrCampus,
-      sourceUrl: prepared.sourceUrl,
-      sourceKey: prepared.sourceKey,
-      notes: prepared.notes,
       ...campus,
+      ...(remappedIdentity
+        ? {
+            projectOrCampus: prepared.projectOrCampus,
+            sourceUrl: prepared.sourceUrl,
+            sourceKey: prepared.sourceKey,
+            notes: mergeCampusRemapNotes(existing.notes, prepared.notes),
+          }
+        : {}),
       updatedAt: now,
     });
     updated += 1;
