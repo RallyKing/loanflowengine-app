@@ -487,10 +487,10 @@ function RadarTable() {
   );
 
   const signals = result?.signals;
-  const filteredSignals = useMemo(
-    () => filterSignalsByContactFilters(signals ?? [], contactFilters),
-    [signals, contactFilters],
-  );
+  const filteredSignals = useMemo(() => {
+    if (!signals) return [];
+    return filterSignalsByContactFilters(signals, contactFilters);
+  }, [signals, contactFilters]);
   const groups = useMemo(
     () => groupDcAwardRadarSignals(filteredSignals),
     [filteredSignals],
