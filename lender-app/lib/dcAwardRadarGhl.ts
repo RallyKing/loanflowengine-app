@@ -87,7 +87,8 @@ export type DcAwardGhlPushContact = {
   markets: string[];
   trades: string[];
   linkedinUrl?: string;
-  categories?: readonly string[];
+  /** Mutable to match Convex `v.array(v.string())` action args. */
+  categories?: string[];
 };
 
 export function slugDcAwardGhlTagPart(value: string): string {
@@ -171,7 +172,8 @@ export function uniqueContactToGhlPush(
     markets: contact.markets,
     trades: contact.trades,
     linkedinUrl: contact.linkedinUrl,
-    categories: contact.categories,
+    // Fresh mutable copy — Convex action args require `string[]`, not `readonly`.
+    categories: [...contact.categories],
   };
 }
 
