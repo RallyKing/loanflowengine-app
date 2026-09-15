@@ -7,7 +7,10 @@
  */
 
 import { collapseWs, dcAwardSafeHttpUrl } from "./dcAwardRadar";
-import type { DcAwardRadarUniqueContact } from "./dcAwardRadarContacts";
+import {
+  uniqueContactHasGhlIdentity,
+  type DcAwardRadarUniqueContact,
+} from "./dcAwardRadarContacts";
 
 export const DC_AWARD_RADAR_GHL_SOURCE = "dc-award-radar" as const;
 export const DC_AWARD_RADAR_GHL_TAG = "dc-award-radar" as const;
@@ -112,55 +115,83 @@ export function uniqueContactToGhlPush(
 
 export type DcAwardGhlContactBatch<T> = {
   batch: T[];
+  /** GHL-eligible (email or phone) before the one-shot cap. */
   total: number;
   sent: number;
   omitted: number;
   truncated: boolean;
+  uniqueTotal: number;
+  ineligible: number;
 };
 
-/** One-shot client batch — same cap the Convex action enforces. */
-export function selectDcAwardGhlContactBatch<T>(
-  contacts: readonly T[],
+/**
+ * Eligible (email or phone) first, then one-shot cap.
+ * Ineligible rows must not consume a slot.
+ */
+export function selectDcAwardGhlContactBatch(
+  contacts: readonly DcAwardRadarUniqueContact[],
   max = DC_AWARD_RADAR_GHL_MAX_CONTACTS,
-): DcAwardGhlContactBatch<T> {
+): DcAwardGhlContactBatch<DcAwardRadarUniqueContact> {
   const safeMax = Math.max(0, Math.floor(max));
-  const total = contacts.length;
-  const batch = contacts.slice(0, safeMax);
+  const eligible = contacts.filter(uniqueContactHasGhlIdentity);
+  const batch = eligible.slice(0, safeMax);
   const sent = batch.length;
-  const omitted = Math.max(0, total - sent);
+  const omitted = Math.max(0, eligible.length - sent);
   return {
     batch,
-    total,
+    total: eligible.length,
     sent,
     omitted,
     truncated: omitted > 0,
+    uniqueTotal: contacts.length,
+    ineligible: contacts.length - eligible.length,
   };
 }
 
 export function describeDcAwardGhlSendBatch(
   selection: Pick<
     DcAwardGhlContactBatch<unknown>,
-    "total" | "sent" | "omitted" | "truncated"
+    "total" | "sent" | "omitted" | "truncated" | "ineligible"
   >,
 ): {
   entityName: string;
   confirmPrompt: string;
   truncationNote: string | undefined;
 } {
-  if (selection.truncated) {
-    return {
-      entityName: `first ${selection.sent} of ${selection.total} unique contacts`,
-      confirmPrompt: `Send first ${selection.sent} of ${selection.total} unique contacts to HighLevel (tag-only)? No email or SMS. Remaining ${selection.omitted} stay on this page.`,
-      truncationNote: `Sending first ${selection.sent} of ${selection.total} (one-shot cap). Remaining ${selection.omitted} are not in this batch — use Download contacts CSV for the full filtered set.`,
-    };
-  }
+  const ofN = `${selection.sent} of ${selection.total}`;
+  const ineligibleNote =
+    selection.ineligible > 0
+      ? ` ${selection.ineligible} unique contact${
+          selection.ineligible === 1 ? "" : "s"
+        } lack email and phone and were not given a slot.`
+      : "";
   return {
-    entityName: `${selection.total} unique contact${
-      selection.total === 1 ? "" : "s"
-    }`,
-    confirmPrompt: `Send ${selection.total} unique contacts to HighLevel (tag-only)? No email or SMS.`,
-    truncationNote: undefined,
+    entityName: `sending ${ofN} GHL-eligible contacts`,
+    confirmPrompt: `Send ${ofN} GHL-eligible contacts to HighLevel (tag-only)? No email or SMS.${ineligibleNote}`,
+    truncationNote: selection.truncated
+      ? `Sending ${ofN} (one-shot cap ${DC_AWARD_RADAR_GHL_MAX_CONTACTS}). Remaining ${selection.omitted} eligible stay on this page — use Download contacts CSV for the full filtered set.`
+      : undefined,
   };
+}
+
+export function summarizeDcAwardGhlPushOutcome(input: {
+  created: number;
+  updated: number;
+  skipped: number;
+  tagFailed: number;
+  configured: boolean;
+  contactCount: number;
+}): { ok: boolean; reason?: string } {
+  if (!input.configured) {
+    return { ok: false, reason: "missing_credentials" };
+  }
+  if (input.contactCount < 1) {
+    return { ok: false, reason: "empty_batch" };
+  }
+  if (input.created + input.updated === 0) {
+    return { ok: false, reason: "all_skipped_or_failed" };
+  }
+  return { ok: true };
 }
 
 export function buildDcAwardGhlUpsertBody(

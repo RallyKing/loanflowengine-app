@@ -47,6 +47,7 @@ export function DcAwardRadarContactFilterChips({
 export function DcAwardRadarContactActions({
   uniqueCount,
   ghlEligibleCount,
+  ghlSendCount,
   downloadBusy,
   ghlBusy,
   onDownload,
@@ -54,12 +55,14 @@ export function DcAwardRadarContactActions({
 }: {
   uniqueCount: number;
   ghlEligibleCount: number;
+  ghlSendCount: number;
   downloadBusy: boolean;
   ghlBusy: boolean;
   onDownload: () => void;
   onGhlPush: () => void;
 }) {
-  const disabled = uniqueCount === 0 || downloadBusy || ghlBusy;
+  const downloadDisabled = uniqueCount === 0 || downloadBusy || ghlBusy;
+  const ghlDisabled = ghlSendCount === 0 || downloadBusy || ghlBusy;
   return (
     <div
       className="flex flex-wrap gap-2"
@@ -70,7 +73,7 @@ export function DcAwardRadarContactActions({
         type="button"
         size="sm"
         variant="outline"
-        disabled={disabled}
+        disabled={downloadDisabled}
         onClick={onDownload}
         data-testid="dc-award-download-contacts"
         aria-label={`Download ${uniqueCount} filtered unique contacts as CSV`}
@@ -82,14 +85,10 @@ export function DcAwardRadarContactActions({
         type="button"
         size="sm"
         variant="outline"
-        disabled={disabled}
+        disabled={ghlDisabled}
         onClick={onGhlPush}
         data-testid="dc-award-ghl-push"
-        aria-label={
-          uniqueCount > DC_AWARD_RADAR_GHL_MAX_CONTACTS
-            ? `Send first ${DC_AWARD_RADAR_GHL_MAX_CONTACTS} of ${uniqueCount} filtered unique contacts to HighLevel, tag only`
-            : `Send ${uniqueCount} filtered unique contacts to HighLevel, tag only`
-        }
+        aria-label={`Send ${ghlSendCount} of ${ghlEligibleCount} GHL-eligible contacts to HighLevel, tag only`}
         aria-busy={ghlBusy}
       >
         {ghlBusy ? (
@@ -108,10 +107,10 @@ export function DcAwardRadarContactActions({
         {uniqueCount} unique contact{uniqueCount === 1 ? "" : "s"} in the
         current filters
         {uniqueCount > 0
-          ? ` · ${ghlEligibleCount} in this GHL batch have email or phone`
+          ? ` · ${ghlEligibleCount} GHL-eligible (email or phone)`
           : ""}
-        {uniqueCount > DC_AWARD_RADAR_GHL_MAX_CONTACTS
-          ? ` · Send/handoff cap is first ${DC_AWARD_RADAR_GHL_MAX_CONTACTS} of ${uniqueCount}`
+        {ghlEligibleCount > 0
+          ? ` · Send/handoff is ${ghlSendCount} of ${ghlEligibleCount} (cap ${DC_AWARD_RADAR_GHL_MAX_CONTACTS})`
           : ""}
         . Download contacts CSV is the full filtered set. GHL is tag/create
         only — no SMS, email, sequences, or campaigns.

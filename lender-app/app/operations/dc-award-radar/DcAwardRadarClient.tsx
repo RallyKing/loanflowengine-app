@@ -47,7 +47,6 @@ import {
   collectUniqueDcAwardContacts,
   filterSignalsByContactFilters,
   toggleDcAwardContactFilter,
-  uniqueContactHasGhlIdentity,
   type DcAwardRadarContactFilterId,
 } from "@/lib/dcAwardRadarContacts";
 import {
@@ -504,10 +503,6 @@ function RadarTable() {
     () => selectDcAwardGhlContactBatch(uniqueContacts),
     [uniqueContacts],
   );
-  const ghlEligibleCount = useMemo(
-    () => ghlSendBatch.batch.filter(uniqueContactHasGhlIdentity).length,
-    [ghlSendBatch],
-  );
   const groupKeys = useMemo(
     () => groups.map((group) => group.groupKey),
     [groups],
@@ -584,7 +579,14 @@ function RadarTable() {
   }
 
   async function handleGhlPush() {
-    if (ghlSendBatch.sent === 0) return;
+    if (ghlSendBatch.sent === 0) {
+      setContactActionStatus({
+        kind: "error",
+        message:
+          "No GHL-eligible contacts (need email or phone). Nothing sent.",
+      });
+      return;
+    }
     const sendCopy = describeDcAwardGhlSendBatch(ghlSendBatch);
     const confirmed = confirmApi
       ? await confirmApi.confirm({
@@ -596,19 +598,19 @@ function RadarTable() {
             rows: [
               {
                 label: "Filtered unique",
+                value: String(ghlSendBatch.uniqueTotal),
+              },
+              {
+                label: "GHL-eligible (email or phone)",
                 value: String(ghlSendBatch.total),
               },
               {
                 label: "This send",
-                value: String(ghlSendBatch.sent),
+                value: `${ghlSendBatch.sent} of ${ghlSendBatch.total}`,
               },
               {
-                label: "Not in this batch",
+                label: "Eligible not in this batch",
                 value: String(ghlSendBatch.omitted),
-              },
-              {
-                label: "Have email or phone",
-                value: String(ghlEligibleCount),
               },
               {
                 label: "Tags",
@@ -635,9 +637,7 @@ function RadarTable() {
               tone: "attention",
             },
           ],
-          confirmLabel: ghlSendBatch.truncated
-            ? `Send first ${ghlSendBatch.sent}`
-            : "Send tag-only",
+          confirmLabel: `Send ${ghlSendBatch.sent} of ${ghlSendBatch.total}`,
           cancelLabel: "Cancel",
           variant: "transfer",
           testId: "dc-award-ghl-confirm",
@@ -651,14 +651,12 @@ function RadarTable() {
         memberUserKey: memberUserKey || undefined,
         contacts: ghlSendBatch.batch.map(uniqueContactToGhlPush),
       });
-      const capNote = ghlSendBatch.truncated
-        ? ` Sent first ${ghlSendBatch.sent} of ${ghlSendBatch.total}.`
-        : "";
+      const capNote = ` Sending ${ghlSendBatch.sent} of ${ghlSendBatch.total} GHL-eligible.`;
       if (!result.configured) {
         downloadFilteredContacts("ghl");
         setContactActionStatus({
-          kind: "ok",
-          detail: `HighLevel is not configured (${result.skipped} skipped).${capNote} Downloaded tag-only CSV for that same batch. Use Download contacts CSV for the full filtered set. No SMS or email.`,
+          kind: "error",
+          message: `HighLevel is not configured (${result.skipped} skipped).${capNote} Downloaded tag-only CSV for that same batch. Use Download contacts CSV for the full filtered set. No SMS or email.`,
         });
         return;
       }
@@ -666,9 +664,20 @@ function RadarTable() {
         result.tagFailed > 0
           ? ` ${result.tagFailed} tag-add failed.`
           : "";
+      const counts = `${result.created} created, ${result.updated} updated, ${result.skipped} skipped.${capNote}${tagNote} Tag-only — no email/SMS.`;
+      if (!result.ok) {
+        setContactActionStatus({
+          kind: "error",
+          message:
+            result.reason === "all_skipped_or_failed"
+              ? `HighLevel write failed: ${counts}`
+              : `HighLevel push did not succeed: ${counts}`,
+        });
+        return;
+      }
       setContactActionStatus({
         kind: "ok",
-        detail: `${result.created} created, ${result.updated} updated, ${result.skipped} skipped.${capNote}${tagNote} Tag-only — no email/SMS.`,
+        detail: counts,
       });
     } catch (error) {
       setContactActionStatus({
@@ -857,7 +866,8 @@ function RadarTable() {
         ) : null}
         <DcAwardRadarContactActions
           uniqueCount={uniqueContacts.length}
-          ghlEligibleCount={ghlEligibleCount}
+          ghlEligibleCount={ghlSendBatch.total}
+          ghlSendCount={ghlSendBatch.sent}
           downloadBusy={false}
           ghlBusy={contactActionStatus.kind === "busy"}
           onDownload={handleDownloadContacts}

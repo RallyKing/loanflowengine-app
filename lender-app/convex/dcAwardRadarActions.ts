@@ -35,6 +35,7 @@ import {
   resolveGhlLocationId,
   serializeDcAwardGhlAddTagsBody,
   serializeDcAwardGhlUpsertBody,
+  summarizeDcAwardGhlPushOutcome,
 } from "../lib/dcAwardRadarGhl";
 
 /** BOSSMAN GrokBot routine name (webhook target). */
@@ -368,14 +369,24 @@ export const pushFilteredContactsToGhl = action({
       }
     }
 
+    const outcome = summarizeDcAwardGhlPushOutcome({
+      created,
+      updated,
+      skipped,
+      tagFailed,
+      configured: true,
+      contactCount: args.contacts.length,
+    });
+
     return {
-      ok: true,
+      ok: outcome.ok,
       configured: true,
       created,
       updated,
       skipped,
       tagFailed,
       mode: "upsert" as const,
+      ...(outcome.reason ? { reason: outcome.reason } : {}),
     };
   },
 });
