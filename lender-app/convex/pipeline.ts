@@ -42,6 +42,11 @@ import {
 import { buildNewFilePipelineMetricsContext } from "../lib/userPreferencesNewFileDrawer";
 import { batchPipelineFileNoteCounts } from "./pipelineFileNotes";
 import {
+  loadFileLenderEdgesForFiles,
+  loadOrgScopedPipelineRowsBounded,
+} from "./pipelineHubBoundedReads";
+import { PIPELINE_TABLE_PREVIEW_MAX_ROWS } from "../lib/pipeline/tablePreviewReadBounds";
+import {
   clampActivitySummary,
   drawerLayoutAuditTargetsChanged,
   diffDrawerBlocksShownHidden,
@@ -760,7 +765,11 @@ export const listTablePreview = query({
   handler: async (ctx, { includeArchived, includeSnoozed, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
     const now = Date.now();
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
+    const { rows } = await loadOrgScopedPipelineRowsBounded(
+      ctx,
+      organizationId,
+      PIPELINE_TABLE_PREVIEW_MAX_ROWS,
+    );
     const filtered = rows.filter((r) => {
       if (!includeArchived && r.archivedAt != null) return false;
       if (!includeSnoozed && pipelineIsCurrentlySnoozed(r.snoozedUntil, now)) {
@@ -777,18 +786,16 @@ export const listTablePreview = query({
     );
     const intakeIds = new Set<Id<"intakeSheets">>();
     const lenderIds = new Set<Id<"lenders">>();
-    const fileIdSet = new Set(visible.map((r) => String(r._id)));
-    const orgStr = String(organizationId);
     for (const r of visible) {
       if (r.intakeSheetId) intakeIds.add(r.intakeSheetId);
       if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
       for (const lid of r.lenders ?? []) lenderIds.add(lid);
     }
     const fileLenderEdgesByFile = new Map<string, Doc<"fileLenders">[]>();
-    const allFileLenders = (await ctx.db.query("fileLenders").collect()).filter(
-      (edge) =>
-        fileIdSet.has(String(edge.fileId)) &&
-        String(edge.organizationId) === orgStr,
+    const { rows: allFileLenders } = await loadFileLenderEdgesForFiles(
+      ctx,
+      visible.map((r) => r._id),
+      organizationId,
     );
     for (const edge of allFileLenders) {
       const key = String(edge.fileId);

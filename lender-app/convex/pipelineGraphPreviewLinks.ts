@@ -5,6 +5,15 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import {
+  loadContactFileLinksForFiles,
+  loadFileClientEdgesForFiles,
+  loadFileLenderEdgesForFiles,
+  loadFileProjectEdgesForFiles,
+  loadFileTaskEdgesForFiles,
+  loadFileTeamMemberEdgesForFiles,
+  loadRelatedTasksForFiles,
+} from "./pipelineHubBoundedReads";
+import {
   DEFAULT_CONTACT_ROLE_IDS,
   canonicalContactRoleIdsFromDoc,
   contactQualifiesForReferralHub,
@@ -112,31 +121,30 @@ export async function batchGraphLinksForPipelineFiles(
     hierarchyExtras.map((h) => [String(h.fileId), h]),
   );
 
-  const orgStr = String(organizationId);
-  const filterOrg = <T extends { organizationId: Id<"organizations"> }>(
-    rows: T[],
-  ) => rows.filter((r) => String(r.organizationId) === orgStr);
-
-  const fcAll = filterOrg(await ctx.db.query("fileClients").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const fpAll = filterOrg(await ctx.db.query("fileProjects").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const flAll = filterOrg(await ctx.db.query("fileLenders").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
+  /**
+   * Junction reads are scoped to the visible file ids via each table's
+   * `by_file` index. These were full-table `.collect()` scans, which made one
+   * hub subscription read every edge row in the deployment before discarding
+   * all but the visible slice.
+   */
+  const fileIds = files.map((f) => f._id);
+  const [fcRead, fpRead, flRead, ftRead, ftaskRead] = await Promise.all([
+    loadFileClientEdgesForFiles(ctx, fileIds, organizationId),
+    loadFileProjectEdgesForFiles(ctx, fileIds, organizationId),
+    loadFileLenderEdgesForFiles(ctx, fileIds, organizationId),
+    loadFileTeamMemberEdgesForFiles(ctx, fileIds, organizationId),
+    loadFileTaskEdgesForFiles(ctx, fileIds, organizationId),
+  ]);
+  const fcAll = fcRead.rows;
+  const fpAll = fpRead.rows;
+  const flAll = flRead.rows;
   /** Phase 25.6 — referrals are CFL-only; junction table disabled for hub graph. */
   const frAll: Array<{
     fileId: Id<"pipeline">;
     contactId: Id<"contacts">;
   }> = [];
-  const ftAll = filterOrg(await ctx.db.query("fileTeamMembers").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const ftaskAll = filterOrg(await ctx.db.query("fileTasks").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
+  const ftAll = ftRead.rows;
+  const ftaskAll = ftaskRead.rows;
 
   const clientIds = new Set<string>();
   const projectIds = new Set<string>();
@@ -162,22 +170,18 @@ export async function batchGraphLinksForPipelineFiles(
   for (const r of ftaskAll) taskIds.add(String(r.taskId));
   for (const r of ftAll) userKeys.add(r.userKey.trim());
 
-  const cflAll = (await ctx.db.query("contactFileLinks").collect()).filter((l) =>
-    fileIdSet.has(String(l.fileId)),
-  );
+  const { rows: cflAll } = await loadContactFileLinksForFiles(ctx, fileIds);
   for (const link of cflAll) {
     contactIds.add(String(link.contactId));
   }
 
-  const orgTasks = (
-    await ctx.db
-      .query("tasks")
-      .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-      .collect()
-  ).filter((t) => String(t.organizationId) === orgStr);
-  for (const task of orgTasks) {
-    if (!task.relatedFileId) continue;
-    if (!fileIdSet.has(String(task.relatedFileId))) continue;
+  /** `tasks.by_relatedFile` per visible file — was an org-wide task scan. */
+  const { rows: relatedTasks } = await loadRelatedTasksForFiles(
+    ctx,
+    fileIds,
+    organizationId,
+  );
+  for (const task of relatedTasks) {
     taskIds.add(String(task._id));
   }
 
@@ -293,7 +297,7 @@ export async function batchGraphLinksForPipelineFiles(
   }
 
   const legacyTasksByFile = new Map<string, Doc<"tasks">[]>();
-  for (const task of orgTasks) {
+  for (const task of relatedTasks) {
     if (!task.relatedFileId) continue;
     const fid = String(task.relatedFileId);
     if (!fileIdSet.has(fid)) continue;

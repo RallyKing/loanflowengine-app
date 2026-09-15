@@ -17,8 +17,15 @@ import { resolveDisplayUsernameForUserKey } from "./auth/displayIdentity";
 import { pickCanonicalOrgMember } from "./orgMembership";
 import { SYSTEM_ORG_ROLE_KEYS } from "../lib/orgRbac";
 import { platformUserKeyFallback } from "./viewerIdentity";
+import { PIPELINE_FILE_NOTE_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
 
-/** Batch note counts for pipeline table rows (one query per org in the batch). */
+/**
+ * Batch note counts for pipeline table rows.
+ *
+ * Uses the full `by_org_file` key (org **and** file) so each file costs one
+ * capped index range read. The previous form supplied only the org half of the
+ * key and `.collect()`ed every note in the organization on every hub tick.
+ */
 export async function batchPipelineFileNoteCounts(
   ctx: QueryCtx,
   files: Array<{
@@ -27,28 +34,31 @@ export async function batchPipelineFileNoteCounts(
   }>,
 ): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
-  const byOrg = new Map<string, Id<"pipeline">[]>();
+  const targets: Array<{
+    fileId: Id<"pipeline">;
+    organizationId: Id<"organizations">;
+  }> = [];
+  const seen = new Set<string>();
   for (const file of files) {
     if (!file.organizationId) continue;
-    const orgKey = String(file.organizationId);
-    const list = byOrg.get(orgKey) ?? [];
-    list.push(file._id);
-    byOrg.set(orgKey, list);
+    const key = String(file._id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ fileId: file._id, organizationId: file.organizationId });
   }
-  for (const [orgKey, fileIds] of byOrg) {
-    const want = new Set(fileIds.map(String));
-    const notes = await ctx.db
-      .query("pipelineFileNotes")
-      .withIndex("by_org_file", (q) =>
-        q.eq("organizationId", orgKey as Id<"organizations">),
-      )
-      .collect();
-    for (const note of notes) {
-      const fid = String(note.pipelineFileId);
-      if (!want.has(fid)) continue;
-      counts.set(fid, (counts.get(fid) ?? 0) + 1);
-    }
-  }
+  const perFile = await Promise.all(
+    targets.map(({ fileId, organizationId }) =>
+      ctx.db
+        .query("pipelineFileNotes")
+        .withIndex("by_org_file", (q) =>
+          q.eq("organizationId", organizationId).eq("pipelineFileId", fileId),
+        )
+        .take(PIPELINE_FILE_NOTE_SCAN_CAP),
+    ),
+  );
+  perFile.forEach((notes, i) => {
+    counts.set(String(targets[i]!.fileId), notes.length);
+  });
   return counts;
 }
 
