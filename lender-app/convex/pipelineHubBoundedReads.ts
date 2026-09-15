@@ -10,9 +10,9 @@
  */
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
-import { PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID } from "./auth/platformGodMode";
 import {
   PIPELINE_FILE_EDGE_SCAN_CAP,
+  PIPELINE_FILE_NOTE_SCAN_CAP,
   PIPELINE_FILE_RELATED_TASK_SCAN_CAP,
   readSaturated,
 } from "../lib/pipeline/tablePreviewReadBounds";
@@ -75,8 +75,8 @@ async function takeAcrossFiles<T>(
  *
  * Legacy rows predate org stamping (`pipeline.organizationId` is optional) and
  * `rowBelongsToOrganizationScope` treats them as belonging to the platform
- * default org, so they are fetched through the same index with an `undefined`
- * key rather than by scanning the table.
+ * default org. When `includeUnstampedLegacyRows` is set they are fetched
+ * through the same index with an `undefined` key rather than by scanning.
  *
  * Results are re-sorted by `_creationTime` desc to match the ordering the hub
  * previously received from `ctx.db.query("pipeline").order("desc")`.
@@ -85,6 +85,7 @@ export async function loadOrgScopedPipelineRowsBounded(
   ctx: QueryCtx,
   organizationId: Id<"organizations">,
   cap: number,
+  includeUnstampedLegacyRows: boolean,
 ): Promise<BoundedRead<Doc<"pipeline">>> {
   const scoped = await ctx.db
     .query("pipeline")
@@ -94,16 +95,15 @@ export async function loadOrgScopedPipelineRowsBounded(
     .order("desc")
     .take(cap + 1);
 
-  const legacy =
-    organizationId === PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID
-      ? await ctx.db
-          .query("pipeline")
-          .withIndex("by_organization_createdAt", (q) =>
-            q.eq("organizationId", undefined),
-          )
-          .order("desc")
-          .take(cap + 1)
-      : [];
+  const legacy = includeUnstampedLegacyRows
+    ? await ctx.db
+        .query("pipeline")
+        .withIndex("by_organization_createdAt", (q) =>
+          q.eq("organizationId", undefined),
+        )
+        .order("desc")
+        .take(cap + 1)
+    : [];
 
   const saturated =
     readSaturated(scoped.length, cap) || readSaturated(legacy.length, cap);
@@ -265,4 +265,46 @@ export async function loadRelatedTasksForFiles(
     rows: read.rows.filter((t) => String(t.organizationId) === orgStr),
     saturated: read.saturated,
   };
+}
+
+/**
+ * Note counts per visible file, via the full `by_org_file` key.
+ *
+ * Supplying only the `organizationId` half of that key turns the read into an
+ * org-wide note scan, which is what this replaced.
+ */
+export async function loadNoteCountsForFiles(
+  ctx: QueryCtx,
+  files: ReadonlyArray<{
+    _id: Id<"pipeline">;
+    organizationId?: Id<"organizations">;
+  }>,
+): Promise<Map<string, number>> {
+  const targets: Array<{
+    fileId: Id<"pipeline">;
+    organizationId: Id<"organizations">;
+  }> = [];
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (!file.organizationId) continue;
+    const key = String(file._id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ fileId: file._id, organizationId: file.organizationId });
+  }
+  const perFile = await Promise.all(
+    targets.map(({ fileId, organizationId }) =>
+      ctx.db
+        .query("pipelineFileNotes")
+        .withIndex("by_org_file", (q) =>
+          q.eq("organizationId", organizationId).eq("pipelineFileId", fileId),
+        )
+        .take(PIPELINE_FILE_NOTE_SCAN_CAP),
+    ),
+  );
+  const counts = new Map<string, number>();
+  perFile.forEach((notes, i) => {
+    counts.set(String(targets[i]!.fileId), notes.length);
+  });
+  return counts;
 }

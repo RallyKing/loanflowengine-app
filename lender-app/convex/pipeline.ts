@@ -46,6 +46,7 @@ import {
   loadOrgScopedPipelineRowsBounded,
 } from "./pipelineHubBoundedReads";
 import { PIPELINE_TABLE_PREVIEW_MAX_ROWS } from "../lib/pipeline/tablePreviewReadBounds";
+import { PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID } from "./auth/platformGodMode";
 import {
   clampActivitySummary,
   drawerLayoutAuditTargetsChanged,
@@ -765,10 +766,16 @@ export const listTablePreview = query({
   handler: async (ctx, { includeArchived, includeSnoozed, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
     const now = Date.now();
+    /**
+     * `rowBelongsToOrganizationScope` maps org-unstamped legacy rows onto the
+     * platform default org, so that org — and only that org — also reads the
+     * `organizationId: undefined` slice of the index.
+     */
     const { rows } = await loadOrgScopedPipelineRowsBounded(
       ctx,
       organizationId,
       PIPELINE_TABLE_PREVIEW_MAX_ROWS,
+      organizationId === PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID,
     );
     const filtered = rows.filter((r) => {
       if (!includeArchived && r.archivedAt != null) return false;

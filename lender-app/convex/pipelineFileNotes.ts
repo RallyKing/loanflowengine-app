@@ -17,14 +17,13 @@ import { resolveDisplayUsernameForUserKey } from "./auth/displayIdentity";
 import { pickCanonicalOrgMember } from "./orgMembership";
 import { SYSTEM_ORG_ROLE_KEYS } from "../lib/orgRbac";
 import { platformUserKeyFallback } from "./viewerIdentity";
-import { PIPELINE_FILE_NOTE_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
+import { loadNoteCountsForFiles } from "./pipelineHubBoundedReads";
 
 /**
  * Batch note counts for pipeline table rows.
  *
- * Uses the full `by_org_file` key (org **and** file) so each file costs one
- * capped index range read. The previous form supplied only the org half of the
- * key and `.collect()`ed every note in the organization on every hub tick.
+ * Reads through the full `by_org_file` key (org **and** file) so each file
+ * costs one capped index range read; see `loadNoteCountsForFiles`.
  */
 export async function batchPipelineFileNoteCounts(
   ctx: QueryCtx,
@@ -33,33 +32,7 @@ export async function batchPipelineFileNoteCounts(
     organizationId?: Id<"organizations">;
   }>,
 ): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  const targets: Array<{
-    fileId: Id<"pipeline">;
-    organizationId: Id<"organizations">;
-  }> = [];
-  const seen = new Set<string>();
-  for (const file of files) {
-    if (!file.organizationId) continue;
-    const key = String(file._id);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    targets.push({ fileId: file._id, organizationId: file.organizationId });
-  }
-  const perFile = await Promise.all(
-    targets.map(({ fileId, organizationId }) =>
-      ctx.db
-        .query("pipelineFileNotes")
-        .withIndex("by_org_file", (q) =>
-          q.eq("organizationId", organizationId).eq("pipelineFileId", fileId),
-        )
-        .take(PIPELINE_FILE_NOTE_SCAN_CAP),
-    ),
-  );
-  perFile.forEach((notes, i) => {
-    counts.set(String(targets[i]!.fileId), notes.length);
-  });
-  return counts;
+  return await loadNoteCountsForFiles(ctx, files);
 }
 
 const UNAUTHORIZED_DELETE_NOTE =
