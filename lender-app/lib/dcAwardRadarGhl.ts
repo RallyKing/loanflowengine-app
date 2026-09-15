@@ -173,7 +173,8 @@ export function uniqueContactToGhlPush(
     trades: contact.trades,
     linkedinUrl: contact.linkedinUrl,
     // Fresh mutable copy — Convex action args require `string[]`, not `readonly`.
-    categories: [...contact.categories],
+    // Omit when absent so we match Convex optional-arg semantics (never spread undefined).
+    categories: contact.categories ? [...contact.categories] : undefined,
   };
 }
 
