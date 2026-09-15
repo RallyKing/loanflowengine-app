@@ -123,6 +123,8 @@ DC21-P2 `sourceUrl` must be the BLDC-2025-030931 MLQ filing — not P3’s BLDC-
 ## UI
 
 - Default view is **Grouped** by `campusKey` (fallback: company). **Flat** is the raw permit list.
+- A compact **lead-count strip** sits above the list (signals, campuses in grouped mode, unique contacts, phone / email / LinkedIn / cell, high-confidence signals). Counts are computed **client-side** from the current `list` page (market + confidence filters, `.take(200)`). No extra Convex query.
+- **Unique contacts** = one key per owner/principal: `company + contactName` when both are non-empty; otherwise contactName, email, phone digits (7+), or `linkedinUrl`. Campus children that share a key count once; channel flags are OR'd. Rows with no identity are signals only.
 - Group header shows campus/company and the **owner / principal once** (primary row’s contact, else first non-empty). Expand for child signals (stage, date, trade, source, confidence) plus full contact details.
 - Grouped mode has **Collapse all** / **Expand all** for campus groups (default: all expanded). Collapsed headers still show the owner/principal; only child rows hide. Expansion is component state (optional `localStorage`). Flat mode is unchanged.
 - Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.

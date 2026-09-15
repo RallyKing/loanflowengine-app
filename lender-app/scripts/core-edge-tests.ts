@@ -85,6 +85,10 @@ import {
   toggleDcAwardCampusGroup,
 } from "../lib/dcAwardRadarGroupExpansion";
 import {
+  dcAwardContactIdentityKey,
+  summarizeDcAwardRadarLeads,
+} from "../lib/dcAwardRadarStats";
+import {
   DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
   assertBoundedOperatorRows,
   chunkOperatorRows,
@@ -1888,6 +1892,116 @@ console.log("dc award radar campus group collapse / expand all");
       exceptions: ["", 12, "keep-me"],
     }),
     { collapsedByDefault: true, exceptions: new Set(["keep-me"]) },
+  );
+}
+passed += 1;
+
+console.log("dc award radar lead-count uniqueness");
+{
+  const empty = summarizeDcAwardRadarLeads([], 0);
+  assert.equal(empty.signalCount, 0);
+  assert.equal(empty.uniqueContactCount, 0);
+  assert.equal(empty.contactsWithPhone, 0);
+
+  const campusChildren = summarizeDcAwardRadarLeads(
+    [
+      {
+        company: "DPR Construction",
+        confidence: "high",
+        contactName: "George Pfeffer",
+        phone: "(703) 555-0100",
+        phoneType: "cell",
+        email: "george@dpr.com",
+      },
+      {
+        company: "DPR Construction",
+        confidence: "high",
+        contactName: "  George   Pfeffer  ",
+        linkedinUrl: "https://www.linkedin.com/in/george-pfeffer",
+      },
+      {
+        company: "DPR Construction",
+        confidence: "med",
+        contactName: "George Pfeffer",
+      },
+    ],
+    1,
+  );
+  assert.equal(campusChildren.signalCount, 3);
+  assert.equal(campusChildren.campusGroupCount, 1);
+  assert.equal(campusChildren.uniqueContactCount, 1);
+  assert.equal(campusChildren.contactsWithPhone, 1);
+  assert.equal(campusChildren.contactsWithEmail, 1);
+  assert.equal(campusChildren.contactsWithLinkedIn, 1);
+  assert.equal(campusChildren.contactsWithCell, 1);
+  assert.equal(campusChildren.highConfidenceSignalCount, 2);
+  assert.equal(
+    dcAwardContactIdentityKey({
+      company: "DPR Construction",
+      contactName: "George Pfeffer",
+    }),
+    "company-name:dpr construction|george pfeffer",
+  );
+
+  const splitCompanies = summarizeDcAwardRadarLeads(
+    [
+      {
+        company: "DPR Construction",
+        confidence: "high",
+        contactName: "George Pfeffer",
+        phone: "7035550100",
+      },
+      {
+        company: "HITT Contracting",
+        confidence: "low",
+        contactName: "George Pfeffer",
+        email: "other@hitt.com",
+      },
+    ],
+    2,
+  );
+  assert.equal(splitCompanies.uniqueContactCount, 2);
+  assert.equal(splitCompanies.contactsWithPhone, 1);
+  assert.equal(splitCompanies.contactsWithEmail, 1);
+
+  const identityFallback = summarizeDcAwardRadarLeads(
+    [
+      {
+        company: "Unknown GC",
+        confidence: "med",
+        email: "ops@example.com",
+      },
+      {
+        company: "Unknown GC",
+        confidence: "low",
+        email: "OPS@example.com",
+        phone: "415-555-0199",
+        phoneType: "direct",
+      },
+      {
+        company: "No Identity LLC",
+        confidence: "high",
+      },
+    ],
+    2,
+  );
+  assert.equal(identityFallback.uniqueContactCount, 1);
+  assert.equal(identityFallback.contactsWithEmail, 1);
+  assert.equal(identityFallback.contactsWithPhone, 1);
+  assert.equal(identityFallback.contactsWithCell, 0);
+  assert.equal(identityFallback.highConfidenceSignalCount, 1);
+  assert.equal(
+    dcAwardContactIdentityKey({
+      company: "Unknown GC",
+      email: "ops@example.com",
+    }),
+    "email:ops@example.com",
+  );
+  assert.equal(
+    dcAwardContactIdentityKey({
+      company: "No Identity LLC",
+    }),
+    null,
   );
 }
 passed += 1;
