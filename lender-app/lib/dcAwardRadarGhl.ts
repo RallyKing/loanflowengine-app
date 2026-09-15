@@ -256,10 +256,15 @@ export function buildDcAwardGhlUpsertBody(
  */
 export function serializeDcAwardGhlUpsertBody(
   body: DcAwardGhlUpsertBody,
-): Record<(typeof GHL_UPSERT_ALLOWED_KEYS)[number], string | undefined> & {
+): {
   locationId: string;
   source: typeof DC_AWARD_RADAR_GHL_SOURCE;
-} {
+} & Partial<
+  Record<
+    Exclude<(typeof GHL_UPSERT_ALLOWED_KEYS)[number], "locationId" | "source">,
+    string
+  >
+> {
   const locationId = collapseWs(body.locationId);
   if (!locationId) {
     throw new Error("GHL upsert serialize requires locationId.");

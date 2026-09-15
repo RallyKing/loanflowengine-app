@@ -1,4 +1,5 @@
 import type { DcAwardRadarLeadStats } from "@/lib/dcAwardRadarStats";
+import { formatDcAwardRadarLoadedStatsNote } from "@/lib/dcAwardRadarPagination";
 
 const CONTACT_UNIQUENESS_TITLE =
   "Unique contacts: company + contact name when both are present; otherwise email, phone, or LinkedIn. Campus children that share a key count once.";
@@ -13,13 +14,15 @@ type StatChip = {
 function chipsForStats(
   stats: DcAwardRadarLeadStats,
   viewMode: "grouped" | "flat",
+  loadedStatsNote: string | null,
 ): StatChip[] {
+  const loadedNote = loadedStatsNote ? ` (${loadedStatsNote})` : "";
   const chips: StatChip[] = [
     {
       id: "signals",
       label: "Signals",
       value: stats.signalCount,
-      title: "Permit / news rows in the current filtered list (capped at 200)",
+      title: `Permit / news rows in the loaded filtered list${loadedNote}`,
     },
   ];
   if (viewMode === "grouped") {
@@ -27,7 +30,7 @@ function chipsForStats(
       id: "campuses",
       label: "Campuses",
       value: stats.campusGroupCount,
-      title: "Campus groups in the current filtered list (company fallback)",
+      title: `Campus groups in the loaded filtered list (company fallback)${loadedNote}`,
     });
   }
   chips.push(
@@ -35,37 +38,37 @@ function chipsForStats(
       id: "contacts",
       label: "Contacts",
       value: stats.uniqueContactCount,
-      title: CONTACT_UNIQUENESS_TITLE,
+      title: CONTACT_UNIQUENESS_TITLE + loadedNote,
     },
     {
       id: "phone",
       label: "Phone",
       value: stats.contactsWithPhone,
-      title: "Unique contacts with a non-empty phone",
+      title: `Unique contacts with a non-empty phone${loadedNote}`,
     },
     {
       id: "email",
       label: "Email",
       value: stats.contactsWithEmail,
-      title: "Unique contacts with a non-empty email",
+      title: `Unique contacts with a non-empty email${loadedNote}`,
     },
     {
       id: "linkedin",
       label: "LinkedIn",
       value: stats.contactsWithLinkedIn,
-      title: "Unique contacts with a LinkedIn URL",
+      title: `Unique contacts with a LinkedIn URL${loadedNote}`,
     },
     {
       id: "cell",
       label: "Cell",
       value: stats.contactsWithCell,
-      title: "Unique contacts with phoneType = cell",
+      title: `Unique contacts with phoneType = cell${loadedNote}`,
     },
     {
       id: "high",
       label: "High conf.",
       value: stats.highConfidenceSignalCount,
-      title: "High-confidence signals in the current filtered list",
+      title: `High-confidence signals in the loaded filtered list${loadedNote}`,
     },
   );
   return chips;
@@ -75,16 +78,27 @@ export function DcAwardRadarLeadStatsBar({
   stats,
   viewMode,
   truncated,
+  loadedCount,
+  listStatus,
   market,
   contactFiltersActive = false,
+  hitPageCap = false,
 }: {
   stats: DcAwardRadarLeadStats;
   viewMode: "grouped" | "flat";
   truncated: boolean;
+  loadedCount: number;
+  listStatus: string;
   market: string;
   contactFiltersActive?: boolean;
+  /** True when Load-all hit the hard page cap (more may still exist). */
+  hitPageCap?: boolean;
 }) {
-  const chips = chipsForStats(stats, viewMode);
+  const loadedStatsNote = formatDcAwardRadarLoadedStatsNote({
+    truncated,
+    hitPageCap,
+  });
+  const chips = chipsForStats(stats, viewMode, loadedStatsNote);
   return (
     <div
       data-testid="dc-award-lead-stats"
@@ -92,7 +106,12 @@ export function DcAwardRadarLeadStatsBar({
     >
       <p id="dc-award-lead-stats-help" className="sr-only">
         {CONTACT_UNIQUENESS_TITLE} Counts follow the market, confidence, and
-        contact-channel filters. List is capped at 200 rows.
+        contact-channel filters. Lead chips use loaded pages only
+        {truncated
+          ? hitPageCap
+            ? " — page cap reached; more may exist."
+            : " until you Load more or Load all."
+          : "."}
       </p>
       <ul
         aria-label="Lead counts for current filters"
@@ -114,11 +133,16 @@ export function DcAwardRadarLeadStatsBar({
           </li>
         ))}
       </ul>
-      {market || truncated || contactFiltersActive ? (
-        <p className="text-[11px] text-muted-foreground">
-          {market ? `Filtered to ${market}` : "All markets on this page"}
+      {market || truncated || contactFiltersActive || loadedCount > 0 ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="dc-award-lead-stats-footnote"
+        >
+          {market ? `Filtered to ${market}` : "All markets on loaded pages"}
           {contactFiltersActive ? " · contact filters on" : ""}
-          {truncated ? " · list capped at 200" : ""}
+          {loadedStatsNote ? ` · stats ${loadedStatsNote}` : ""}
+          {" · "}
+          {listStatus}
         </p>
       ) : null}
     </div>

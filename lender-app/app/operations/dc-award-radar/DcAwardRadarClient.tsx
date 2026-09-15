@@ -1,8 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useAction, useQuery } from "convex/react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useAction, useConvex, useQuery } from "convex/react";
 import { ChevronDown, ChevronRight, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { PageErrorBoundary } from "@/components/PageErrorBoundary";
@@ -62,6 +69,17 @@ import {
 } from "@/lib/export/dcAwardRadarContactsExport";
 import { downloadTextFile } from "@/lib/export/downloadClient";
 import { summarizeDcAwardRadarLeads } from "@/lib/dcAwardRadarStats";
+import {
+  DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+  DC_AWARD_RADAR_PAGE_SIZE,
+  dcAwardRadarEmptyButMoreAvailable,
+  dcAwardRadarGhlRequiresLoadAllFirst,
+  dcAwardRadarLoadAllCanContinue,
+  formatDcAwardRadarEmptyButMoreCopy,
+  formatDcAwardRadarGhlTruncatedCaveat,
+  formatDcAwardRadarListStatus,
+  mergeDcAwardRadarSignalPages,
+} from "@/lib/dcAwardRadarPagination";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useUserSettings } from "@/lib/userSettingsContext";
 import {
@@ -72,6 +90,16 @@ import { DcAwardRadarLeadStatsBar } from "./DcAwardRadarLeadStatsBar";
 import { DcAwardRadarOpsPanel } from "./DcAwardRadarOpsPanel";
 
 type RadarViewMode = "grouped" | "flat";
+
+type DcAwardRadarListSignal = DcAwardRadarGroupableRow & {
+  category?: DcAwardRadarCategory;
+  contactTitle?: string;
+  emailType?: DcAwardRadarEmailType;
+  phoneType?: DcAwardRadarPhoneType;
+  companyWebsite?: string;
+  contactNotes?: string;
+  sourceKey: string;
+};
 
 /** List filter: All, stored verticals, or data_center + blank legacy DC rows. */
 type CategoryFilter = "" | DcAwardRadarCategory | "data_center_or_blank";
@@ -450,6 +478,7 @@ function GroupedCampusRow({
 
 function RadarTable() {
   const memberUserKey = useActorUserKey().trim();
+  const convex = useConvex();
   const { settings } = useUserSettings();
   const confirmApi = useOperationalConfirmOptional();
   const pushFilteredContactsToGhl = useAction(
@@ -476,6 +505,25 @@ function RadarTable() {
     | { kind: "ok"; detail: string }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  /** Rows from Load more / Load all after the reactive first page. */
+  const [appendedSignals, setAppendedSignals] = useState<
+    DcAwardRadarListSignal[]
+  >([]);
+  const [continueCursor, setContinueCursor] = useState<string | null>(null);
+  const [listTruncated, setListTruncated] = useState(false);
+  const [pagesLoaded, setPagesLoaded] = useState(0);
+  const [hitPageCap, setHitPageCap] = useState(false);
+  const [pageBusy, setPageBusy] = useState<
+    | { kind: "idle" }
+    | { kind: "more" }
+    | { kind: "all"; loadedCount: number }
+  >({ kind: "idle" });
+  const [pageError, setPageError] = useState<string | null>(null);
+  /**
+   * Generation token: filter / firstPage resets bump this so in-flight
+   * Load more / Load all ignore stale results and do not corrupt busy state.
+   */
+  const loadGenerationRef = useRef(0);
 
   useEffect(() => {
     setGroupExpansion(readDcAwardRadarGroupExpansion());
@@ -487,19 +535,53 @@ function RadarTable() {
     persistDcAwardRadarGroupExpansion(groupExpansion);
   }, [groupExpansion, groupExpansionHydrated]);
 
-  const result = useQuery(
-    api.dcAwardSignals.list,
-    memberUserKey
-      ? {
-          memberUserKey,
-          ...(market ? { market } : {}),
-          ...(confidence ? { confidence } : {}),
-          ...(category ? { category } : {}),
-        }
-      : "skip",
+  const listArgs = useMemo(
+    () =>
+      memberUserKey
+        ? {
+            memberUserKey,
+            cursor: null as string | null,
+            pageSize: DC_AWARD_RADAR_PAGE_SIZE,
+            ...(market ? { market } : {}),
+            ...(confidence ? { confidence } : {}),
+            ...(category ? { category } : {}),
+          }
+        : null,
+    [memberUserKey, market, confidence, category],
   );
 
-  const signals = result?.signals;
+  const firstPage = useQuery(
+    api.dcAwardSignals.list,
+    listArgs ?? "skip",
+  );
+
+  // When filters change, `firstPage` goes undefined then refreshes — drop
+  // appended pages so GA/NC loads are not mixed with a stale first page.
+  // Bump generation so mid-flight Load more / Load all cannot append or
+  // clear busy after this reset.
+  useEffect(() => {
+    loadGenerationRef.current += 1;
+    setAppendedSignals([]);
+    setHitPageCap(false);
+    setPageBusy({ kind: "idle" });
+    setPageError(null);
+    if (!firstPage) {
+      setContinueCursor(null);
+      setListTruncated(false);
+      setPagesLoaded(0);
+      return;
+    }
+    setContinueCursor(firstPage.continueCursor);
+    setListTruncated(firstPage.truncated);
+    setPagesLoaded(1);
+  }, [firstPage]);
+
+  const signals = firstPage
+    ? mergeDcAwardRadarSignalPages(
+        firstPage.signals as DcAwardRadarListSignal[],
+        appendedSignals,
+      )
+    : undefined;
   const filteredSignals = useMemo(() => {
     if (!signals) return [];
     return filterSignalsByContactFilters(signals, contactFilters);
@@ -540,6 +622,34 @@ function RadarTable() {
     }
     return [...fromData].sort((a, b) => a.localeCompare(b));
   }, [signals]);
+  const listStatus = formatDcAwardRadarListStatus({
+    loadedCount: signals?.length ?? 0,
+    truncated: listTruncated,
+    pageSize: DC_AWARD_RADAR_PAGE_SIZE,
+    hitPageCap,
+  });
+  const canLoadMore =
+    pageBusy.kind === "idle" &&
+    dcAwardRadarLoadAllCanContinue({
+      pagesLoaded,
+      maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+      truncated: listTruncated,
+      continueCursor,
+    });
+  const emptyButMore = dcAwardRadarEmptyButMoreAvailable({
+    loadedCount: signals?.length ?? 0,
+    truncated: listTruncated,
+    continueCursor,
+  });
+  const emptyButMoreCopy = formatDcAwardRadarEmptyButMoreCopy();
+  const showPaginationControls =
+    emptyButMore ||
+    listTruncated ||
+    hitPageCap ||
+    pageBusy.kind !== "idle" ||
+    pageError !== null ||
+    pagesLoaded > 1 ||
+    (signals !== undefined && signals.length > 0);
 
   function applyMarketFilter() {
     setMarket(marketDraft.trim());
@@ -556,6 +666,111 @@ function RadarTable() {
 
   function toggleGroup(groupKey: string) {
     setGroupExpansion((current) => toggleDcAwardCampusGroup(groupKey, current));
+  }
+
+  async function fetchNextPage(cursor: string) {
+    if (!listArgs) {
+      throw new Error("Sign in required to load more award-radar signals.");
+    }
+    return await convex.query(api.dcAwardSignals.list, {
+      ...listArgs,
+      cursor,
+    });
+  }
+
+  async function handleLoadMore() {
+    if (!canLoadMore || !continueCursor) return;
+    const generation = loadGenerationRef.current;
+    setPageBusy({ kind: "more" });
+    setPageError(null);
+    try {
+      const page = await fetchNextPage(continueCursor);
+      if (generation !== loadGenerationRef.current) return;
+      setAppendedSignals((current) =>
+        mergeDcAwardRadarSignalPages(
+          current,
+          page.signals as DcAwardRadarListSignal[],
+        ),
+      );
+      const nextPages = pagesLoaded + 1;
+      setPagesLoaded(nextPages);
+      setContinueCursor(page.continueCursor);
+      setListTruncated(page.truncated);
+      if (
+        page.truncated &&
+        nextPages >= DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES
+      ) {
+        setHitPageCap(true);
+      }
+    } catch (error) {
+      if (generation !== loadGenerationRef.current) return;
+      setPageError(
+        error instanceof Error
+          ? error.message
+          : "Failed to load the next page of signals.",
+      );
+    } finally {
+      if (generation === loadGenerationRef.current) {
+        setPageBusy({ kind: "idle" });
+      }
+    }
+  }
+
+  async function handleLoadAll() {
+    if (!listTruncated || !continueCursor || pageBusy.kind !== "idle") return;
+    const generation = loadGenerationRef.current;
+    setPageBusy({ kind: "all", loadedCount: signals?.length ?? 0 });
+    setPageError(null);
+    let cursor: string | null = continueCursor;
+    let truncated: boolean = listTruncated;
+    let pages = pagesLoaded;
+    let appended = appendedSignals;
+    let loadedCount = signals?.length ?? 0;
+    try {
+      while (
+        generation === loadGenerationRef.current &&
+        dcAwardRadarLoadAllCanContinue({
+          pagesLoaded: pages,
+          maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+          truncated,
+          continueCursor: cursor,
+        })
+      ) {
+        const page = await fetchNextPage(cursor!);
+        if (generation !== loadGenerationRef.current) return;
+        appended = mergeDcAwardRadarSignalPages(
+          appended,
+          page.signals as DcAwardRadarListSignal[],
+        );
+        pages += 1;
+        cursor = page.continueCursor;
+        truncated = page.truncated;
+        loadedCount = mergeDcAwardRadarSignalPages(
+          (firstPage?.signals as DcAwardRadarListSignal[] | undefined) ?? [],
+          appended,
+        ).length;
+        setAppendedSignals(appended);
+        setPagesLoaded(pages);
+        setContinueCursor(cursor);
+        setListTruncated(truncated);
+        setPageBusy({ kind: "all", loadedCount });
+      }
+      if (generation !== loadGenerationRef.current) return;
+      if (truncated && pages >= DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES) {
+        setHitPageCap(true);
+      }
+    } catch (error) {
+      if (generation !== loadGenerationRef.current) return;
+      setPageError(
+        error instanceof Error
+          ? error.message
+          : "Failed while loading all award-radar pages.",
+      );
+    } finally {
+      if (generation === loadGenerationRef.current) {
+        setPageBusy({ kind: "idle" });
+      }
+    }
   }
 
   function downloadFilteredContacts(kind: "contacts" | "ghl") {
@@ -600,7 +815,23 @@ function RadarTable() {
       });
       return;
     }
+    if (
+      dcAwardRadarGhlRequiresLoadAllFirst({
+        truncated: listTruncated,
+        hitPageCap,
+      })
+    ) {
+      setContactActionStatus({
+        kind: "error",
+        message:
+          "List is still truncated. Use Load all (or Load more until exhausted) before sending to HighLevel — send uses loaded pages only.",
+      });
+      return;
+    }
     const sendCopy = describeDcAwardGhlSendBatch(ghlSendBatch);
+    const truncatedCaveat = listTruncated
+      ? formatDcAwardRadarGhlTruncatedCaveat({ hitPageCap })
+      : null;
     const confirmed = confirmApi
       ? await confirmApi.confirm({
           title: "Send filtered contacts to HighLevel",
@@ -645,6 +876,14 @@ function RadarTable() {
                   },
                 ]
               : []),
+            ...(truncatedCaveat
+              ? [
+                  {
+                    text: truncatedCaveat,
+                    tone: "attention" as const,
+                  },
+                ]
+              : []),
             {
               text: "If HighLevel credentials are unset on Convex, a tag-only CSV downloads for the same full eligible send set (not a truncated subset).",
               tone: "attention",
@@ -655,7 +894,11 @@ function RadarTable() {
           variant: "transfer",
           testId: "dc-award-ghl-confirm",
         })
-      : window.confirm(sendCopy.confirmPrompt);
+      : window.confirm(
+          truncatedCaveat
+            ? `${sendCopy.confirmPrompt}\n\n${truncatedCaveat}`
+            : sendCopy.confirmPrompt,
+        );
     if (!confirmed) return;
 
     setContactActionStatus({ kind: "busy", label: "Send to GHL" });
@@ -908,9 +1151,12 @@ function RadarTable() {
       <DcAwardRadarLeadStatsBar
         stats={leadStats}
         viewMode={viewMode}
-        truncated={result?.truncated === true}
+        truncated={listTruncated}
+        loadedCount={signals?.length ?? 0}
+        listStatus={listStatus}
         market={market}
         contactFiltersActive={contactFiltersActive}
+        hitPageCap={hitPageCap}
       />
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
@@ -925,12 +1171,21 @@ function RadarTable() {
         hides child permits; owner/principal stays on the group header. Flat is
         the raw permit list. Contact chips dedupe campus children by company +
         name. Contact filters and CSV / GHL actions use those unique contacts.
+        List pages are {DC_AWARD_RADAR_PAGE_SIZE} rows each — use Load more /
+        Load all to reach later markets. HighLevel send requires Load all
+        (or exhausted pages) first so the send is not a silent truncated subset.
       </p>
 
       {signals.length === 0 ? (
         <OperationalEmptyState
-          title="No award signals"
-          description="Nothing matches these filters. Import a nationwide Hermes CSV or run the one-shot Phase 2 seed if the table is empty."
+          title={
+            emptyButMore ? emptyButMoreCopy.title : "No award signals"
+          }
+          description={
+            emptyButMore
+              ? emptyButMoreCopy.description
+              : "Nothing matches these filters. Import a nationwide Hermes CSV or run the one-shot Phase 2 seed if the table is empty."
+          }
         />
       ) : filteredSignals.length === 0 ? (
         <OperationalEmptyState
@@ -1012,6 +1267,56 @@ function RadarTable() {
           )}
         </div>
       )}
+      {showPaginationControls ? (
+        <div
+          className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
+          data-testid="dc-award-list-pagination"
+        >
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="dc-award-list-status"
+            role="status"
+          >
+            {pageBusy.kind === "all"
+              ? `Loading… ${pageBusy.loadedCount}`
+              : listStatus}
+            {pagesLoaded > 0
+              ? ` · ${pagesLoaded} page${pagesLoaded === 1 ? "" : "s"}`
+              : ""}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canLoadMore}
+              onClick={() => void handleLoadMore()}
+              data-testid="dc-award-load-more"
+            >
+              {pageBusy.kind === "more" ? "Loading…" : "Load more"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canLoadMore}
+              onClick={() => void handleLoadAll()}
+              data-testid="dc-award-load-all"
+            >
+              {pageBusy.kind === "all" ? "Loading all…" : "Load all"}
+            </Button>
+          </div>
+          {pageError ? (
+            <p
+              className="text-xs text-destructive"
+              role="alert"
+              data-testid="dc-award-pagination-error"
+            >
+              {pageError}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
