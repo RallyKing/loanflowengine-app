@@ -552,7 +552,7 @@ function RadarTable() {
         ghlSendBatch,
       );
       downloadTextFile(
-        dcAwardRadarGhlHandoffCsvFilename(ghlSendBatch),
+        dcAwardRadarGhlHandoffCsvFilename(),
         csv,
         "text/csv;charset=utf-8",
         { utf8Bom: true },
@@ -605,12 +605,12 @@ function RadarTable() {
                 value: String(ghlSendBatch.total),
               },
               {
-                label: "This send",
-                value: `${ghlSendBatch.sent} of ${ghlSendBatch.total}`,
+                label: "This send (all eligible)",
+                value: String(ghlSendBatch.sent),
               },
               {
-                label: "Eligible not in this batch",
-                value: String(ghlSendBatch.omitted),
+                label: "Internal write chunks",
+                value: String(ghlSendBatch.chunkCount),
               },
               {
                 label: "Tags",
@@ -624,20 +624,20 @@ function RadarTable() {
             {
               text: "Creates or updates HighLevel contacts. Existing HighLevel tags are not overwritten — tags are appended.",
             },
-            ...(sendCopy.truncationNote
+            ...(sendCopy.chunkNote
               ? [
                   {
-                    text: sendCopy.truncationNote,
+                    text: sendCopy.chunkNote.trim(),
                     tone: "attention" as const,
                   },
                 ]
               : []),
             {
-              text: "If HighLevel credentials are unset on Convex, a tag-only CSV downloads for the same disclosed batch (not the full filtered set).",
+              text: "If HighLevel credentials are unset on Convex, a tag-only CSV downloads for the same full eligible send set (not a truncated subset).",
               tone: "attention",
             },
           ],
-          confirmLabel: `Send ${ghlSendBatch.sent} of ${ghlSendBatch.total}`,
+          confirmLabel: `Send all ${ghlSendBatch.sent} eligible`,
           cancelLabel: "Cancel",
           variant: "transfer",
           testId: "dc-award-ghl-confirm",
@@ -651,12 +651,12 @@ function RadarTable() {
         memberUserKey: memberUserKey || undefined,
         contacts: ghlSendBatch.batch.map(uniqueContactToGhlPush),
       });
-      const capNote = ` Sending ${ghlSendBatch.sent} of ${ghlSendBatch.total} GHL-eligible.`;
+      const sendNote = ` Sending all ${ghlSendBatch.sent} GHL-eligible.`;
       if (!result.configured) {
         downloadFilteredContacts("ghl");
         setContactActionStatus({
           kind: "error",
-          message: `HighLevel is not configured (${result.skipped} skipped).${capNote} Downloaded tag-only CSV for that same batch. Use Download contacts CSV for the full filtered set. No SMS or email.`,
+          message: `HighLevel is not configured (${result.skipped} skipped).${sendNote} Downloaded tag-only CSV for that same full eligible set. Use Download contacts CSV for the full filtered unique set. No SMS or email.`,
         });
         return;
       }
@@ -664,7 +664,7 @@ function RadarTable() {
         result.tagFailed > 0
           ? ` ${result.tagFailed} tag-add failed.`
           : "";
-      const counts = `${result.created} created, ${result.updated} updated, ${result.skipped} skipped.${capNote}${tagNote} Tag-only — no email/SMS.`;
+      const counts = `${result.created} created, ${result.updated} updated, ${result.skipped} skipped.${sendNote}${tagNote} Tag-only — no email/SMS.`;
       if (!result.ok) {
         setContactActionStatus({
           kind: "error",

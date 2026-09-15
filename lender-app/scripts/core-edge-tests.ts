@@ -99,11 +99,12 @@ import {
   type DcAwardRadarUniqueContact,
 } from "../lib/dcAwardRadarContacts";
 import {
-  DC_AWARD_RADAR_GHL_MAX_CONTACTS,
+  DC_AWARD_RADAR_GHL_CHUNK_SIZE,
   DC_AWARD_RADAR_GHL_SOURCE,
   DC_AWARD_RADAR_GHL_TAG,
   buildDcAwardGhlTags,
   buildDcAwardGhlUpsertBody,
+  chunkDcAwardGhlContacts,
   describeDcAwardGhlSendBatch,
   ghlSerializedBodyIsAllowlisted,
   ghlUpsertBodyHasForbiddenKeys,
@@ -2245,14 +2246,20 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
   assert.ok(csv.includes("George Pfeffer"));
   assert.ok(csv.includes("Equinix DC21-P2 | Equinix DC21-P3"));
 
-  const underCap = selectDcAwardGhlContactBatch(unique);
-  assert.equal(underCap.truncated, false);
-  assert.equal(underCap.sent, unique.length);
-  assert.equal(underCap.total, unique.length);
-  const ghlCsv = buildDcAwardRadarGhlHandoffCsv(underCap.batch, underCap);
+  const fullEligibleBatch = selectDcAwardGhlContactBatch(unique);
+  assert.equal(fullEligibleBatch.truncated, false);
+  assert.equal(fullEligibleBatch.omitted, 0);
+  assert.equal(fullEligibleBatch.sent, unique.length);
+  assert.equal(fullEligibleBatch.total, unique.length);
+  const ghlCsv = buildDcAwardRadarGhlHandoffCsv(
+    fullEligibleBatch.batch,
+    fullEligibleBatch,
+  );
   assert.ok(ghlCsv.includes(DC_AWARD_RADAR_GHL_SOURCE));
   assert.ok(ghlCsv.includes(DC_AWARD_RADAR_GHL_TAG));
   assert.ok(ghlCsv.includes("exportNote"));
+  assert.ok(ghlCsv.includes("all "));
+  assert.ok(ghlCsv.includes("no send-size cap"));
 
   function fakeUnique(i: number, eligible: boolean): DcAwardRadarUniqueContact {
     return {
@@ -2277,40 +2284,64 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
   const ineligibleFirst = Array.from({ length: 20 }, (_, i) =>
     fakeUnique(i, false),
   );
-  const eligibleOverCap = Array.from({ length: 107 }, (_, i) =>
+  const eligibleMany = Array.from({ length: 107 }, (_, i) =>
     fakeUnique(i + 20, true),
   );
-  const overCap = selectDcAwardGhlContactBatch([
+  const fullSend = selectDcAwardGhlContactBatch([
     ...ineligibleFirst,
-    ...eligibleOverCap,
+    ...eligibleMany,
   ]);
-  assert.equal(overCap.uniqueTotal, 127);
-  assert.equal(overCap.ineligible, 20);
-  assert.equal(overCap.total, 107);
-  assert.equal(overCap.sent, DC_AWARD_RADAR_GHL_MAX_CONTACTS);
-  assert.equal(overCap.omitted, 7);
-  assert.equal(overCap.truncated, true);
-  assert.ok(overCap.batch.every((row) => row.email.includes("@")));
-  assert.equal(overCap.batch[0]?.email, "n20@ex.com");
-  const overCopy = describeDcAwardGhlSendBatch(overCap);
-  assert.equal(overCopy.entityName, "sending 100 of 107 GHL-eligible contacts");
-  assert.ok(overCopy.confirmPrompt.includes("100 of 107"));
-  assert.ok(overCopy.truncationNote?.includes("100 of 107"));
-  const cappedHandoff = buildDcAwardRadarGhlHandoffCsv(unique, overCap);
-  assert.ok(cappedHandoff.includes("first 100 of 107"));
-  assert.ok(
-    dcAwardRadarGhlHandoffCsvFilename(overCap, new Date("2026-09-15")).includes(
-      "first-100-of-107",
-    ),
+  assert.equal(fullSend.uniqueTotal, 127);
+  assert.equal(fullSend.ineligible, 20);
+  assert.equal(fullSend.total, 107);
+  assert.equal(fullSend.sent, 107);
+  assert.equal(fullSend.omitted, 0);
+  assert.equal(fullSend.truncated, false);
+  assert.equal(
+    fullSend.chunkCount,
+    Math.ceil(107 / DC_AWARD_RADAR_GHL_CHUNK_SIZE),
+  );
+  assert.ok(fullSend.batch.every((row) => row.email.includes("@")));
+  assert.equal(fullSend.batch[0]?.email, "n20@ex.com");
+  assert.equal(fullSend.batch.length, 107);
+
+  const chunks = chunkDcAwardGhlContacts(fullSend.batch);
+  assert.equal(chunks.length, fullSend.chunkCount);
+  assert.equal(
+    chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+    107,
+  );
+  assert.ok(chunks.every((chunk) => chunk.length <= DC_AWARD_RADAR_GHL_CHUNK_SIZE));
+  assert.equal(chunks[0]?.length, DC_AWARD_RADAR_GHL_CHUNK_SIZE);
+  assert.equal(chunks[chunks.length - 1]?.length, 107 % DC_AWARD_RADAR_GHL_CHUNK_SIZE);
+
+  const fullCopy = describeDcAwardGhlSendBatch(fullSend);
+  assert.equal(
+    fullCopy.entityName,
+    "sending all 107 GHL-eligible contacts",
+  );
+  assert.ok(fullCopy.confirmPrompt.includes("all 107"));
+  assert.equal(fullCopy.truncationNote, undefined);
+  assert.ok(fullCopy.chunkNote?.includes("internal chunks"));
+  assert.ok(!fullCopy.confirmPrompt.includes("100 of 107"));
+  assert.ok(!fullCopy.confirmPrompt.includes("one-shot cap"));
+
+  const handoff = buildDcAwardRadarGhlHandoffCsv(fullSend.batch, fullSend);
+  assert.ok(handoff.includes("all 107"));
+  assert.ok(handoff.includes("no send-size cap"));
+  assert.ok(!handoff.includes("first 100"));
+  assert.equal(
+    dcAwardRadarGhlHandoffCsvFilename(new Date("2026-09-15")),
+    "dc-award-radar-ghl-tag-only-2026-09-15.csv",
   );
   assert.equal(
     summarizeDcAwardGhlPushOutcome({
       created: 0,
       updated: 0,
-      skipped: 100,
+      skipped: 107,
       tagFailed: 0,
       configured: true,
-      contactCount: 100,
+      contactCount: 107,
     }).ok,
     false,
   );
@@ -2318,10 +2349,10 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
     summarizeDcAwardGhlPushOutcome({
       created: 0,
       updated: 0,
-      skipped: 100,
+      skipped: 107,
       tagFailed: 0,
       configured: true,
-      contactCount: 100,
+      contactCount: 107,
     }).reason,
     "all_skipped_or_failed",
   );

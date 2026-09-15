@@ -18,8 +18,15 @@ export const DC_AWARD_RADAR_GHL_API_VERSION = "2021-07-28" as const;
 export const DC_AWARD_RADAR_GHL_API_BASE =
   "https://services.leadconnectorhq.com" as const;
 
-/** Hard cap for one client-called push — fail closed, no scheduler pump. */
-export const DC_AWARD_RADAR_GHL_MAX_CONTACTS = 100;
+/**
+ * Internal HighLevel rate-limit chunk size only — NOT a send cap.
+ * One client-called action still processes the full eligible set; this only
+ * batches upsert/tag HTTP work inside that action. No scheduler / cron.
+ */
+export const DC_AWARD_RADAR_GHL_CHUNK_SIZE = 50;
+
+/** @deprecated Use DC_AWARD_RADAR_GHL_CHUNK_SIZE — there is no send-size cap. */
+export const DC_AWARD_RADAR_GHL_MAX_CONTACTS = DC_AWARD_RADAR_GHL_CHUNK_SIZE;
 
 const TAG_PART_MAX = 40;
 const TAG_MAX_COUNT = 6;
@@ -114,63 +121,88 @@ export function uniqueContactToGhlPush(
 }
 
 export type DcAwardGhlContactBatch<T> = {
+  /** Full GHL-eligible set — no send-size cap / no silent truncation. */
   batch: T[];
-  /** GHL-eligible (email or phone) before the one-shot cap. */
+  /** GHL-eligible count (email or phone). Always equals `sent` / `batch.length`. */
   total: number;
+  /** Same as `total` — every eligible contact is included in this send. */
   sent: number;
+  /** Always 0 — retained for callers; eligible contacts are never omitted. */
   omitted: number;
+  /** Always false — retained for callers; there is no send-size truncation. */
   truncated: boolean;
   uniqueTotal: number;
   ineligible: number;
+  /** How many internal rate-limit chunks the action will walk. */
+  chunkCount: number;
 };
 
 /**
- * Eligible (email or phone) first, then one-shot cap.
- * Ineligible rows must not consume a slot.
+ * Split an already-selected send set into internal rate-limit chunks.
+ * Does not drop contacts — concatenation of chunks equals the input.
+ */
+export function chunkDcAwardGhlContacts<T>(
+  contacts: readonly T[],
+  chunkSize = DC_AWARD_RADAR_GHL_CHUNK_SIZE,
+): T[][] {
+  const size = Math.max(1, Math.floor(chunkSize));
+  const chunks: T[][] = [];
+  for (let i = 0; i < contacts.length; i += size) {
+    chunks.push(contacts.slice(i, i + size));
+  }
+  return chunks;
+}
+
+/**
+ * Eligible (email or phone) only — full set, no send-size cap.
+ * Ineligible rows are excluded and never consume a send slot.
  */
 export function selectDcAwardGhlContactBatch(
   contacts: readonly DcAwardRadarUniqueContact[],
-  max = DC_AWARD_RADAR_GHL_MAX_CONTACTS,
 ): DcAwardGhlContactBatch<DcAwardRadarUniqueContact> {
-  const safeMax = Math.max(0, Math.floor(max));
   const eligible = contacts.filter(uniqueContactHasGhlIdentity);
-  const batch = eligible.slice(0, safeMax);
-  const sent = batch.length;
-  const omitted = Math.max(0, eligible.length - sent);
+  const sent = eligible.length;
   return {
-    batch,
-    total: eligible.length,
+    batch: eligible,
+    total: sent,
     sent,
-    omitted,
-    truncated: omitted > 0,
+    omitted: 0,
+    truncated: false,
     uniqueTotal: contacts.length,
     ineligible: contacts.length - eligible.length,
+    chunkCount: sent === 0 ? 0 : chunkDcAwardGhlContacts(eligible).length,
   };
 }
 
 export function describeDcAwardGhlSendBatch(
   selection: Pick<
     DcAwardGhlContactBatch<unknown>,
-    "total" | "sent" | "omitted" | "truncated" | "ineligible"
+    "total" | "sent" | "ineligible" | "chunkCount"
   >,
 ): {
   entityName: string;
   confirmPrompt: string;
-  truncationNote: string | undefined;
+  truncationNote: undefined;
+  chunkNote: string | undefined;
 } {
-  const ofN = `${selection.sent} of ${selection.total}`;
+  const n = selection.sent;
   const ineligibleNote =
     selection.ineligible > 0
       ? ` ${selection.ineligible} unique contact${
           selection.ineligible === 1 ? "" : "s"
-        } lack email and phone and were not given a slot.`
+        } lack email and phone and will not be sent.`
       : "";
+  const chunkNote =
+    selection.chunkCount > 1
+      ? ` HighLevel writes run in ${selection.chunkCount} internal chunks of up to ${DC_AWARD_RADAR_GHL_CHUNK_SIZE} (rate-limit batching only — all ${n} eligible are included).`
+      : undefined;
   return {
-    entityName: `sending ${ofN} GHL-eligible contacts`,
-    confirmPrompt: `Send ${ofN} GHL-eligible contacts to HighLevel (tag-only)? No email or SMS.${ineligibleNote}`,
-    truncationNote: selection.truncated
-      ? `Sending ${ofN} (one-shot cap ${DC_AWARD_RADAR_GHL_MAX_CONTACTS}). Remaining ${selection.omitted} eligible stay on this page — use Download contacts CSV for the full filtered set.`
-      : undefined,
+    entityName: `sending all ${n} GHL-eligible contact${n === 1 ? "" : "s"}`,
+    confirmPrompt: `Send all ${n} GHL-eligible contact${
+      n === 1 ? "" : "s"
+    } to HighLevel (tag-only)? No email or SMS.${ineligibleNote}${chunkNote ?? ""}`,
+    truncationNote: undefined,
+    chunkNote,
   };
 }
 

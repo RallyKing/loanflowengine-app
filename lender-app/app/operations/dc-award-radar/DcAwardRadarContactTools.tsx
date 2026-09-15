@@ -8,7 +8,6 @@ import {
   type DcAwardRadarContactFilterId,
   type DcAwardRadarContactFilterSet,
 } from "@/lib/dcAwardRadarContacts";
-import { DC_AWARD_RADAR_GHL_MAX_CONTACTS } from "@/lib/dcAwardRadarGhl";
 import { cn } from "@/lib/cn";
 
 export function DcAwardRadarContactFilterChips({
@@ -88,7 +87,7 @@ export function DcAwardRadarContactActions({
         disabled={ghlDisabled}
         onClick={onGhlPush}
         data-testid="dc-award-ghl-push"
-        aria-label={`Send ${ghlSendCount} of ${ghlEligibleCount} GHL-eligible contacts to HighLevel, tag only`}
+        aria-label={`Send all ${ghlSendCount} GHL-eligible contacts to HighLevel, tag only`}
         aria-busy={ghlBusy}
       >
         {ghlBusy ? (
@@ -110,7 +109,7 @@ export function DcAwardRadarContactActions({
           ? ` · ${ghlEligibleCount} GHL-eligible (email or phone)`
           : ""}
         {ghlEligibleCount > 0
-          ? ` · Send/handoff is ${ghlSendCount} of ${ghlEligibleCount} (cap ${DC_AWARD_RADAR_GHL_MAX_CONTACTS})`
+          ? ` · Send/handoff includes all ${ghlSendCount} eligible (no send-size cap)`
           : ""}
         . Download contacts CSV is the full filtered set. GHL is tag/create
         only — no SMS, email, sequences, or campaigns.

@@ -13,7 +13,7 @@ HighLevel from this page is **tag/create only** (`dc-award-radar` + market/trade
 | No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron. Hermes wake is a **client-called** one-shot action (`requestHermesScrape`) — never scheduled |
 | No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence/category indexes. `by_campusKey` exists for lookups; grouping is client-side on the capped page |
 | No polling | One-shot mutations/actions only; UI uses a single `useQuery` |
-| GHL no-outbound | `pushFilteredContactsToGhl` upserts contacts and **adds tags** only. Upsert JSON is **allowlist-serialized** (name/email/phone/company/website/source). Never writes SMS/email/sequence/workflow/campaign/conversation fields. Eligible (email or phone) are selected **before** the 100 cap. Confirm/toast: **sending min(N,100) of N** eligible. `ok: false` when created+updated is 0. Handoff CSV uses the same batch; **Download contacts CSV** is the full filtered set |
+| GHL no-outbound | `pushFilteredContactsToGhl` upserts contacts and **adds tags** only. Upsert JSON is **allowlist-serialized** (name/email/phone/company/website/source). Never writes SMS/email/sequence/workflow/campaign/conversation fields. Eligible (email or phone) are selected, then **all N eligible** are sent (no send-size cap). Confirm/toast: **sending all N** eligible. Internal HighLevel writes may chunk (e.g. 50) for rate limits only. `ok: false` when created+updated is 0. Handoff CSV uses the same full eligible set; **Download contacts CSV** is the full filtered unique set |
 | Bounded writes | Operator payloads capped at **100 rows** per mutation |
 | Idempotency | `sourceKey` = normalized `sourceUrl` + project + stage |
 | No in-app scrape | Web research stays in Hermes (via BOSSMAN); Convex only POSTs the webhook or stores imported rows |
@@ -134,7 +134,7 @@ DC21-P2 `sourceUrl` must be the BLDC-2025-030931 MLQ filing — not P3’s BLDC-
 - **Owner / principal** stays visible in grouped mode (Joshua). Expand for LinkedIn, website, and why-cell/direct notes.
 - **Contact filters** (Has phone / Has email / Has LinkedIn / Has cell / Missing phone / Missing email) apply to unique contacts in both Grouped and Flat views. The lead-count strip follows those filters. Collapse all / Expand all is unchanged.
 - **Download contacts CSV** is client-side from the already-loaded, filtered unique contacts (company + contactName dedupe).
-- **Send filtered contacts to GHL** confirms **sending min(N,100) of N** GHL-eligible (email or phone) + “no email/SMS”. Ineligible contacts are dropped **before** the cap. `ok: false` / error toast when created+updated is 0. Unset credentials → tag-only CSV for the **same eligible batch**. **Download contacts CSV** remains the full filtered unique set.
+- **Send filtered contacts to GHL** confirms **sending all N** GHL-eligible (email or phone) + “no email/SMS”. There is **no 100-contact send cap**; HighLevel writes may chunk internally for rate limits. `ok: false` / error toast when created+updated is 0. Unset credentials → tag-only CSV for the **same full eligible set**. **Download contacts CSV** remains the full filtered unique set.
 - Operator secret matches `DATA_MIGRATION_ADMIN_SECRET` (fallback `ORG_INTEGRITY_ADMIN_SECRET`).
 - **Scrape with Hermes** is the primary refresh control; paste/CLI import is the fallback when the webhook is unset or Hermes is unavailable.
 

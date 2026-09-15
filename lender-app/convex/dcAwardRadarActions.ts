@@ -8,8 +8,9 @@
  * imports from this path.
  *
  * GHL push is TAG/CREATE ONLY: upsert contact + add tags. Never SMS, email,
- * sequences, workflows, campaigns, or Conversation AI. Client sends the
- * already-filtered unique contacts (capped). No `.collect()`, no scheduler.
+ * sequences, workflows, campaigns, or Conversation AI. Client sends the full
+ * filtered GHL-eligible set (no send-size cap). Internal chunking is for
+ * HighLevel rate limits only. No `.collect()`, no scheduler.
  *
  * Auth: authenticated member session (`memberUserKey` / JWT), same gate as
  * `dcAwardSignals.list`. Operator migration secret is NOT required here —
@@ -26,7 +27,7 @@ import { api } from "./_generated/api";
 import {
   DC_AWARD_RADAR_GHL_API_BASE,
   DC_AWARD_RADAR_GHL_API_VERSION,
-  DC_AWARD_RADAR_GHL_MAX_CONTACTS,
+  chunkDcAwardGhlContacts,
   buildDcAwardGhlTags,
   buildDcAwardGhlUpsertBody,
   formatGhlAuthorizationHeader,
@@ -270,12 +271,6 @@ export const pushFilteredContactsToGhl = action({
       memberUserKey: args.memberUserKey,
     });
 
-    if (args.contacts.length > DC_AWARD_RADAR_GHL_MAX_CONTACTS) {
-      throw new Error(
-        `GHL push: ${args.contacts.length} contacts exceeds the ${DC_AWARD_RADAR_GHL_MAX_CONTACTS}-contact one-shot cap.`,
-      );
-    }
-
     const apiKey = resolveGhlApiKey();
     const locationId = resolveGhlLocationId();
     if (!apiKey || !locationId) {
@@ -297,75 +292,81 @@ export const pushFilteredContactsToGhl = action({
     let skipped = 0;
     let tagFailed = 0;
 
-    for (const contact of args.contacts) {
-      const email = contact.email.trim();
-      const phone = contact.phone.trim();
-      if (!email && !phone) {
-        skipped += 1;
-        continue;
-      }
+    // Full eligible set — no send-size cap. Chunk only for HighLevel rate limits
+    // inside this one client-called action (no scheduler / cron / follow-up jobs).
+    for (const chunk of chunkDcAwardGhlContacts(args.contacts)) {
+      for (const contact of chunk) {
+        const email = contact.email.trim();
+        const phone = contact.phone.trim();
+        if (!email && !phone) {
+          skipped += 1;
+          continue;
+        }
 
-      let upsertBody: ReturnType<typeof serializeDcAwardGhlUpsertBody>;
-      try {
-        upsertBody = serializeDcAwardGhlUpsertBody(
-          buildDcAwardGhlUpsertBody(contact, locationId),
-        );
-      } catch {
-        skipped += 1;
-        continue;
-      }
-      if (!ghlSerializedBodyIsAllowlisted(upsertBody)) {
-        console.error("dcAwardRadar: GHL upsert body failed allowlist serialize");
-        skipped += 1;
-        continue;
-      }
-
-      try {
-        const upsert = await ghlJsonRequest(
-          `${DC_AWARD_RADAR_GHL_API_BASE}/contacts/upsert`,
-          authorization,
-          upsertBody,
-        );
-        if (!upsert.ok) {
+        let upsertBody: ReturnType<typeof serializeDcAwardGhlUpsertBody>;
+        try {
+          upsertBody = serializeDcAwardGhlUpsertBody(
+            buildDcAwardGhlUpsertBody(contact, locationId),
+          );
+        } catch {
+          skipped += 1;
+          continue;
+        }
+        if (!ghlSerializedBodyIsAllowlisted(upsertBody)) {
           console.error(
-            "dcAwardRadar: HighLevel contact upsert failed",
-            upsert.status,
+            "dcAwardRadar: GHL upsert body failed allowlist serialize",
           );
           skipped += 1;
           continue;
         }
 
-        const contactId = parseGhlContactId(upsert.payload);
-        if (parseGhlCreatedFlag(upsert.payload)) created += 1;
-        else updated += 1;
-
-        if (!contactId) {
-          tagFailed += 1;
-          continue;
-        }
-
-        const tagBody = serializeDcAwardGhlAddTagsBody(
-          buildDcAwardGhlTags({
-            markets: contact.markets,
-            trades: contact.trades,
-          }),
-        );
-        const tagRes = await ghlJsonRequest(
-          `${DC_AWARD_RADAR_GHL_API_BASE}/contacts/${encodeURIComponent(contactId)}/tags`,
-          authorization,
-          tagBody,
-        );
-        if (!tagRes.ok) {
-          console.error(
-            "dcAwardRadar: HighLevel add-tags failed",
-            tagRes.status,
+        try {
+          const upsert = await ghlJsonRequest(
+            `${DC_AWARD_RADAR_GHL_API_BASE}/contacts/upsert`,
+            authorization,
+            upsertBody,
           );
-          tagFailed += 1;
+          if (!upsert.ok) {
+            console.error(
+              "dcAwardRadar: HighLevel contact upsert failed",
+              upsert.status,
+            );
+            skipped += 1;
+            continue;
+          }
+
+          const contactId = parseGhlContactId(upsert.payload);
+          if (parseGhlCreatedFlag(upsert.payload)) created += 1;
+          else updated += 1;
+
+          if (!contactId) {
+            tagFailed += 1;
+            continue;
+          }
+
+          const tagBody = serializeDcAwardGhlAddTagsBody(
+            buildDcAwardGhlTags({
+              markets: contact.markets,
+              trades: contact.trades,
+            }),
+          );
+          const tagRes = await ghlJsonRequest(
+            `${DC_AWARD_RADAR_GHL_API_BASE}/contacts/${encodeURIComponent(contactId)}/tags`,
+            authorization,
+            tagBody,
+          );
+          if (!tagRes.ok) {
+            console.error(
+              "dcAwardRadar: HighLevel add-tags failed",
+              tagRes.status,
+            );
+            tagFailed += 1;
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "unknown_error";
+          console.error("dcAwardRadar: HighLevel push threw", message);
+          skipped += 1;
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "unknown_error";
-        console.error("dcAwardRadar: HighLevel push threw", message);
-        skipped += 1;
       }
     }
 

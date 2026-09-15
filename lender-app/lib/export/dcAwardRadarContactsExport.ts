@@ -4,7 +4,6 @@
  */
 
 import {
-  DC_AWARD_RADAR_GHL_MAX_CONTACTS,
   DC_AWARD_RADAR_GHL_SOURCE,
   buildDcAwardGhlTags,
   type DcAwardGhlContactBatch,
@@ -66,30 +65,20 @@ export function buildDcAwardRadarContactsCsv(
 }
 
 export function dcAwardGhlHandoffExportNote(
-  selection: Pick<
-    DcAwardGhlContactBatch<unknown>,
-    "sent" | "total" | "truncated"
-  >,
+  selection: Pick<DcAwardGhlContactBatch<unknown>, "sent" | "total">,
 ): string {
-  if (selection.truncated) {
-    return `GHL handoff cap: first ${selection.sent} of ${selection.total} (same as Send). Download contacts CSV for the full filtered set.`;
-  }
-  return `GHL handoff: ${selection.sent} of ${selection.total} filtered unique contacts (at or under ${DC_AWARD_RADAR_GHL_MAX_CONTACTS}-contact cap).`;
+  return `GHL handoff: all ${selection.sent} GHL-eligible contacts (same full send set as Send to GHL; no send-size cap). Download contacts CSV for the full filtered unique set.`;
 }
 
-/** Tag-only HighLevel import CSV — same disclosed batch as Send to GHL. */
+/** Tag-only HighLevel import CSV — same full eligible send set as Send to GHL. */
 export function buildDcAwardRadarGhlHandoffCsv(
   contacts: readonly DcAwardRadarUniqueContact[],
-  selection?: Pick<
-    DcAwardGhlContactBatch<unknown>,
-    "sent" | "total" | "truncated"
-  >,
+  selection?: Pick<DcAwardGhlContactBatch<unknown>, "sent" | "total">,
 ): string {
   const note = dcAwardGhlHandoffExportNote(
     selection ?? {
       sent: contacts.length,
       total: contacts.length,
-      truncated: false,
     },
   );
   const lines = [joinCsvLine([...DC_AWARD_RADAR_GHL_HANDOFF_CSV_HEADERS])];
@@ -114,16 +103,6 @@ export function dcAwardRadarContactsCsvFilename(now = new Date()): string {
   return `dc-award-radar-contacts-full-filtered-${now.toISOString().slice(0, 10)}.csv`;
 }
 
-export function dcAwardRadarGhlHandoffCsvFilename(
-  selection?: Pick<
-    DcAwardGhlContactBatch<unknown>,
-    "sent" | "total" | "truncated"
-  >,
-  now = new Date(),
-): string {
-  const day = now.toISOString().slice(0, 10);
-  if (selection?.truncated) {
-    return `dc-award-radar-ghl-tag-only-first-${selection.sent}-of-${selection.total}-${day}.csv`;
-  }
-  return `dc-award-radar-ghl-tag-only-${day}.csv`;
+export function dcAwardRadarGhlHandoffCsvFilename(now = new Date()): string {
+  return `dc-award-radar-ghl-tag-only-${now.toISOString().slice(0, 10)}.csv`;
 }
