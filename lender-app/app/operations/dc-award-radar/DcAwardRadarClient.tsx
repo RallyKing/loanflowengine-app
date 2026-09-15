@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { ChevronDown, ChevronRight, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { PageErrorBoundary } from "@/components/PageErrorBoundary";
 import { ConvexQueryBoundary } from "@/components/ConvexQueryBoundary";
 import { Button } from "@/components/ui/Button";
+import { useOperationalConfirmOptional } from "@/components/ui/OperationalConfirmDialog";
 import { Input, Label, Select } from "@/components/ui/Input";
 import { OperationalEmptyState } from "@/components/ui/OperationalEmptyState";
 import { OperationalSkeletonList } from "@/components/ui/OperationalSkeleton";
@@ -42,9 +43,31 @@ import {
   readDcAwardRadarGroupExpansion,
   toggleDcAwardCampusGroup,
 } from "@/lib/dcAwardRadarGroupExpansion";
+import {
+  collectUniqueDcAwardContacts,
+  filterSignalsByContactFilters,
+  toggleDcAwardContactFilter,
+  type DcAwardRadarContactFilterId,
+} from "@/lib/dcAwardRadarContacts";
+import {
+  describeDcAwardGhlSendBatch,
+  selectDcAwardGhlContactBatch,
+  uniqueContactToGhlPush,
+} from "@/lib/dcAwardRadarGhl";
+import {
+  buildDcAwardRadarContactsCsv,
+  buildDcAwardRadarGhlHandoffCsv,
+  dcAwardRadarContactsCsvFilename,
+  dcAwardRadarGhlHandoffCsvFilename,
+} from "@/lib/export/dcAwardRadarContactsExport";
+import { downloadTextFile } from "@/lib/export/downloadClient";
 import { summarizeDcAwardRadarLeads } from "@/lib/dcAwardRadarStats";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useUserSettings } from "@/lib/userSettingsContext";
+import {
+  DcAwardRadarContactActions,
+  DcAwardRadarContactFilterChips,
+} from "./DcAwardRadarContactTools";
 import { DcAwardRadarLeadStatsBar } from "./DcAwardRadarLeadStatsBar";
 import { DcAwardRadarOpsPanel } from "./DcAwardRadarOpsPanel";
 
@@ -415,10 +438,17 @@ function GroupedCampusRow({
 function RadarTable() {
   const memberUserKey = useActorUserKey().trim();
   const { settings } = useUserSettings();
+  const confirmApi = useOperationalConfirmOptional();
+  const pushFilteredContactsToGhl = useAction(
+    api.dcAwardRadarActions.pushFilteredContactsToGhl,
+  );
   const [marketDraft, setMarketDraft] = useState("");
   const [market, setMarket] = useState("");
   const [confidence, setConfidence] = useState<"" | DcAwardRadarConfidence>("");
   const [category, setCategory] = useState<CategoryFilter>("");
+  const [contactFilters, setContactFilters] = useState<
+    ReadonlySet<DcAwardRadarContactFilterId>
+  >(() => new Set());
   const [viewMode, setViewMode] = useState<RadarViewMode>("grouped");
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -427,6 +457,12 @@ function RadarTable() {
     DEFAULT_DC_AWARD_GROUP_EXPANSION,
   );
   const [groupExpansionHydrated, setGroupExpansionHydrated] = useState(false);
+  const [contactActionStatus, setContactActionStatus] = useState<
+    | { kind: "idle" }
+    | { kind: "busy"; label: string }
+    | { kind: "ok"; detail: string }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
 
   useEffect(() => {
     setGroupExpansion(readDcAwardRadarGroupExpansion());
@@ -451,9 +487,21 @@ function RadarTable() {
   );
 
   const signals = result?.signals;
+  const filteredSignals = useMemo(() => {
+    if (!signals) return [];
+    return filterSignalsByContactFilters(signals, contactFilters);
+  }, [signals, contactFilters]);
   const groups = useMemo(
-    () => groupDcAwardRadarSignals(signals ?? []),
-    [signals],
+    () => groupDcAwardRadarSignals(filteredSignals),
+    [filteredSignals],
+  );
+  const uniqueContacts = useMemo(
+    () => collectUniqueDcAwardContacts(filteredSignals),
+    [filteredSignals],
+  );
+  const ghlSendBatch = useMemo(
+    () => selectDcAwardGhlContactBatch(uniqueContacts),
+    [uniqueContacts],
   );
   const groupKeys = useMemo(
     () => groups.map((group) => group.groupKey),
@@ -468,9 +516,10 @@ function RadarTable() {
     groupExpansion,
   );
   const leadStats = useMemo(
-    () => summarizeDcAwardRadarLeads(signals ?? [], groups.length),
-    [signals, groups],
+    () => summarizeDcAwardRadarLeads(filteredSignals, groups.length),
+    [filteredSignals, groups],
   );
+  const contactFiltersActive = contactFilters.size > 0;
   const markets = useMemo(() => {
     const fromData = new Set<string>();
     for (const row of signals ?? []) {
@@ -494,6 +543,151 @@ function RadarTable() {
 
   function toggleGroup(groupKey: string) {
     setGroupExpansion((current) => toggleDcAwardCampusGroup(groupKey, current));
+  }
+
+  function downloadFilteredContacts(kind: "contacts" | "ghl") {
+    if (kind === "ghl") {
+      const csv = buildDcAwardRadarGhlHandoffCsv(
+        ghlSendBatch.batch,
+        ghlSendBatch,
+      );
+      downloadTextFile(
+        dcAwardRadarGhlHandoffCsvFilename(),
+        csv,
+        "text/csv;charset=utf-8",
+        { utf8Bom: true },
+      );
+      return;
+    }
+    downloadTextFile(
+      dcAwardRadarContactsCsvFilename(),
+      buildDcAwardRadarContactsCsv(uniqueContacts),
+      "text/csv;charset=utf-8",
+      { utf8Bom: true },
+    );
+  }
+
+  function handleDownloadContacts() {
+    if (uniqueContacts.length === 0) return;
+    downloadFilteredContacts("contacts");
+    setContactActionStatus({
+      kind: "ok",
+      detail: `Downloaded full filtered set: ${uniqueContacts.length} unique contact${
+        uniqueContacts.length === 1 ? "" : "s"
+      }.`,
+    });
+  }
+
+  async function handleGhlPush() {
+    if (ghlSendBatch.sent === 0) {
+      setContactActionStatus({
+        kind: "error",
+        message:
+          "No GHL-eligible contacts (need email or phone). Nothing sent.",
+      });
+      return;
+    }
+    const sendCopy = describeDcAwardGhlSendBatch(ghlSendBatch);
+    const confirmed = confirmApi
+      ? await confirmApi.confirm({
+          title: "Send filtered contacts to HighLevel",
+          entityName: sendCopy.entityName,
+          impact:
+            "Tag/create only. No SMS, email, sequences, workflows, campaigns, or Conversation AI.",
+          preview: {
+            rows: [
+              {
+                label: "Filtered unique",
+                value: String(ghlSendBatch.uniqueTotal),
+              },
+              {
+                label: "GHL-eligible (email or phone)",
+                value: String(ghlSendBatch.total),
+              },
+              {
+                label: "This send (all eligible)",
+                value: String(ghlSendBatch.sent),
+              },
+              {
+                label: "Internal write chunks",
+                value: String(ghlSendBatch.chunkCount),
+              },
+              {
+                label: "Tags",
+                value: "dc-award-radar + market/trade when present",
+              },
+              { label: "Source", value: "dc-award-radar" },
+              { label: "Outbound", value: "None — no email or SMS" },
+            ],
+          },
+          cascade: [
+            {
+              text: "Creates or updates HighLevel contacts. Existing HighLevel tags are not overwritten — tags are appended.",
+            },
+            ...(sendCopy.chunkNote
+              ? [
+                  {
+                    text: sendCopy.chunkNote.trim(),
+                    tone: "attention" as const,
+                  },
+                ]
+              : []),
+            {
+              text: "If HighLevel credentials are unset on Convex, a tag-only CSV downloads for the same full eligible send set (not a truncated subset).",
+              tone: "attention",
+            },
+          ],
+          confirmLabel: `Send all ${ghlSendBatch.sent} eligible`,
+          cancelLabel: "Cancel",
+          variant: "transfer",
+          testId: "dc-award-ghl-confirm",
+        })
+      : window.confirm(sendCopy.confirmPrompt);
+    if (!confirmed) return;
+
+    setContactActionStatus({ kind: "busy", label: "Send to GHL" });
+    try {
+      const result = await pushFilteredContactsToGhl({
+        memberUserKey: memberUserKey || undefined,
+        contacts: ghlSendBatch.batch.map(uniqueContactToGhlPush),
+      });
+      const sendNote = ` Sending all ${ghlSendBatch.sent} GHL-eligible.`;
+      if (!result.configured) {
+        downloadFilteredContacts("ghl");
+        setContactActionStatus({
+          kind: "error",
+          message: `HighLevel is not configured (${result.skipped} skipped).${sendNote} Downloaded tag-only CSV for that same full eligible set. Use Download contacts CSV for the full filtered unique set. No SMS or email.`,
+        });
+        return;
+      }
+      const tagNote =
+        result.tagFailed > 0
+          ? ` ${result.tagFailed} tag-add failed.`
+          : "";
+      const counts = `${result.created} created, ${result.updated} updated, ${result.skipped} skipped.${sendNote}${tagNote} Tag-only — no email/SMS.`;
+      if (!result.ok) {
+        setContactActionStatus({
+          kind: "error",
+          message:
+            result.reason === "all_skipped_or_failed"
+              ? `HighLevel write failed: ${counts}`
+              : `HighLevel push did not succeed: ${counts}`,
+        });
+        return;
+      }
+      setContactActionStatus({
+        kind: "ok",
+        detail: counts,
+      });
+    } catch (error) {
+      setContactActionStatus({
+        kind: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "HighLevel push failed.",
+      });
+    }
   }
 
   if (!memberUserKey) {
@@ -650,11 +844,60 @@ function RadarTable() {
           </div>
         ) : null}
       </div>
+      <div className="space-y-2">
+        <DcAwardRadarContactFilterChips
+          filters={contactFilters}
+          onToggle={(id) =>
+            setContactFilters((current) =>
+              toggleDcAwardContactFilter(current, id),
+            )
+          }
+        />
+        {contactFiltersActive ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setContactFilters(new Set())}
+            data-testid="dc-award-contact-filters-clear"
+          >
+            Clear contact filters
+          </Button>
+        ) : null}
+        <DcAwardRadarContactActions
+          uniqueCount={uniqueContacts.length}
+          ghlEligibleCount={ghlSendBatch.total}
+          ghlSendCount={ghlSendBatch.sent}
+          downloadBusy={false}
+          ghlBusy={contactActionStatus.kind === "busy"}
+          onDownload={handleDownloadContacts}
+          onGhlPush={() => void handleGhlPush()}
+        />
+        {contactActionStatus.kind === "ok" ? (
+          <p
+            className="text-xs text-emerald-800 dark:text-emerald-200"
+            role="status"
+            data-testid="dc-award-contact-action-toast"
+          >
+            {contactActionStatus.detail}
+          </p>
+        ) : null}
+        {contactActionStatus.kind === "error" ? (
+          <p
+            className="text-xs text-destructive"
+            role="alert"
+            data-testid="dc-award-contact-action-error"
+          >
+            {contactActionStatus.message}
+          </p>
+        ) : null}
+      </div>
       <DcAwardRadarLeadStatsBar
         stats={leadStats}
         viewMode={viewMode}
         truncated={result?.truncated === true}
         market={market}
+        contactFiltersActive={contactFiltersActive}
       />
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
@@ -666,13 +909,18 @@ function RadarTable() {
         shows the owner/principal once — Equinix DC17 is not DC21. Collapse all
         hides child permits; owner/principal stays on the group header. Flat is
         the raw permit list. Contact chips dedupe campus children by company +
-        name.
+        name. Contact filters and CSV / GHL actions use those unique contacts.
       </p>
 
       {signals.length === 0 ? (
         <OperationalEmptyState
           title="No award signals"
           description="Nothing matches these filters. Import a nationwide Hermes CSV or run the one-shot Phase 2 seed if the table is empty."
+        />
+      ) : filteredSignals.length === 0 ? (
+        <OperationalEmptyState
+          title="No contacts match"
+          description="Contact-channel filters hid every row. Clear Has phone / Has email / Has LinkedIn / Has cell / Missing phone / Missing email to see the list again."
         />
       ) : (
         <div className="overflow-x-auto max-md:touch-pan-x">
@@ -736,7 +984,7 @@ function RadarTable() {
                 </tr>
               </thead>
               <tbody>
-                {signals.map((row) => (
+                {filteredSignals.map((row) => (
                   <FlatSignalRow
                     key={row._id}
                     row={row}
@@ -775,7 +1023,8 @@ export function DcAwardRadarClient() {
                 Public permit, registration, and construction signals for DLC —
                 nationwide. Grouped view shows one owner/principal per campus
                 (or company) with child permits nested. Equinix DC17 is not
-                DC21. GHL sync and outbound messages are out of scope.
+                DC21. HighLevel push is tag/create only — no SMS, email, or
+                campaigns.
               </p>
             </div>
           </div>

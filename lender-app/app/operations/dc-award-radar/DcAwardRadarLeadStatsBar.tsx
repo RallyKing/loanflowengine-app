@@ -76,11 +76,13 @@ export function DcAwardRadarLeadStatsBar({
   viewMode,
   truncated,
   market,
+  contactFiltersActive = false,
 }: {
   stats: DcAwardRadarLeadStats;
   viewMode: "grouped" | "flat";
   truncated: boolean;
   market: string;
+  contactFiltersActive?: boolean;
 }) {
   const chips = chipsForStats(stats, viewMode);
   return (
@@ -89,8 +91,8 @@ export function DcAwardRadarLeadStatsBar({
       className="flex flex-col gap-1.5"
     >
       <p id="dc-award-lead-stats-help" className="sr-only">
-        {CONTACT_UNIQUENESS_TITLE} Counts follow the market and confidence
-        filters. List is capped at 200 rows.
+        {CONTACT_UNIQUENESS_TITLE} Counts follow the market, confidence, and
+        contact-channel filters. List is capped at 200 rows.
       </p>
       <ul
         aria-label="Lead counts for current filters"
@@ -112,9 +114,10 @@ export function DcAwardRadarLeadStatsBar({
           </li>
         ))}
       </ul>
-      {market || truncated ? (
+      {market || truncated || contactFiltersActive ? (
         <p className="text-[11px] text-muted-foreground">
           {market ? `Filtered to ${market}` : "All markets on this page"}
+          {contactFiltersActive ? " · contact filters on" : ""}
           {truncated ? " · list capped at 200" : ""}
         </p>
       ) : null}

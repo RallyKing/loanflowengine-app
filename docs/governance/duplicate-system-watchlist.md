@@ -16,7 +16,7 @@
 | **Webhooks / automations** | Double delivery paths | Reuse enqueue + idempotent handlers |
 | **Shared deal fields** | Numeric drift across blocks | Use `fileSharedState` / normalization helpers |
 | **AI lender discovery** | Second crawl stack | Extend `convex/discovery.ts` with flags |
-| **DC award radar / GHL** | Do not fork into comms, discovery, or HighLevel | Stay on `dcAwardSignals` + `/operations/dc-award-radar`. Nationwide + contact fields via Hermes CSV / operator upsert only. No scrape, cron, outbound, or GHL until Stacy (high-confidence only, tag `dc-award-radar`, no auto-blast) |
+| **DC award radar / GHL** | Do not fork into comms, discovery, or a second CRM | Stay on `dcAwardSignals` + `/operations/dc-award-radar`. Nationwide + contact fields via Hermes CSV / operator upsert. GHL is **tag/create only** (`dc-award-radar` + market/trade, source `dc-award-radar`). No SMS, email, sequences, workflows, campaigns, Conversation AI, scrape, or cron |
 
 ---
 

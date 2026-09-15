@@ -5,8 +5,8 @@
  * DFW / Columbus; nationwide refresh is not limited to those three.
  *
  * Contact enrichment is Hermes/ops-driven (CSV → operator upsert). No Convex
- * web-scrape, cron, or scheduler. GHL / outbound messaging is out of scope
- * (Stacy later: high-confidence only, tag `dc-award-radar`, no auto-blast).
+ * web-scrape, cron, or scheduler. HighLevel is tag/create only
+ * (`dc-award-radar`, no auto-blast).
  */
 
 export const DC_AWARD_RADAR_CONFIDENCE = ["high", "med", "low"] as const;

@@ -17,7 +17,7 @@
 | **Portal** | Client grant + portal routes | `/portal/*` | Portal shell (`AppChrome` client portal variant) | Invite/magic link flows | Constrained surface |
 | **Automations** | `userSimpleWorkflows` + executors | Settings / admin UIs | `<main>` | Trigger→action | Pair with webhook policy |
 | **Webhooks** | Outbound subscription tables + workers | Admin/debug (where present) | N/A (server) | Enqueue/delivery | |
-| **DC award radar** | Convex `dcAwardSignals` (platform catalog) | `/operations/dc-award-radar` | `AppChrome` `<main>` | One-shot Phase 2 / nationwide / contact upsert / campus backfill (operator-secret) | Public DLC permit/news signals, any US market. Campus grouping is display-merge only (DC17 ≠ DC21). Contact enrichment is Hermes/ops → CSV. **No scrape, cron, GHL, or outbound.** See `docs/operations/dc-award-radar.md`. |
+| **DC award radar** | Convex `dcAwardSignals` (platform catalog) | `/operations/dc-award-radar` | `AppChrome` `<main>` | One-shot Phase 2 / nationwide / contact upsert / campus backfill (operator-secret); client-called tag-only HighLevel upsert | Public DLC permit/news signals, any US market. Campus grouping is display-merge only (DC17 ≠ DC21). Contact enrichment is Hermes/ops → CSV. **No scrape, cron, or outbound messaging.** GHL is tag/create only (`dc-award-radar`). See `docs/operations/dc-award-radar.md`. |
 | **Shared field bus** | `fileSharedState`, overrides | Block UIs inside file | N/A | Normalize deal numerics across blocks | |
 | **Layout / chrome** | N/A (presentation) | `AppChrome`, `MobileChromeProvider`, `SaasSidebar` | **Default:** `<main>`**. **File workspace route:** delegated scroller — see **`runtime-workspace-scroll-authority.md`** | N/A | Bottom nav: classic mobile only |
 
