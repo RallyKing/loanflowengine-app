@@ -48,11 +48,14 @@ import {
   PHASE2_DC_AWARD_SIGNAL_COUNT,
   PHASE2_DC_AWARD_SIGNAL_SEEDS,
   buildDcAwardSignalSourceKey,
+  dcAwardCategoryUiLabel,
   dcAwardEmailUiLabel,
   dcAwardPhoneUiLabel,
   normalizeSourceUrl,
   dcAwardSafeHttpUrl,
+  parseDcAwardRadarCategory,
   pickDefinedCampusFields,
+  pickDefinedCategory,
   pickDefinedContactFields,
   prepareDcAwardRadarSeedRow,
   uniquePreparedPhase2SourceKeys,
@@ -1541,6 +1544,62 @@ console.log("dc award radar contacts + nationwide payload");
       ),
     /100-row one-shot cap/,
   );
+}
+passed += 1;
+
+console.log("dc award radar optional category vertical");
+{
+  const base = PHASE2_DC_AWARD_SIGNAL_SEEDS[0];
+  assert.ok(base);
+  const withoutCategory = prepareDcAwardRadarSeedRow(base);
+  assert.equal(withoutCategory.category, undefined);
+  assert.deepEqual(pickDefinedCategory(withoutCategory), {});
+  assert.deepEqual(pickDefinedCategory({}), {});
+
+  const withHospital = prepareDcAwardRadarSeedRow({
+    ...base,
+    category: "hospital",
+  });
+  assert.equal(withHospital.category, "hospital");
+  assert.equal(withHospital.sourceKey, withoutCategory.sourceKey);
+  assert.deepEqual(pickDefinedCategory(withHospital), { category: "hospital" });
+
+  assert.equal(parseDcAwardRadarCategory("dot_civil"), "dot_civil");
+  assert.equal(parseDcAwardRadarCategory("DOT Civil"), "dot_civil");
+  assert.equal(parseDcAwardRadarCategory("industrial-warehouse"), "industrial_warehouse");
+  assert.equal(parseDcAwardRadarCategory("data_center"), "data_center");
+  assert.throws(() => parseDcAwardRadarCategory("retail"), /Invalid category/);
+  assert.equal(dcAwardCategoryUiLabel(undefined), "Data center (uncategorized)");
+  assert.equal(dcAwardCategoryUiLabel("hospital"), "Hospital");
+
+  const categoryCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
+    "Phoenix AZ,Hospital Wing,Permit Issued,MEP,Acme GC,GC,2026-09-01,https://example.com/permit/h1,County permit,high,Hospital vertical,n,hospital",
+  ].join("\n");
+  const parsedHospital = parseDcAwardRadarNationwidePayload(categoryCsv);
+  assert.equal(parsedHospital.rows[0]?.category, "hospital");
+  assert.equal(
+    prepareDcAwardRadarSeedRow(parsedHospital.rows[0]!).category,
+    "hospital",
+  );
+
+  const blankCategoryCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
+    "Phoenix AZ,Legacy DC,Permit Issued,Electrical,Acme GC,GC,2026-09-01,https://example.com/permit/dc1,County permit,high,Legacy blank category,n,",
+  ].join("\n");
+  const parsedBlank = parseDcAwardRadarNationwidePayload(blankCategoryCsv);
+  assert.equal(parsedBlank.rows[0]?.category, undefined);
+  assert.equal(
+    prepareDcAwardRadarSeedRow(parsedBlank.rows[0]!).category,
+    undefined,
+  );
+
+  const verticalAliasCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,vertical",
+    "Phoenix AZ,Warehouse A,Permit Issued,Civil,Acme GC,GC,2026-09-01,https://example.com/permit/w1,County permit,med,Warehouse vertical,n,industrial_warehouse",
+  ].join("\n");
+  const parsedVertical = parseDcAwardRadarNationwidePayload(verticalAliasCsv);
+  assert.equal(parsedVertical.rows[0]?.category, "industrial_warehouse");
 }
 passed += 1;
 

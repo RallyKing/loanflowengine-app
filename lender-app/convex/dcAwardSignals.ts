@@ -9,6 +9,7 @@ import {
   PHASE2_DC_AWARD_SIGNAL_SEEDS,
   buildDcAwardSignalSourceKey,
   pickDefinedCampusFields,
+  pickDefinedCategory,
   pickDefinedContactFields,
   prepareDcAwardRadarSeedRow,
   type DcAwardRadarContactFields,
@@ -29,6 +30,19 @@ const confidenceV = v.union(
   v.literal("med"),
   v.literal("low"),
 );
+
+const categoryV = v.union(
+  v.literal("hospital"),
+  v.literal("dot_civil"),
+  v.literal("industrial_warehouse"),
+  v.literal("data_center"),
+);
+
+/**
+ * UI list filter: stored categories, plus `data_center_or_blank` for legacy DC
+ * rows (category undefined/absent) and explicit data_center.
+ */
+const categoryFilterV = v.union(categoryV, v.literal("data_center_or_blank"));
 
 const phoneTypeV = v.union(
   v.literal("cell"),
@@ -76,6 +90,7 @@ const dcAwardSignalPublicV = v.object({
   whyItMattersForDlc: v.string(),
   notes: v.string(),
   sourceKey: v.string(),
+  category: v.optional(categoryV),
   contactName: v.optional(v.string()),
   contactTitle: v.optional(v.string()),
   email: v.optional(v.string()),
@@ -105,6 +120,7 @@ const seedRowV = v.object({
   confidence: confidenceV,
   whyItMattersForDlc: v.string(),
   notes: v.string(),
+  category: v.optional(categoryV),
   ...contactFieldsV,
   ...campusFieldsV,
 });
@@ -140,6 +156,7 @@ function toPublicRow(row: Doc<"dcAwardSignals">) {
     whyItMattersForDlc: row.whyItMattersForDlc,
     notes: row.notes,
     sourceKey: row.sourceKey,
+    category: row.category,
     contactName: row.contactName,
     contactTitle: row.contactTitle,
     email: row.email,
@@ -277,6 +294,7 @@ async function upsertPreparedRows(
         whyItMattersForDlc: prepared.whyItMattersForDlc,
         notes: prepared.notes,
         sourceKey: prepared.sourceKey,
+        ...pickDefinedCategory(prepared),
         ...contacts,
         ...campus,
         updatedAt: now,
@@ -287,6 +305,7 @@ async function upsertPreparedRows(
 
     await ctx.db.insert("dcAwardSignals", {
       ...prepared,
+      ...pickDefinedCategory(prepared),
       ...contacts,
       ...campus,
       createdAt: now,
@@ -420,6 +439,7 @@ export const list = query({
     memberUserKey: v.optional(v.string()),
     market: v.optional(v.string()),
     confidence: v.optional(confidenceV),
+    category: v.optional(categoryFilterV),
   },
   returns: v.object({
     signals: v.array(dcAwardSignalPublicV),
@@ -430,27 +450,61 @@ export const list = query({
 
     const market = args.market?.trim() || undefined;
     const confidence = args.confidence;
+    const categoryFilter = args.category;
+    const indexedCategory =
+      categoryFilter && categoryFilter !== "data_center_or_blank"
+        ? categoryFilter
+        : undefined;
+    const dataCenterOrBlank = categoryFilter === "data_center_or_blank";
 
-    const page = market && confidence
-      ? await ctx.db
-          .query("dcAwardSignals")
-          .withIndex("by_market_and_confidence", (q) =>
-            q.eq("market", market).eq("confidence", confidence),
-          )
-          .take(LIST_TAKE_LIMIT)
-      : market
+    // Prefer compound indexes when available; remaining filters applied in TS
+    // on the capped page. Still `.take(200)` — no `.collect()`.
+    const page =
+      market && indexedCategory
         ? await ctx.db
             .query("dcAwardSignals")
-            .withIndex("by_market", (q) => q.eq("market", market))
+            .withIndex("by_market_and_category", (q) =>
+              q.eq("market", market).eq("category", indexedCategory),
+            )
             .take(LIST_TAKE_LIMIT)
-        : confidence
+        : indexedCategory
           ? await ctx.db
               .query("dcAwardSignals")
-              .withIndex("by_confidence", (q) => q.eq("confidence", confidence))
+              .withIndex("by_category", (q) =>
+                q.eq("category", indexedCategory),
+              )
               .take(LIST_TAKE_LIMIT)
-          : await ctx.db.query("dcAwardSignals").take(LIST_TAKE_LIMIT);
+          : market && confidence
+            ? await ctx.db
+                .query("dcAwardSignals")
+                .withIndex("by_market_and_confidence", (q) =>
+                  q.eq("market", market).eq("confidence", confidence),
+                )
+                .take(LIST_TAKE_LIMIT)
+            : market
+              ? await ctx.db
+                  .query("dcAwardSignals")
+                  .withIndex("by_market", (q) => q.eq("market", market))
+                  .take(LIST_TAKE_LIMIT)
+              : confidence
+                ? await ctx.db
+                    .query("dcAwardSignals")
+                    .withIndex("by_confidence", (q) =>
+                      q.eq("confidence", confidence),
+                    )
+                    .take(LIST_TAKE_LIMIT)
+                : await ctx.db.query("dcAwardSignals").take(LIST_TAKE_LIMIT);
 
     const signals = page
+      .filter((row) => {
+        if (confidence && row.confidence !== confidence) return false;
+        if (market && row.market !== market) return false;
+        if (indexedCategory && row.category !== indexedCategory) return false;
+        if (dataCenterOrBlank) {
+          return row.category === undefined || row.category === "data_center";
+        }
+        return true;
+      })
       .map(toPublicRow)
       .sort((a, b) => {
         const marketCmp = a.market.localeCompare(b.market);

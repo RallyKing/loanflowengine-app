@@ -4935,6 +4935,9 @@ export default defineSchema({
    * Contact-only patches must not insert new projects.
    * campusKey/campusName/isPrimaryInCampus are display-merge only — do not
    * delete child permit rows. DC17 ≠ DC21 (different addresses).
+   * Optional `category` supports multi-vertical radar rows (hospital /
+   * dot_civil / industrial_warehouse / data_center). Existing DC rows may
+   * omit category; do not require or wipe it on re-import.
    * GHL sync is out of scope. No cron / scrape from Convex.
    */
   dcAwardSignals: defineTable({
@@ -4955,6 +4958,14 @@ export default defineSchema({
     whyItMattersForDlc: v.string(),
     notes: v.string(),
     sourceKey: v.string(),
+    category: v.optional(
+      v.union(
+        v.literal("hospital"),
+        v.literal("dot_civil"),
+        v.literal("industrial_warehouse"),
+        v.literal("data_center"),
+      ),
+    ),
     contactName: v.optional(v.string()),
     contactTitle: v.optional(v.string()),
     email: v.optional(v.string()),
@@ -4988,5 +4999,7 @@ export default defineSchema({
     .index("by_market", ["market"])
     .index("by_confidence", ["confidence"])
     .index("by_market_and_confidence", ["market", "confidence"])
+    .index("by_category", ["category"])
+    .index("by_market_and_category", ["market", "category"])
     .index("by_campusKey", ["campusKey"]),
 });
