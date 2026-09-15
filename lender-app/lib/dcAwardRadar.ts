@@ -21,6 +21,7 @@ export const DC_AWARD_RADAR_CATEGORIES = [
   "hospital",
   "dot_civil",
   "industrial_warehouse",
+  "k12_higher_ed",
   "data_center",
 ] as const;
 export type DcAwardRadarCategory = (typeof DC_AWARD_RADAR_CATEGORIES)[number];
@@ -170,7 +171,15 @@ export function isDcAwardRadarCategory(
 export function parseDcAwardRadarCategory(
   value: string,
 ): DcAwardRadarCategory {
-  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  // Labels like "K-12 / higher ed" and "DOT / Civil" → snake_case tokens.
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/([a-z])-(\d)/g, "$1$2")
+    .replace(/\//g, " ")
+    .replace(/[\s-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
   if (!isDcAwardRadarCategory(normalized)) {
     throw new Error(`Invalid category: ${value}`);
   }
@@ -198,6 +207,8 @@ export function dcAwardCategoryUiLabel(
       return "DOT / Civil";
     case "industrial_warehouse":
       return "Industrial / Warehouse";
+    case "k12_higher_ed":
+      return "K-12 / higher ed";
     case "data_center":
       return "Data center";
     case undefined:

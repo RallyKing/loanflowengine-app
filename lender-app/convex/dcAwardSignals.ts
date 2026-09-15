@@ -35,6 +35,7 @@ const categoryV = v.union(
   v.literal("hospital"),
   v.literal("dot_civil"),
   v.literal("industrial_warehouse"),
+  v.literal("k12_higher_ed"),
   v.literal("data_center"),
 );
 

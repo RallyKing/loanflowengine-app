@@ -4936,8 +4936,8 @@ export default defineSchema({
    * campusKey/campusName/isPrimaryInCampus are display-merge only — do not
    * delete child permit rows. DC17 ≠ DC21 (different addresses).
    * Optional `category` supports multi-vertical radar rows (hospital /
-   * dot_civil / industrial_warehouse / data_center). Existing DC rows may
-   * omit category; do not require or wipe it on re-import.
+   * dot_civil / industrial_warehouse / k12_higher_ed / data_center). Existing
+   * DC rows may omit category; do not require or wipe it on re-import.
    * GHL sync is out of scope. No cron / scrape from Convex.
    */
   dcAwardSignals: defineTable({
@@ -4963,6 +4963,7 @@ export default defineSchema({
         v.literal("hospital"),
         v.literal("dot_civil"),
         v.literal("industrial_warehouse"),
+        v.literal("k12_higher_ed"),
         v.literal("data_center"),
       ),
     ),

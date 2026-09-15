@@ -71,6 +71,10 @@ const CATEGORY_FILTER_OPTIONS: Array<{
     label: dcAwardCategoryUiLabel("industrial_warehouse"),
   },
   {
+    value: "k12_higher_ed",
+    label: dcAwardCategoryUiLabel("k12_higher_ed"),
+  },
+  {
     value: "data_center_or_blank",
     label: "Data center (incl. blank)",
   },
@@ -655,9 +659,10 @@ function RadarTable() {
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
         list. Vertical filter uses optional `category` (`hospital` /
-        `dot_civil` / `industrial_warehouse` / `data_center`); legacy DC rows
-        with blank category still appear under All and &quot;Data center (incl.
-        blank)&quot;. Grouped view merges by campusKey (company fallback) and
+        `dot_civil` / `industrial_warehouse` / `k12_higher_ed` /
+        `data_center`); legacy DC rows with blank category still appear under
+        All and &quot;Data center (incl. blank)&quot;. Grouped view merges by
+        campusKey (company fallback) and
         shows the owner/principal once — Equinix DC17 is not DC21. Collapse all
         hides child permits; owner/principal stays on the group header. Flat is
         the raw permit list. Contact chips dedupe campus children by company +

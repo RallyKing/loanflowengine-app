@@ -1566,11 +1566,24 @@ console.log("dc award radar optional category vertical");
 
   assert.equal(parseDcAwardRadarCategory("dot_civil"), "dot_civil");
   assert.equal(parseDcAwardRadarCategory("DOT Civil"), "dot_civil");
+  assert.equal(parseDcAwardRadarCategory("DOT / Civil"), "dot_civil");
   assert.equal(parseDcAwardRadarCategory("industrial-warehouse"), "industrial_warehouse");
   assert.equal(parseDcAwardRadarCategory("data_center"), "data_center");
+  assert.equal(parseDcAwardRadarCategory("k12_higher_ed"), "k12_higher_ed");
+  assert.equal(parseDcAwardRadarCategory("K-12 / higher ed"), "k12_higher_ed");
   assert.throws(() => parseDcAwardRadarCategory("retail"), /Invalid category/);
   assert.equal(dcAwardCategoryUiLabel(undefined), "Data center (uncategorized)");
   assert.equal(dcAwardCategoryUiLabel("hospital"), "Hospital");
+  assert.equal(dcAwardCategoryUiLabel("k12_higher_ed"), "K-12 / higher ed");
+
+  const withK12 = prepareDcAwardRadarSeedRow({
+    ...base,
+    category: "k12_higher_ed",
+  });
+  assert.equal(withK12.category, "k12_higher_ed");
+  assert.deepEqual(pickDefinedCategory(withK12), {
+    category: "k12_higher_ed",
+  });
 
   const categoryCsv = [
     "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
@@ -1581,6 +1594,17 @@ console.log("dc award radar optional category vertical");
   assert.equal(
     prepareDcAwardRadarSeedRow(parsedHospital.rows[0]!).category,
     "hospital",
+  );
+
+  const k12Csv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
+    "Austin TX,Campus Expansion,Awarded,GC,Acme GC,GC,2026-09-01,https://example.com/permit/k12,County permit,high,K12 vertical,n,k12_higher_ed",
+  ].join("\n");
+  const parsedK12 = parseDcAwardRadarNationwidePayload(k12Csv);
+  assert.equal(parsedK12.rows[0]?.category, "k12_higher_ed");
+  assert.equal(
+    prepareDcAwardRadarSeedRow(parsedK12.rows[0]!).category,
+    "k12_higher_ed",
   );
 
   const blankCategoryCsv = [

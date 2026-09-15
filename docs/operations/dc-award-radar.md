@@ -100,7 +100,7 @@ A Phase 2 re-import does not wipe Hermes contacts: bundled seed rows omit contac
 | `campus_key` | `campusKey` | Optional stable campus/project-family id. Preserved on upsert when present. |
 | `campus_name` | `campusName` | Optional group header. Preserved on upsert when present. |
 | `is_primary_in_campus` | `isPrimaryInCampus` | Optional. `true`/`false`/`1`/`0`/`yes`/`no`/`primary`. Preferred contact row for the group. |
-| `category` | `category` | Optional vertical: `hospital` / `dot_civil` / `industrial_warehouse` / `data_center`. Alias: `vertical`. Empty / omitted = leave existing (legacy DC rows stay blank). Do not wipe on Phase 2 re-import. |
+| `category` | `category` | Optional vertical: `hospital` / `dot_civil` / `industrial_warehouse` / `k12_higher_ed` / `data_center`. Alias: `vertical`. Labels with `/` (e.g. `K-12 / higher ed`) normalize on parse. Empty / omitted = leave existing (legacy DC rows stay blank). Do not wipe on Phase 2 re-import. |
 
 JSON may use the camelCase field names. Payload may also be `{ "rows": [ ... ] }`.
 
@@ -129,7 +129,7 @@ DC21-P2 `sourceUrl` must be the BLDC-2025-030931 MLQ filing — not P3’s BLDC-
 - Group header shows campus/company and the **owner / principal once** (primary row’s contact, else first non-empty). Expand for child signals (stage, date, trade, source, confidence) plus full contact details.
 - Grouped mode has **Collapse all** / **Expand all** for campus groups (default: all expanded). Collapsed headers still show the owner/principal; only child rows hide. Expansion is component state (optional `localStorage`). Flat mode is unchanged.
 - Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.
-- **Vertical / category** filter: All, Hospital, DOT / Civil, Industrial / Warehouse, Data center (incl. blank), Data center (explicit). Indexed via `by_category` / `by_market_and_category`. Legacy DC rows with `category` undefined still list under All and “Data center (incl. blank)”.
+- **Vertical / category** filter: All, Hospital, DOT / Civil, Industrial / Warehouse, K-12 / higher ed, Data center (incl. blank), Data center (explicit). Indexed via `by_category` / `by_market_and_category`. Legacy DC rows with `category` undefined still list under All and “Data center (incl. blank)”.
 - **Owner / principal** stays visible in grouped mode (Joshua). Expand for LinkedIn, website, and why-cell/direct notes.
 - Operator secret matches `DATA_MIGRATION_ADMIN_SECRET` (fallback `ORG_INTEGRITY_ADMIN_SECRET`).
 - **Scrape with Hermes** is the primary refresh control; paste/CLI import is the fallback when the webhook is unset or Hermes is unavailable.
