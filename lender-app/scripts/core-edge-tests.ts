@@ -93,6 +93,16 @@ import {
   summarizeDcAwardRadarLeads,
 } from "../lib/dcAwardRadarStats";
 import {
+  DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+  DC_AWARD_RADAR_PAGE_SIZE,
+  DC_AWARD_RADAR_PAGE_SIZE_MAX,
+  DC_AWARD_RADAR_PAGE_SIZE_MIN,
+  clampDcAwardRadarPageSize,
+  dcAwardRadarLoadAllCanContinue,
+  formatDcAwardRadarListStatus,
+  mergeDcAwardRadarSignalPages,
+} from "../lib/dcAwardRadarPagination";
+import {
   collectUniqueDcAwardContacts,
   filterSignalsByContactFilters,
   uniqueContactHasGhlIdentity,
@@ -2226,6 +2236,98 @@ console.log("dc award radar lead-count uniqueness");
       company: "No Identity LLC",
     }),
     null,
+  );
+}
+passed += 1;
+
+console.log("dc award radar client pagination fail-closed helpers");
+{
+  assert.equal(clampDcAwardRadarPageSize(undefined), DC_AWARD_RADAR_PAGE_SIZE);
+  assert.equal(clampDcAwardRadarPageSize(200), DC_AWARD_RADAR_PAGE_SIZE_MAX);
+  assert.equal(clampDcAwardRadarPageSize(50), DC_AWARD_RADAR_PAGE_SIZE_MIN);
+  assert.equal(clampDcAwardRadarPageSize(12), DC_AWARD_RADAR_PAGE_SIZE_MIN);
+  assert.equal(clampDcAwardRadarPageSize(9999), DC_AWARD_RADAR_PAGE_SIZE_MAX);
+  assert.equal(clampDcAwardRadarPageSize(100.9), 100);
+  assert.equal(clampDcAwardRadarPageSize(Number.NaN), DC_AWARD_RADAR_PAGE_SIZE);
+
+  const merged = mergeDcAwardRadarSignalPages(
+    [{ _id: "a" }, { _id: "b" }],
+    [{ _id: "b" }, { _id: "c" }],
+  );
+  assert.deepEqual(
+    merged.map((row) => row._id),
+    ["a", "b", "c"],
+  );
+  assert.deepEqual(mergeDcAwardRadarSignalPages([], [{ _id: "x" }]), [
+    { _id: "x" },
+  ]);
+  assert.deepEqual(mergeDcAwardRadarSignalPages([{ _id: "y" }], []), [
+    { _id: "y" },
+  ]);
+
+  assert.equal(
+    dcAwardRadarLoadAllCanContinue({
+      pagesLoaded: 1,
+      maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+      truncated: true,
+      continueCursor: "cursor-1",
+    }),
+    true,
+  );
+  assert.equal(
+    dcAwardRadarLoadAllCanContinue({
+      pagesLoaded: 1,
+      maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+      truncated: false,
+      continueCursor: "cursor-1",
+    }),
+    false,
+  );
+  assert.equal(
+    dcAwardRadarLoadAllCanContinue({
+      pagesLoaded: 1,
+      maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+      truncated: true,
+      continueCursor: null,
+    }),
+    false,
+  );
+  assert.equal(
+    dcAwardRadarLoadAllCanContinue({
+      pagesLoaded: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+      maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+      truncated: true,
+      continueCursor: "cursor-more",
+    }),
+    false,
+  );
+  assert.equal(DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES, 100);
+  assert.equal(DC_AWARD_RADAR_PAGE_SIZE, 200);
+
+  assert.equal(
+    formatDcAwardRadarListStatus({
+      loadedCount: 200,
+      truncated: true,
+      pageSize: 200,
+    }),
+    "Showing 200 (more available)",
+  );
+  assert.equal(
+    formatDcAwardRadarListStatus({
+      loadedCount: 350,
+      truncated: false,
+      pageSize: 200,
+    }),
+    "Showing 350",
+  );
+  assert.match(
+    formatDcAwardRadarListStatus({
+      loadedCount: 20000,
+      truncated: true,
+      pageSize: 200,
+      hitPageCap: true,
+    }),
+    /page cap 100/,
   );
 }
 passed += 1;

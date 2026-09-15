@@ -11,8 +11,8 @@ HighLevel from this page is **tag/create only** (`dc-award-radar` + market/trade
 | Rule | How this feature complies |
 |------|---------------------------|
 | No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron. Hermes wake is a **client-called** one-shot action (`requestHermesScrape`) — never scheduled |
-| No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence/category indexes. `by_campusKey` exists for lookups; grouping is client-side on the capped page |
-| No polling | One-shot mutations/actions only; UI uses a single `useQuery` |
+| No unbounded `.collect()` | `list` uses client-driven `.paginate()` with `pageSize` clamped to 50–200 (default 200) + market/confidence/category indexes. Returns `continueCursor` / `truncated`. UI **Load more** / **Load all** request one page per query; Load all stops at 100 pages max. `by_campusKey` exists for lookups; grouping is client-side on loaded pages |
+| No polling | One-shot mutations/actions only; first page uses `useQuery`; further pages are explicit client clicks (`convex.query`) — no scheduler / self-reschedule |
 | GHL no-outbound | `pushFilteredContactsToGhl` upserts contacts and **adds tags** only. Upsert JSON is **allowlist-serialized** (name/email/phone/company/website/source). Never writes SMS/email/sequence/workflow/campaign/conversation fields. Eligible (email or phone) are selected, then **all N eligible** are sent (no send-size cap). Confirm/toast: **sending all N** eligible. Internal HighLevel writes may chunk (e.g. 50) for rate limits only. `ok: false` when created+updated is 0. Handoff CSV uses the same full eligible set; **Download contacts CSV** is the full filtered unique set |
 | Bounded writes | Operator payloads capped at **100 rows** per mutation |
 | Idempotency | `sourceKey` = normalized `sourceUrl` + project + stage |
@@ -125,11 +125,12 @@ DC21-P2 `sourceUrl` must be the BLDC-2025-030931 MLQ filing — not P3’s BLDC-
 ## UI
 
 - Default view is **Grouped** by `campusKey` (fallback: company). **Flat** is the raw permit list.
-- A compact **lead-count strip** sits above the list (signals, campuses in grouped mode, unique contacts, phone / email / LinkedIn / cell, high-confidence signals). Counts are computed **client-side** from the current `list` page (market + confidence + category filters, `.take(200)`). No extra Convex query.
+- A compact **lead-count strip** sits above the list (signals, campuses in grouped mode, unique contacts, phone / email / LinkedIn / cell, high-confidence signals). Counts are computed **client-side** from **loaded** `list` pages (market + confidence + category filters; each page ≤ 200 via `.paginate`). No extra Convex query. When more pages exist, footnote says stats are from loaded pages only.
+- **Load more** / **Load all** at the bottom of Grouped/Flat append the next page(s) while preserving filters. Status shows `Showing N (more available)` until exhausted. Load all is a client loop (one page per query) with a hard max of 100 pages — never `.collect()` on the server.
 - **Unique contacts** = one key per owner/principal: `company + contactName` when both are non-empty; otherwise contactName, email, phone digits (7+), or `linkedinUrl`. Campus children that share a key count once; channel flags are OR'd. Rows with no identity are signals only.
 - Group header shows campus/company and the **owner / principal once** (primary row’s contact, else first non-empty). Expand for child signals (stage, date, trade, source, confidence) plus full contact details.
 - Grouped mode has **Collapse all** / **Expand all** for campus groups (default: all expanded). Collapsed headers still show the owner/principal; only child rows hide. Expansion is component state (optional `localStorage`). Flat mode is unchanged.
-- Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.
+- Market filter is **free-text** (exact match, indexed). Suggestions come from **loaded pages** — not a hard-coded three-market dropdown. Use Load more / Load all to include later markets (e.g. GA/NC) when All markets is selected.
 - **Vertical / category** filter: All, Hospital, DOT / Civil, Industrial / Warehouse, K-12 / higher ed, Multifamily, Hospitality / Mixed Use, Federal / Municipal, Energy / renewables, Data center (incl. blank), Data center (explicit). Indexed via `by_category` / `by_market_and_category`. Legacy DC rows with `category` undefined still list under All and “Data center (incl. blank)”.
 - **Owner / principal** stays visible in grouped mode (Joshua). Expand for LinkedIn, website, and why-cell/direct notes.
 - **Contact filters** (Has phone / Has email / Has LinkedIn / Has cell / Missing phone / Missing email) apply to unique contacts in both Grouped and Flat views. The lead-count strip follows those filters. Collapse all / Expand all is unchanged.

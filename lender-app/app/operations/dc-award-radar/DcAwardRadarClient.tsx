@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useConvex, useQuery } from "convex/react";
 import { ChevronDown, ChevronRight, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { PageErrorBoundary } from "@/components/PageErrorBoundary";
@@ -62,6 +62,13 @@ import {
 } from "@/lib/export/dcAwardRadarContactsExport";
 import { downloadTextFile } from "@/lib/export/downloadClient";
 import { summarizeDcAwardRadarLeads } from "@/lib/dcAwardRadarStats";
+import {
+  DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+  DC_AWARD_RADAR_PAGE_SIZE,
+  dcAwardRadarLoadAllCanContinue,
+  formatDcAwardRadarListStatus,
+  mergeDcAwardRadarSignalPages,
+} from "@/lib/dcAwardRadarPagination";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useUserSettings } from "@/lib/userSettingsContext";
 import {
@@ -72,6 +79,16 @@ import { DcAwardRadarLeadStatsBar } from "./DcAwardRadarLeadStatsBar";
 import { DcAwardRadarOpsPanel } from "./DcAwardRadarOpsPanel";
 
 type RadarViewMode = "grouped" | "flat";
+
+type DcAwardRadarListSignal = DcAwardRadarGroupableRow & {
+  category?: DcAwardRadarCategory;
+  contactTitle?: string;
+  emailType?: DcAwardRadarEmailType;
+  phoneType?: DcAwardRadarPhoneType;
+  companyWebsite?: string;
+  contactNotes?: string;
+  sourceKey: string;
+};
 
 /** List filter: All, stored verticals, or data_center + blank legacy DC rows. */
 type CategoryFilter = "" | DcAwardRadarCategory | "data_center_or_blank";
@@ -450,6 +467,7 @@ function GroupedCampusRow({
 
 function RadarTable() {
   const memberUserKey = useActorUserKey().trim();
+  const convex = useConvex();
   const { settings } = useUserSettings();
   const confirmApi = useOperationalConfirmOptional();
   const pushFilteredContactsToGhl = useAction(
@@ -476,6 +494,20 @@ function RadarTable() {
     | { kind: "ok"; detail: string }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  /** Rows from Load more / Load all after the reactive first page. */
+  const [appendedSignals, setAppendedSignals] = useState<
+    DcAwardRadarListSignal[]
+  >([]);
+  const [continueCursor, setContinueCursor] = useState<string | null>(null);
+  const [listTruncated, setListTruncated] = useState(false);
+  const [pagesLoaded, setPagesLoaded] = useState(0);
+  const [hitPageCap, setHitPageCap] = useState(false);
+  const [pageBusy, setPageBusy] = useState<
+    | { kind: "idle" }
+    | { kind: "more" }
+    | { kind: "all"; loadedCount: number }
+  >({ kind: "idle" });
+  const [pageError, setPageError] = useState<string | null>(null);
 
   useEffect(() => {
     setGroupExpansion(readDcAwardRadarGroupExpansion());
@@ -487,19 +519,50 @@ function RadarTable() {
     persistDcAwardRadarGroupExpansion(groupExpansion);
   }, [groupExpansion, groupExpansionHydrated]);
 
-  const result = useQuery(
-    api.dcAwardSignals.list,
-    memberUserKey
-      ? {
-          memberUserKey,
-          ...(market ? { market } : {}),
-          ...(confidence ? { confidence } : {}),
-          ...(category ? { category } : {}),
-        }
-      : "skip",
+  const listArgs = useMemo(
+    () =>
+      memberUserKey
+        ? {
+            memberUserKey,
+            cursor: null as string | null,
+            pageSize: DC_AWARD_RADAR_PAGE_SIZE,
+            ...(market ? { market } : {}),
+            ...(confidence ? { confidence } : {}),
+            ...(category ? { category } : {}),
+          }
+        : null,
+    [memberUserKey, market, confidence, category],
   );
 
-  const signals = result?.signals;
+  const firstPage = useQuery(
+    api.dcAwardSignals.list,
+    listArgs ?? "skip",
+  );
+
+  // When filters change, `firstPage` goes undefined then refreshes — drop
+  // appended pages so GA/NC loads are not mixed with a stale first page.
+  useEffect(() => {
+    setAppendedSignals([]);
+    setHitPageCap(false);
+    setPageBusy({ kind: "idle" });
+    setPageError(null);
+    if (!firstPage) {
+      setContinueCursor(null);
+      setListTruncated(false);
+      setPagesLoaded(0);
+      return;
+    }
+    setContinueCursor(firstPage.continueCursor);
+    setListTruncated(firstPage.truncated);
+    setPagesLoaded(1);
+  }, [firstPage]);
+
+  const signals = firstPage
+    ? mergeDcAwardRadarSignalPages(
+        firstPage.signals as DcAwardRadarListSignal[],
+        appendedSignals,
+      )
+    : undefined;
   const filteredSignals = useMemo(() => {
     if (!signals) return [];
     return filterSignalsByContactFilters(signals, contactFilters);
@@ -540,6 +603,20 @@ function RadarTable() {
     }
     return [...fromData].sort((a, b) => a.localeCompare(b));
   }, [signals]);
+  const listStatus = formatDcAwardRadarListStatus({
+    loadedCount: signals?.length ?? 0,
+    truncated: listTruncated,
+    pageSize: DC_AWARD_RADAR_PAGE_SIZE,
+    hitPageCap,
+  });
+  const canLoadMore =
+    pageBusy.kind === "idle" &&
+    dcAwardRadarLoadAllCanContinue({
+      pagesLoaded,
+      maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+      truncated: listTruncated,
+      continueCursor,
+    });
 
   function applyMarketFilter() {
     setMarket(marketDraft.trim());
@@ -556,6 +633,99 @@ function RadarTable() {
 
   function toggleGroup(groupKey: string) {
     setGroupExpansion((current) => toggleDcAwardCampusGroup(groupKey, current));
+  }
+
+  async function fetchNextPage(cursor: string) {
+    if (!listArgs) {
+      throw new Error("Sign in required to load more award-radar signals.");
+    }
+    return await convex.query(api.dcAwardSignals.list, {
+      ...listArgs,
+      cursor,
+    });
+  }
+
+  async function handleLoadMore() {
+    if (!canLoadMore || !continueCursor) return;
+    setPageBusy({ kind: "more" });
+    setPageError(null);
+    try {
+      const page = await fetchNextPage(continueCursor);
+      setAppendedSignals((current) =>
+        mergeDcAwardRadarSignalPages(
+          current,
+          page.signals as DcAwardRadarListSignal[],
+        ),
+      );
+      const nextPages = pagesLoaded + 1;
+      setPagesLoaded(nextPages);
+      setContinueCursor(page.continueCursor);
+      setListTruncated(page.truncated);
+      if (
+        page.truncated &&
+        nextPages >= DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES
+      ) {
+        setHitPageCap(true);
+      }
+    } catch (error) {
+      setPageError(
+        error instanceof Error
+          ? error.message
+          : "Failed to load the next page of signals.",
+      );
+    } finally {
+      setPageBusy({ kind: "idle" });
+    }
+  }
+
+  async function handleLoadAll() {
+    if (!listTruncated || !continueCursor || pageBusy.kind !== "idle") return;
+    setPageBusy({ kind: "all", loadedCount: signals?.length ?? 0 });
+    setPageError(null);
+    let cursor: string | null = continueCursor;
+    let truncated: boolean = listTruncated;
+    let pages = pagesLoaded;
+    let appended = appendedSignals;
+    let loadedCount = signals?.length ?? 0;
+    try {
+      while (
+        dcAwardRadarLoadAllCanContinue({
+          pagesLoaded: pages,
+          maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
+          truncated,
+          continueCursor: cursor,
+        })
+      ) {
+        const page = await fetchNextPage(cursor!);
+        appended = mergeDcAwardRadarSignalPages(
+          appended,
+          page.signals as DcAwardRadarListSignal[],
+        );
+        pages += 1;
+        cursor = page.continueCursor;
+        truncated = page.truncated;
+        loadedCount = mergeDcAwardRadarSignalPages(
+          (firstPage?.signals as DcAwardRadarListSignal[] | undefined) ?? [],
+          appended,
+        ).length;
+        setAppendedSignals(appended);
+        setPagesLoaded(pages);
+        setContinueCursor(cursor);
+        setListTruncated(truncated);
+        setPageBusy({ kind: "all", loadedCount });
+      }
+      if (truncated && pages >= DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES) {
+        setHitPageCap(true);
+      }
+    } catch (error) {
+      setPageError(
+        error instanceof Error
+          ? error.message
+          : "Failed while loading all award-radar pages.",
+      );
+    } finally {
+      setPageBusy({ kind: "idle" });
+    }
   }
 
   function downloadFilteredContacts(kind: "contacts" | "ghl") {
@@ -908,9 +1078,12 @@ function RadarTable() {
       <DcAwardRadarLeadStatsBar
         stats={leadStats}
         viewMode={viewMode}
-        truncated={result?.truncated === true}
+        truncated={listTruncated}
+        loadedCount={signals?.length ?? 0}
+        listStatus={listStatus}
         market={market}
         contactFiltersActive={contactFiltersActive}
+        statsFromLoadedPagesOnly={listTruncated || pagesLoaded > 1}
       />
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
@@ -925,6 +1098,8 @@ function RadarTable() {
         hides child permits; owner/principal stays on the group header. Flat is
         the raw permit list. Contact chips dedupe campus children by company +
         name. Contact filters and CSV / GHL actions use those unique contacts.
+        List pages are {DC_AWARD_RADAR_PAGE_SIZE} rows each — use Load more /
+        Load all to reach later markets.
       </p>
 
       {signals.length === 0 ? (
@@ -938,78 +1113,128 @@ function RadarTable() {
           description="Contact-channel filters hid every row. Clear Has phone / Has email / Has LinkedIn / Has cell / Missing phone / Missing email to see the list again."
         />
       ) : (
-        <div className="overflow-x-auto max-md:touch-pan-x">
-          {viewMode === "grouped" ? (
-            <table
-              className={dataTableClassNames(
-                settings.tableDensity,
-                "w-full min-w-[64rem] text-left",
-              )}
+        <div className="space-y-3">
+          <div className="overflow-x-auto max-md:touch-pan-x">
+            {viewMode === "grouped" ? (
+              <table
+                className={dataTableClassNames(
+                  settings.tableDensity,
+                  "w-full min-w-[64rem] text-left",
+                )}
+              >
+                <thead>
+                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Market</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">
+                      Campus / company
+                    </th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">
+                      Owner / principal
+                    </th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Signals</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map((group) => (
+                    <GroupedCampusRow
+                      key={group.groupKey}
+                      group={group}
+                      expanded={isDcAwardCampusGroupExpanded(
+                        group.groupKey,
+                        groupExpansion,
+                      )}
+                      onToggle={() => toggleGroup(group.groupKey)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table
+                className={dataTableClassNames(
+                  settings.tableDensity,
+                  "w-full min-w-[80rem] text-left",
+                )}
+              >
+                <thead>
+                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Market</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Project</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Stage</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Company</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">
+                      Owner / principal
+                    </th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">
+                      Why it matters
+                    </th>
+                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSignals.map((row) => (
+                    <FlatSignalRow
+                      key={row._id}
+                      row={row}
+                      expanded={expandedIds.has(row._id)}
+                      onToggle={() => toggleExpanded(row._id)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div
+            className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
+            data-testid="dc-award-list-pagination"
+          >
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="dc-award-list-status"
+              role="status"
             >
-              <thead>
-                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Market</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">
-                    Campus / company
-                  </th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">
-                    Owner / principal
-                  </th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Signals</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groups.map((group) => (
-                  <GroupedCampusRow
-                    key={group.groupKey}
-                    group={group}
-                    expanded={isDcAwardCampusGroupExpanded(
-                      group.groupKey,
-                      groupExpansion,
-                    )}
-                    onToggle={() => toggleGroup(group.groupKey)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <table
-              className={dataTableClassNames(
-                settings.tableDensity,
-                "w-full min-w-[80rem] text-left",
-              )}
-            >
-              <thead>
-                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Market</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Project</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Stage</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Company</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">
-                    Owner / principal
-                  </th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">
-                    Why it matters
-                  </th>
-                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredSignals.map((row) => (
-                  <FlatSignalRow
-                    key={row._id}
-                    row={row}
-                    expanded={expandedIds.has(row._id)}
-                    onToggle={() => toggleExpanded(row._id)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          )}
+              {pageBusy.kind === "all"
+                ? `Loading… ${pageBusy.loadedCount}`
+                : listStatus}
+              {pagesLoaded > 0
+                ? ` · ${pagesLoaded} page${pagesLoaded === 1 ? "" : "s"}`
+                : ""}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canLoadMore}
+                onClick={() => void handleLoadMore()}
+                data-testid="dc-award-load-more"
+              >
+                {pageBusy.kind === "more" ? "Loading…" : "Load more"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canLoadMore}
+                onClick={() => void handleLoadAll()}
+                data-testid="dc-award-load-all"
+              >
+                {pageBusy.kind === "all" ? "Loading all…" : "Load all"}
+              </Button>
+            </div>
+            {pageError ? (
+              <p
+                className="text-xs text-destructive"
+                role="alert"
+                data-testid="dc-award-pagination-error"
+              >
+                {pageError}
+              </p>
+            ) : null}
+          </div>
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
-import type { MutationCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { requireAuthenticatedCaller } from "./callerAuth";
 import { assertDataMigrationAdmin } from "./migrationAdminAuth";
@@ -22,8 +22,7 @@ import {
   legacySourceKeysForPrepared,
   mergeCampusRemapNotes,
 } from "../lib/dcAwardRadarCampus";
-
-const LIST_TAKE_LIMIT = 200;
+import { clampDcAwardRadarPageSize } from "../lib/dcAwardRadarPagination";
 
 const confidenceV = v.union(
   v.literal("high"),
@@ -439,16 +438,75 @@ async function upsertContactOnlyRows(
   };
 }
 
+type DcAwardListIndexArgs = {
+  market?: string;
+  confidence?: "high" | "med" | "low";
+  indexedCategory?:
+    | "hospital"
+    | "dot_civil"
+    | "industrial_warehouse"
+    | "k12_higher_ed"
+    | "data_center"
+    | "multifamily"
+    | "hospitality_mixed_use"
+    | "federal_municipal"
+    | "energy_renewables";
+};
+
+/**
+ * Indexed browse path for one page. Prefer compound indexes; remaining filters
+ * apply in TS on the paginated page only — never `.collect()`.
+ */
+function dcAwardSignalsListQuery(ctx: QueryCtx, args: DcAwardListIndexArgs) {
+  const { market, confidence, indexedCategory } = args;
+  if (market && indexedCategory) {
+    return ctx.db
+      .query("dcAwardSignals")
+      .withIndex("by_market_and_category", (q) =>
+        q.eq("market", market).eq("category", indexedCategory),
+      );
+  }
+  if (indexedCategory) {
+    return ctx.db
+      .query("dcAwardSignals")
+      .withIndex("by_category", (q) => q.eq("category", indexedCategory));
+  }
+  if (market && confidence) {
+    return ctx.db
+      .query("dcAwardSignals")
+      .withIndex("by_market_and_confidence", (q) =>
+        q.eq("market", market).eq("confidence", confidence),
+      );
+  }
+  if (market) {
+    return ctx.db
+      .query("dcAwardSignals")
+      .withIndex("by_market", (q) => q.eq("market", market));
+  }
+  if (confidence) {
+    return ctx.db
+      .query("dcAwardSignals")
+      .withIndex("by_confidence", (q) => q.eq("confidence", confidence));
+  }
+  return ctx.db.query("dcAwardSignals");
+}
+
 export const list = query({
   args: {
     memberUserKey: v.optional(v.string()),
     market: v.optional(v.string()),
     confidence: v.optional(confidenceV),
     category: v.optional(categoryFilterV),
+    /** Opaque Convex pagination cursor from a prior `continueCursor`. */
+    cursor: v.optional(v.union(v.string(), v.null())),
+    /** Clamped to 50–200; default 200. One page per query call. */
+    pageSize: v.optional(v.number()),
   },
   returns: v.object({
     signals: v.array(dcAwardSignalPublicV),
+    continueCursor: v.union(v.string(), v.null()),
     truncated: v.boolean(),
+    pageSize: v.number(),
   }),
   handler: async (ctx, args) => {
     await requireAuthenticatedCaller(ctx, args.memberUserKey);
@@ -461,44 +519,17 @@ export const list = query({
         ? categoryFilter
         : undefined;
     const dataCenterOrBlank = categoryFilter === "data_center_or_blank";
+    const pageSize = clampDcAwardRadarPageSize(args.pageSize);
 
-    // Prefer compound indexes when available; remaining filters applied in TS
-    // on the capped page. Still `.take(200)` — no `.collect()`.
-    const page =
-      market && indexedCategory
-        ? await ctx.db
-            .query("dcAwardSignals")
-            .withIndex("by_market_and_category", (q) =>
-              q.eq("market", market).eq("category", indexedCategory),
-            )
-            .take(LIST_TAKE_LIMIT)
-        : indexedCategory
-          ? await ctx.db
-              .query("dcAwardSignals")
-              .withIndex("by_category", (q) =>
-                q.eq("category", indexedCategory),
-              )
-              .take(LIST_TAKE_LIMIT)
-          : market && confidence
-            ? await ctx.db
-                .query("dcAwardSignals")
-                .withIndex("by_market_and_confidence", (q) =>
-                  q.eq("market", market).eq("confidence", confidence),
-                )
-                .take(LIST_TAKE_LIMIT)
-            : market
-              ? await ctx.db
-                  .query("dcAwardSignals")
-                  .withIndex("by_market", (q) => q.eq("market", market))
-                  .take(LIST_TAKE_LIMIT)
-              : confidence
-                ? await ctx.db
-                    .query("dcAwardSignals")
-                    .withIndex("by_confidence", (q) =>
-                      q.eq("confidence", confidence),
-                    )
-                    .take(LIST_TAKE_LIMIT)
-                : await ctx.db.query("dcAwardSignals").take(LIST_TAKE_LIMIT);
+    // Client-driven pagination: one `.paginate()` page per call — no `.collect()`,
+    // no scheduler loops. `truncated` reflects the DB page, not post-filter length.
+    const { page, isDone, continueCursor } = await dcAwardSignalsListQuery(
+      ctx,
+      { market, confidence, indexedCategory },
+    ).paginate({
+      numItems: pageSize,
+      cursor: args.cursor ?? null,
+    });
 
     const signals = page
       .filter((row) => {
@@ -523,7 +554,9 @@ export const list = query({
 
     return {
       signals,
-      truncated: page.length >= LIST_TAKE_LIMIT,
+      continueCursor: isDone ? null : continueCursor,
+      truncated: !isDone,
+      pageSize,
     };
   },
 });
