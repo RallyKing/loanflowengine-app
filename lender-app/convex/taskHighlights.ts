@@ -136,10 +136,14 @@ async function buildHubTriageHighlightMap(
    * Fail-closed bound on the org task scan. `tasks` has no
    * `(organizationId, relatedFileId)` index, so this query still walks the org
    * range; the cap keeps one hub subscription from scaling without limit.
+   *
+   * Newest-first so that an org large enough to hit the cap keeps the tasks
+   * most likely to be open and labeled, rather than its oldest.
    */
   const tasks = await ctx.db
     .query("tasks")
     .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .order("desc")
     .take(HUB_TRIAGE_TASK_SCAN_CAP);
 
   /** Phase 24.5 — triage bubbles use pipeline file read ACL, not task ownership. */
