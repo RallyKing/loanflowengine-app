@@ -23,6 +23,11 @@ import {
   mergeCampusRemapNotes,
 } from "../lib/dcAwardRadarCampus";
 import { clampDcAwardRadarPageSize } from "../lib/dcAwardRadarPagination";
+import {
+  DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP,
+  dcAwardSignalMatchesListFilters,
+  summarizeDcAwardRadarLeadStatsScan,
+} from "../lib/dcAwardRadarLeadStatsScan";
 
 const confidenceV = v.union(
   v.literal("high"),
@@ -47,6 +52,15 @@ const categoryV = v.union(
  * rows (category undefined/absent) and explicit data_center.
  */
 const categoryFilterV = v.union(categoryV, v.literal("data_center_or_blank"));
+
+const contactFilterIdV = v.union(
+  v.literal("hasPhone"),
+  v.literal("hasEmail"),
+  v.literal("hasLinkedIn"),
+  v.literal("hasCell"),
+  v.literal("missingPhone"),
+  v.literal("missingEmail"),
+);
 
 const phoneTypeV = v.union(
   v.literal("cell"),
@@ -491,6 +505,33 @@ function dcAwardSignalsListQuery(ctx: QueryCtx, args: DcAwardListIndexArgs) {
   return ctx.db.query("dcAwardSignals");
 }
 
+function indexedCategoryFromFilter(
+  categoryFilter:
+    | DcAwardListIndexArgs["indexedCategory"]
+    | "data_center_or_blank"
+    | undefined,
+): DcAwardListIndexArgs["indexedCategory"] {
+  if (!categoryFilter || categoryFilter === "data_center_or_blank") {
+    return undefined;
+  }
+  return categoryFilter;
+}
+
+const leadStatsReturnV = v.object({
+  signalCount: v.number(),
+  campusGroupCount: v.number(),
+  uniqueContactCount: v.number(),
+  contactsWithPhone: v.number(),
+  contactsWithEmail: v.number(),
+  contactsWithLinkedIn: v.number(),
+  contactsWithCell: v.number(),
+  highConfidenceSignalCount: v.number(),
+  scannedCount: v.number(),
+  matchedCount: v.number(),
+  partial: v.boolean(),
+  scanCap: v.number(),
+});
+
 export const list = query({
   args: {
     memberUserKey: v.optional(v.string()),
@@ -514,11 +555,7 @@ export const list = query({
     const market = args.market?.trim() || undefined;
     const confidence = args.confidence;
     const categoryFilter = args.category;
-    const indexedCategory =
-      categoryFilter && categoryFilter !== "data_center_or_blank"
-        ? categoryFilter
-        : undefined;
-    const dataCenterOrBlank = categoryFilter === "data_center_or_blank";
+    const indexedCategory = indexedCategoryFromFilter(categoryFilter);
     const pageSize = clampDcAwardRadarPageSize(args.pageSize);
 
     // Client-driven pagination: one `.paginate()` page per call — no `.collect()`,
@@ -532,15 +569,13 @@ export const list = query({
     });
 
     const signals = page
-      .filter((row) => {
-        if (confidence && row.confidence !== confidence) return false;
-        if (market && row.market !== market) return false;
-        if (indexedCategory && row.category !== indexedCategory) return false;
-        if (dataCenterOrBlank) {
-          return row.category === undefined || row.category === "data_center";
-        }
-        return true;
-      })
+      .filter((row) =>
+        dcAwardSignalMatchesListFilters(row, {
+          market,
+          confidence,
+          category: categoryFilter,
+        }),
+      )
       .map(toPublicRow)
       .sort((a, b) => {
         const marketCmp = a.market.localeCompare(b.market);
@@ -558,6 +593,55 @@ export const list = query({
       truncated: !isDone,
       pageSize,
     };
+  },
+});
+
+/**
+ * Aggregate lead counts for the active list + contact filters.
+ * One indexed `.take(SCAN_CAP + 1)` — no `.collect()`, no scheduler, no poll.
+ * `partial` is true when the index page hit the cap (fail-closed).
+ */
+export const leadStats = query({
+  args: {
+    memberUserKey: v.optional(v.string()),
+    market: v.optional(v.string()),
+    confidence: v.optional(confidenceV),
+    category: v.optional(categoryFilterV),
+    contactFilters: v.optional(v.array(contactFilterIdV)),
+  },
+  returns: leadStatsReturnV,
+  handler: async (ctx, args) => {
+    await requireAuthenticatedCaller(ctx, args.memberUserKey);
+
+    const market = args.market?.trim() || undefined;
+    const confidence = args.confidence;
+    const categoryFilter = args.category;
+    const indexedCategory = indexedCategoryFromFilter(categoryFilter);
+    const contactFilters = new Set(args.contactFilters ?? []);
+
+    const raw = await dcAwardSignalsListQuery(ctx, {
+      market,
+      confidence,
+      indexedCategory,
+    }).take(DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP + 1);
+    const indexOverflow = raw.length > DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP;
+    const bounded = indexOverflow
+      ? raw.slice(0, DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP)
+      : raw;
+    const matching = bounded.filter((row) =>
+      dcAwardSignalMatchesListFilters(row, {
+        market,
+        confidence,
+        category: categoryFilter,
+      }),
+    );
+
+    return summarizeDcAwardRadarLeadStatsScan({
+      scannedRows: matching,
+      scanCap: DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP,
+      contactFilters,
+      indexOverflow,
+    });
   },
 });
 

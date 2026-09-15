@@ -108,6 +108,13 @@ import {
   mergeDcAwardRadarSignalPages,
 } from "../lib/dcAwardRadarPagination";
 import {
+  DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP,
+  dcAwardSignalMatchesListFilters,
+  formatDcAwardRadarLeadStatsNote,
+  resolveDcAwardRadarLeadStatsDisplay,
+  summarizeDcAwardRadarLeadStatsScan,
+} from "../lib/dcAwardRadarLeadStatsScan";
+import {
   collectUniqueDcAwardContacts,
   filterSignalsByContactFilters,
   uniqueContactHasGhlIdentity,
@@ -2410,6 +2417,239 @@ console.log("dc award radar client pagination fail-closed helpers");
   assert.match(
     formatDcAwardRadarGhlTruncatedCaveat({ hitPageCap: true }),
     /loaded pages only/,
+  );
+}
+passed += 1;
+
+console.log("dc award radar full-filter lead-stats scan (not page 1 only)");
+{
+  assert.ok(DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP > DC_AWARD_RADAR_PAGE_SIZE);
+  assert.ok(DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP <= 8_000);
+
+  assert.equal(
+    dcAwardSignalMatchesListFilters(
+      { market: "Phoenix AZ", confidence: "high", category: "hospital" },
+      { market: "Phoenix AZ", confidence: "high", category: "hospital" },
+    ),
+    true,
+  );
+  assert.equal(
+    dcAwardSignalMatchesListFilters(
+      { market: "Phoenix AZ", confidence: "high", category: "hospital" },
+      { market: "Dallas TX" },
+    ),
+    false,
+  );
+  assert.equal(
+    dcAwardSignalMatchesListFilters(
+      { market: "Ashburn VA", confidence: "med", category: undefined },
+      { category: "data_center_or_blank" },
+    ),
+    true,
+  );
+  assert.equal(
+    dcAwardSignalMatchesListFilters(
+      { market: "Ashburn VA", confidence: "med", category: "data_center" },
+      { category: "data_center_or_blank" },
+    ),
+    true,
+  );
+  assert.equal(
+    dcAwardSignalMatchesListFilters(
+      { market: "Ashburn VA", confidence: "med", category: "hospital" },
+      { category: "data_center_or_blank" },
+    ),
+    false,
+  );
+
+  function pageAwareRow(
+    index: number,
+    extras: {
+      company?: string;
+      contactName?: string;
+      phone?: string;
+      phoneType?: "cell" | "direct";
+      email?: string;
+      linkedinUrl?: string;
+      confidence?: "high" | "med" | "low";
+      campusKey?: string;
+      projectOrCampus?: string;
+    } = {},
+  ) {
+    const company = extras.company ?? `GC ${String(index).padStart(3, "0")}`;
+    return {
+      _id: `sig-${index}`,
+      company,
+      projectOrCampus: extras.projectOrCampus ?? `Project ${index}`,
+      campusKey: extras.campusKey,
+      campusName: extras.campusKey,
+      confidence: extras.confidence ?? (index % 7 === 0 ? "high" : "med"),
+      contactName: extras.contactName ?? `Lead ${index}`,
+      phone: extras.phone,
+      phoneType: extras.phoneType,
+      email: extras.email,
+      linkedinUrl: extras.linkedinUrl,
+    };
+  }
+
+  const twoHundredFifty = Array.from({ length: 250 }, (_, index) =>
+    pageAwareRow(index, {
+      phone: index < 40 ? `415-555-${String(1000 + index).slice(-4)}` : undefined,
+      phoneType: index < 10 ? "cell" : "direct",
+      email: index % 5 === 0 ? `ops${index}@example.com` : undefined,
+      linkedinUrl:
+        index % 11 === 0
+          ? `https://www.linkedin.com/in/lead-${index}`
+          : undefined,
+      campusKey: `campus-${Math.floor(index / 5)}`,
+    }),
+  );
+
+  const pageOneOnly = summarizeDcAwardRadarLeads(twoHundredFifty.slice(0, 200), 40);
+  const fullScan = summarizeDcAwardRadarLeadStatsScan({
+    scannedRows: twoHundredFifty,
+    scanCap: DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP,
+    contactFilters: new Set(),
+  });
+  assert.equal(fullScan.partial, false);
+  assert.equal(fullScan.signalCount, 250);
+  assert.equal(fullScan.uniqueContactCount, 250);
+  assert.ok(fullScan.signalCount > pageOneOnly.signalCount);
+  assert.ok(fullScan.uniqueContactCount > pageOneOnly.uniqueContactCount);
+  assert.equal(fullScan.contactsWithPhone, 40);
+  assert.equal(fullScan.contactsWithEmail, 50);
+  assert.equal(fullScan.contactsWithLinkedIn, 23);
+  assert.equal(fullScan.contactsWithCell, 10);
+  assert.equal(fullScan.highConfidenceSignalCount, 36);
+  assert.equal(fullScan.campusGroupCount, 50);
+  assert.equal(fullScan.scannedCount, 250);
+  assert.equal(fullScan.scanCap, DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP);
+
+  const pageTwoPhoneOnly = [
+    pageAwareRow(1, {
+      company: "DPR Construction",
+      contactName: "George Pfeffer",
+      campusKey: "equinix-dc21",
+    }),
+    pageAwareRow(2, {
+      company: "DPR Construction",
+      contactName: "George Pfeffer",
+      phone: "(703) 555-0100",
+      phoneType: "cell",
+      email: "george@dpr.com",
+      linkedinUrl: "https://www.linkedin.com/in/george-pfeffer",
+      campusKey: "equinix-dc21",
+    }),
+  ];
+  const hasPhoneFull = summarizeDcAwardRadarLeadStatsScan({
+    scannedRows: pageTwoPhoneOnly,
+    scanCap: DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP,
+    contactFilters: new Set(["hasPhone"]),
+  });
+  const hasPhonePageOne = summarizeDcAwardRadarLeads(
+    filterSignalsByContactFilters(pageTwoPhoneOnly.slice(0, 1), new Set(["hasPhone"])),
+    0,
+  );
+  assert.equal(hasPhonePageOne.signalCount, 0);
+  assert.equal(hasPhoneFull.signalCount, 2);
+  assert.equal(hasPhoneFull.uniqueContactCount, 1);
+  assert.equal(hasPhoneFull.contactsWithPhone, 1);
+  assert.equal(hasPhoneFull.contactsWithEmail, 1);
+  assert.equal(hasPhoneFull.contactsWithLinkedIn, 1);
+  assert.equal(hasPhoneFull.contactsWithCell, 1);
+  assert.equal(hasPhoneFull.campusGroupCount, 1);
+
+  const overflow = summarizeDcAwardRadarLeadStatsScan({
+    scannedRows: twoHundredFifty,
+    scanCap: 200,
+    contactFilters: new Set(),
+  });
+  assert.equal(overflow.partial, true);
+  assert.equal(overflow.signalCount, 200);
+  assert.equal(overflow.scannedCount, 200);
+  assert.equal(overflow.scanCap, 200);
+
+  const loadedPage = summarizeDcAwardRadarLeads(twoHundredFifty.slice(0, 200), 40);
+  const completeServer = resolveDcAwardRadarLeadStatsDisplay({
+    server: fullScan,
+    loaded: loadedPage,
+    listTruncated: true,
+    hitPageCap: false,
+  });
+  assert.equal(completeServer.source, "server");
+  assert.equal(completeServer.partial, false);
+  assert.equal(completeServer.stats.signalCount, 250);
+  assert.equal(completeServer.note, null);
+
+  const loading = resolveDcAwardRadarLeadStatsDisplay({
+    server: undefined,
+    loaded: loadedPage,
+    listTruncated: true,
+    hitPageCap: false,
+  });
+  assert.equal(loading.source, "loaded");
+  assert.equal(loading.statsLoading, true);
+  assert.match(loading.note ?? "", /loading full-filter totals/i);
+
+  const partialServer = resolveDcAwardRadarLeadStatsDisplay({
+    server: overflow,
+    loaded: loadedPage,
+    listTruncated: true,
+    hitPageCap: false,
+  });
+  assert.equal(partialServer.partial, true);
+  assert.match(partialServer.note ?? "", /scan cap/);
+
+  const loadedBeatsPartialScan = resolveDcAwardRadarLeadStatsDisplay({
+    server: overflow,
+    loaded: summarizeDcAwardRadarLeads(twoHundredFifty, 50),
+    listTruncated: false,
+    hitPageCap: false,
+  });
+  assert.equal(loadedBeatsPartialScan.source, "loaded");
+  assert.equal(loadedBeatsPartialScan.stats.signalCount, 250);
+  assert.equal(loadedBeatsPartialScan.partial, false);
+
+  const missingPhonePageOneLarger = resolveDcAwardRadarLeadStatsDisplay({
+    server: {
+      ...overflow,
+      signalCount: 80,
+      uniqueContactCount: 80,
+      matchedCount: 80,
+      partial: true,
+    },
+    loaded: { ...loadedPage, signalCount: 180, uniqueContactCount: 180 },
+    listTruncated: true,
+    hitPageCap: false,
+  });
+  assert.equal(missingPhonePageOneLarger.source, "server");
+  assert.equal(missingPhonePageOneLarger.stats.signalCount, 80);
+  assert.equal(missingPhonePageOneLarger.partial, true);
+
+  const indexOverflowSparse = summarizeDcAwardRadarLeadStatsScan({
+    scannedRows: twoHundredFifty.slice(0, 12),
+    scanCap: DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP,
+    contactFilters: new Set(),
+    indexOverflow: true,
+  });
+  assert.equal(indexOverflowSparse.partial, true);
+  assert.equal(indexOverflowSparse.signalCount, 12);
+  assert.equal(indexOverflowSparse.scannedCount, 12);
+
+  assert.equal(
+    formatDcAwardRadarLeadStatsNote({
+      source: "server",
+      partial: false,
+    }),
+    null,
+  );
+  assert.match(
+    formatDcAwardRadarLeadStatsNote({
+      source: "server",
+      partial: true,
+      scanCap: 4000,
+    }) ?? "",
+    /4000/,
   );
 }
 passed += 1;
