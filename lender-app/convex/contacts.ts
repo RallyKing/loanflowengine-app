@@ -34,6 +34,7 @@ import {
   contactMethodsToConvexFields,
   normalizeContactMethods,
 } from "../lib/contact/contactMethods";
+import { CONTACTS_LIST_ABSOLUTE_CAP } from "../lib/pipeline/tablePreviewReadBounds";
 import {
   batchPrimaryEntitiesForContacts,
   resolvePrimaryEntityForContact,
@@ -297,7 +298,7 @@ export const list = query({
     contactRoleIdFilter: v.optional(v.string()),
     /** When true with `contactRoleIdFilter`, match stored `contacts.contactRoleId` only (no legacy/link inference). */
     strictCanonicalRoleMatch: v.optional(v.boolean()),
-    /** Optional cap for peek/pagination callers (default: no limit). */
+    /** Optional cap for peek/pagination callers; always bounded by `CONTACTS_LIST_ABSOLUTE_CAP`. */
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -318,18 +319,15 @@ export const list = query({
     // Org-scoped list — global admin still reads within the active org (avoids full-table scan).
     const rowCap =
       limit != null && Number.isFinite(limit) && limit > 0
-        ? Math.min(Math.floor(limit), 5000)
-        : undefined;
-    const contactQuery = ctx.db
+        ? Math.min(Math.floor(limit), CONTACTS_LIST_ABSOLUTE_CAP)
+        : CONTACTS_LIST_ABSOLUTE_CAP;
+    let rows = await ctx.db
       .query("contacts")
       .withIndex("by_organization_updatedAt", (q) =>
         q.eq("organizationId", organizationId),
       )
-      .order("desc");
-    let rows =
-      rowCap != null
-        ? await contactQuery.take(rowCap)
-        : await contactQuery.collect();
+      .order("desc")
+      .take(rowCap);
 
     const roleFilter = contactRoleIdFilter?.trim();
     if (roleFilter) {

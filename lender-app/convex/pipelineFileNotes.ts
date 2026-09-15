@@ -17,8 +17,14 @@ import { resolveDisplayUsernameForUserKey } from "./auth/displayIdentity";
 import { pickCanonicalOrgMember } from "./orgMembership";
 import { SYSTEM_ORG_ROLE_KEYS } from "../lib/orgRbac";
 import { platformUserKeyFallback } from "./viewerIdentity";
+import { loadNoteCountsForFiles } from "./pipelineHubBoundedReads";
 
-/** Batch note counts for pipeline table rows (one query per org in the batch). */
+/**
+ * Batch note counts for pipeline table rows.
+ *
+ * Reads through the full `by_org_file` key (org **and** file) so each file
+ * costs one capped index range read; see `loadNoteCountsForFiles`.
+ */
 export async function batchPipelineFileNoteCounts(
   ctx: QueryCtx,
   files: Array<{
@@ -26,30 +32,7 @@ export async function batchPipelineFileNoteCounts(
     organizationId?: Id<"organizations">;
   }>,
 ): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  const byOrg = new Map<string, Id<"pipeline">[]>();
-  for (const file of files) {
-    if (!file.organizationId) continue;
-    const orgKey = String(file.organizationId);
-    const list = byOrg.get(orgKey) ?? [];
-    list.push(file._id);
-    byOrg.set(orgKey, list);
-  }
-  for (const [orgKey, fileIds] of byOrg) {
-    const want = new Set(fileIds.map(String));
-    const notes = await ctx.db
-      .query("pipelineFileNotes")
-      .withIndex("by_org_file", (q) =>
-        q.eq("organizationId", orgKey as Id<"organizations">),
-      )
-      .collect();
-    for (const note of notes) {
-      const fid = String(note.pipelineFileId);
-      if (!want.has(fid)) continue;
-      counts.set(fid, (counts.get(fid) ?? 0) + 1);
-    }
-  }
-  return counts;
+  return await loadNoteCountsForFiles(ctx, files);
 }
 
 const UNAUTHORIZED_DELETE_NOTE =

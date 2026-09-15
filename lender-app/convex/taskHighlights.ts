@@ -18,6 +18,7 @@ import { normalizeTriageLabelHex, resolveTriageLabelHex } from "../lib/triageLab
 import { taskParticipatesInTriageBubble } from "../lib/pipeline/triageHighlightParticipation";
 import { resolveTriageLabelSeverityWeight } from "../lib/pipeline/triageSeverityWeight";
 import { resolveTriageEvaluationTime } from "../lib/triageClock";
+import { HUB_TRIAGE_TASK_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
 
 const orgArgs = {
   organizationId: v.id("organizations"),
@@ -131,10 +132,19 @@ async function buildHubTriageHighlightMap(
   const triageLabels = await loadTriageLabelsForOrg(ctx, organizationId);
   const now = resolveTriageEvaluationTime(nowBucket);
 
+  /**
+   * Fail-closed bound on the org task scan. `tasks` has no
+   * `(organizationId, relatedFileId)` index, so this query still walks the org
+   * range; the cap keeps one hub subscription from scaling without limit.
+   *
+   * Newest-first so that an org large enough to hit the cap keeps the tasks
+   * most likely to be open and labeled, rather than its oldest.
+   */
   const tasks = await ctx.db
     .query("tasks")
     .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .collect();
+    .order("desc")
+    .take(HUB_TRIAGE_TASK_SCAN_CAP);
 
   /** Phase 24.5 — triage bubbles use pipeline file read ACL, not task ownership. */
   const fileReadableCache = new Map<string, boolean>();
