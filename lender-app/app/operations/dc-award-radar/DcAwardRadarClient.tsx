@@ -68,7 +68,10 @@ import {
   dcAwardRadarGhlHandoffCsvFilename,
 } from "@/lib/export/dcAwardRadarContactsExport";
 import { downloadTextFile } from "@/lib/export/downloadClient";
-import { summarizeDcAwardRadarLeads } from "@/lib/dcAwardRadarStats";
+import {
+  summarizeDcAwardRadarLeads,
+  type DcAwardRadarLeadStats,
+} from "@/lib/dcAwardRadarStats";
 import { resolveDcAwardRadarLeadStatsDisplay } from "@/lib/dcAwardRadarLeadStatsScan";
 import {
   DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
@@ -92,6 +95,68 @@ import { DcAwardRadarOpsPanel } from "./DcAwardRadarOpsPanel";
 
 type RadarViewMode = "grouped" | "flat";
 
+/** List filter: All, stored verticals, or data_center + blank legacy DC rows. */
+type CategoryFilter = "" | DcAwardRadarCategory | "data_center_or_blank";
+
+type DcAwardRadarLeadStatsQueryArgs =
+  | "skip"
+  | {
+      memberUserKey: string;
+      market?: string;
+      confidence?: DcAwardRadarConfidence;
+      category?: Exclude<CategoryFilter, "">;
+      contactFilters?: DcAwardRadarContactFilterId[];
+    };
+
+function DcAwardRadarConnectedLeadStats({
+  leadStatsArgs,
+  loadedLeadStats,
+  listTruncated,
+  hitPageCap,
+  viewMode,
+  loadedCount,
+  listStatus,
+  market,
+  contactFiltersActive,
+}: {
+  leadStatsArgs: DcAwardRadarLeadStatsQueryArgs;
+  loadedLeadStats: DcAwardRadarLeadStats;
+  listTruncated: boolean;
+  hitPageCap: boolean;
+  viewMode: RadarViewMode;
+  loadedCount: number;
+  listStatus: string;
+  market: string;
+  contactFiltersActive: boolean;
+}) {
+  const serverLeadStats = useQuery(
+    api.dcAwardSignals.leadStats,
+    leadStatsArgs,
+  );
+  const leadStatsDisplay = resolveDcAwardRadarLeadStatsDisplay({
+    server: serverLeadStats,
+    loaded: loadedLeadStats,
+    listTruncated,
+    hitPageCap,
+  });
+  return (
+    <DcAwardRadarLeadStatsBar
+      stats={leadStatsDisplay.stats}
+      viewMode={viewMode}
+      truncated={listTruncated}
+      loadedCount={loadedCount}
+      listStatus={listStatus}
+      market={market}
+      contactFiltersActive={contactFiltersActive}
+      hitPageCap={hitPageCap}
+      statsSource={leadStatsDisplay.source}
+      statsPartial={leadStatsDisplay.partial}
+      statsLoading={leadStatsDisplay.statsLoading}
+      statsNote={leadStatsDisplay.note}
+    />
+  );
+}
+
 type DcAwardRadarListSignal = DcAwardRadarGroupableRow & {
   category?: DcAwardRadarCategory;
   contactTitle?: string;
@@ -101,9 +166,6 @@ type DcAwardRadarListSignal = DcAwardRadarGroupableRow & {
   contactNotes?: string;
   sourceKey: string;
 };
-
-/** List filter: All, stored verticals, or data_center + blank legacy DC rows. */
-type CategoryFilter = "" | DcAwardRadarCategory | "data_center_or_blank";
 
 const CONFIDENCE_LABEL: Record<DcAwardRadarConfidence, string> = {
   high: "High",
@@ -575,10 +637,6 @@ function RadarTable() {
         : "skip",
     [memberUserKey, market, confidence, category, contactFilterList],
   );
-  const serverLeadStats = useQuery(
-    api.dcAwardSignals.leadStats,
-    leadStatsArgs,
-  );
 
   // When filters change, `firstPage` goes undefined then refreshes — drop
   // appended pages so GA/NC loads are not mixed with a stale first page.
@@ -638,16 +696,6 @@ function RadarTable() {
   const loadedLeadStats = useMemo(
     () => summarizeDcAwardRadarLeads(filteredSignals, groups.length),
     [filteredSignals, groups],
-  );
-  const leadStatsDisplay = useMemo(
-    () =>
-      resolveDcAwardRadarLeadStatsDisplay({
-        server: serverLeadStats,
-        loaded: loadedLeadStats,
-        listTruncated,
-        hitPageCap,
-      }),
-    [serverLeadStats, loadedLeadStats, listTruncated, hitPageCap],
   );
   const contactFiltersActive = contactFilters.size > 0;
   const markets = useMemo(() => {
@@ -1183,20 +1231,43 @@ function RadarTable() {
           </p>
         ) : null}
       </div>
-      <DcAwardRadarLeadStatsBar
-        stats={leadStatsDisplay.stats}
-        viewMode={viewMode}
-        truncated={listTruncated}
-        loadedCount={signals?.length ?? 0}
-        listStatus={listStatus}
-        market={market}
-        contactFiltersActive={contactFiltersActive}
-        hitPageCap={hitPageCap}
-        statsSource={leadStatsDisplay.source}
-        statsPartial={leadStatsDisplay.partial}
-        statsLoading={leadStatsDisplay.statsLoading}
-        statsNote={leadStatsDisplay.note}
-      />
+      <ConvexQueryBoundary
+        silent
+        recoverOnKeys={[
+          memberUserKey,
+          market,
+          confidence,
+          category,
+          contactFilterList.join(","),
+        ]}
+        fallback={
+          <DcAwardRadarLeadStatsBar
+            stats={loadedLeadStats}
+            viewMode={viewMode}
+            truncated={listTruncated}
+            loadedCount={signals?.length ?? 0}
+            listStatus={listStatus}
+            market={market}
+            contactFiltersActive={contactFiltersActive}
+            hitPageCap={hitPageCap}
+            statsSource="loaded"
+            statsPartial={listTruncated || hitPageCap}
+            statsNote="full-filter totals unavailable — showing loaded pages"
+          />
+        }
+      >
+        <DcAwardRadarConnectedLeadStats
+          leadStatsArgs={leadStatsArgs}
+          loadedLeadStats={loadedLeadStats}
+          listTruncated={listTruncated}
+          hitPageCap={hitPageCap}
+          viewMode={viewMode}
+          loadedCount={signals?.length ?? 0}
+          listStatus={listStatus}
+          market={market}
+          contactFiltersActive={contactFiltersActive}
+        />
+      </ConvexQueryBoundary>
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
         list. Vertical filter uses optional `category` (`hospital` /
@@ -1210,11 +1281,12 @@ function RadarTable() {
         hides child permits; owner/principal stays on the group header. Flat is
         the raw permit list. Contact chips dedupe campus children by company +
         name. Contact filters and CSV / GHL actions use those unique contacts.
-        Lead chips are full-filter totals from a bounded server scan (not the
-        first 200 list rows). List pages are {DC_AWARD_RADAR_PAGE_SIZE} rows
-        each — use Load more / Load all to reach later markets for the table,
-        CSV, and GHL send. HighLevel send requires Load all (or exhausted
-        pages) first so the send is not a silent truncated subset.
+        Lead chips prefer full-filter totals from a bounded server scan (not
+        the first 200 list rows); table, CSV, and GHL still use loaded pages.
+        List pages are {DC_AWARD_RADAR_PAGE_SIZE} rows each — use Load more /
+        Load all to reach later markets for the table, CSV, and GHL send.
+        HighLevel send requires Load all (or exhausted pages) first so the
+        send is not a silent truncated subset.
       </p>
 
       {signals.length === 0 ? (

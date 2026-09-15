@@ -2610,6 +2610,32 @@ console.log("dc award radar full-filter lead-stats scan (not page 1 only)");
   assert.equal(loadedBeatsPartialScan.stats.signalCount, 250);
   assert.equal(loadedBeatsPartialScan.partial, false);
 
+  const missingPhonePageOneLarger = resolveDcAwardRadarLeadStatsDisplay({
+    server: {
+      ...overflow,
+      signalCount: 80,
+      uniqueContactCount: 80,
+      matchedCount: 80,
+      partial: true,
+    },
+    loaded: { ...loadedPage, signalCount: 180, uniqueContactCount: 180 },
+    listTruncated: true,
+    hitPageCap: false,
+  });
+  assert.equal(missingPhonePageOneLarger.source, "server");
+  assert.equal(missingPhonePageOneLarger.stats.signalCount, 80);
+  assert.equal(missingPhonePageOneLarger.partial, true);
+
+  const indexOverflowSparse = summarizeDcAwardRadarLeadStatsScan({
+    scannedRows: twoHundredFifty.slice(0, 12),
+    scanCap: DC_AWARD_RADAR_LEAD_STATS_SCAN_CAP,
+    contactFilters: new Set(),
+    indexOverflow: true,
+  });
+  assert.equal(indexOverflowSparse.partial, true);
+  assert.equal(indexOverflowSparse.signalCount, 12);
+  assert.equal(indexOverflowSparse.scannedCount, 12);
+
   assert.equal(
     formatDcAwardRadarLeadStatsNote({
       source: "server",

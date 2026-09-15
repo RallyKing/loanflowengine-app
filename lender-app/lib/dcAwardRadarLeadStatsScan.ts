@@ -184,9 +184,10 @@ export function formatDcAwardRadarLeadStatsNote(args: {
 }
 
 /**
- * Prefer a complete server scan over loaded pages. If the server scan is
- * partial but the client has already loaded more (and exhausted the list),
- * use loaded totals.
+ * Prefer a complete server scan over loaded pages. A truncated page-1
+ * `signalCount` can exceed a better scan under missing-phone/email filters
+ * (uniqueness ORs channels as more rows appear). Only prefer loaded when
+ * the list is exhausted or the Load-all page cap already pulled more.
  */
 export function resolveDcAwardRadarLeadStatsDisplay(args: {
   server: DcAwardRadarLeadStatsScanResult | undefined;
@@ -196,6 +197,7 @@ export function resolveDcAwardRadarLeadStatsDisplay(args: {
 }): DcAwardRadarLeadStatsDisplay {
   const { server, loaded, listTruncated } = args;
   const hitPageCap = Boolean(args.hitPageCap);
+  const loadedIsFullerScan = !listTruncated || hitPageCap;
 
   if (!server) {
     return {
@@ -222,7 +224,7 @@ export function resolveDcAwardRadarLeadStatsDisplay(args: {
     };
   }
 
-  if (loaded.signalCount > server.signalCount) {
+  if (loadedIsFullerScan && loaded.signalCount > server.signalCount) {
     const stillPartial = listTruncated || hitPageCap;
     return {
       stats: loaded,

@@ -14,12 +14,16 @@ function chipsForStats(
   stats: DcAwardRadarLeadStats,
   viewMode: "grouped" | "flat",
   statsNote: string | null,
-  fullFilter: boolean,
+  statsSource: "server" | "loaded",
+  statsPartial: boolean,
 ): StatChip[] {
   const note = statsNote ? ` (${statsNote})` : "";
-  const scope = fullFilter
-    ? "full filtered result set"
-    : "loaded filtered list";
+  const scope =
+    statsSource === "server"
+      ? statsPartial
+        ? "bounded full-filter scan"
+        : "full filtered result set"
+      : "loaded filtered list";
   const chips: StatChip[] = [
     {
       id: "signals",
@@ -106,7 +110,13 @@ export function DcAwardRadarLeadStatsBar({
   statsNote?: string | null;
 }) {
   const fullFilter = statsSource === "server" && !statsPartial && !statsLoading;
-  const chips = chipsForStats(stats, viewMode, statsNote, fullFilter);
+  const chips = chipsForStats(
+    stats,
+    viewMode,
+    statsNote,
+    statsSource,
+    statsPartial,
+  );
   return (
     <div
       data-testid="dc-award-lead-stats"
