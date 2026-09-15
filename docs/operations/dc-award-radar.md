@@ -11,7 +11,7 @@ GHL sync and outbound messages are **out of scope**. Convex does **not** scrape 
 | Rule | How this feature complies |
 |------|---------------------------|
 | No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron. Hermes wake is a **client-called** one-shot action (`requestHermesScrape`) — never scheduled |
-| No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence indexes. `by_campusKey` exists for lookups; grouping is client-side on the capped page |
+| No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence/category indexes. `by_campusKey` exists for lookups; grouping is client-side on the capped page |
 | No polling | One-shot mutations/actions only; UI uses a single `useQuery` |
 | Bounded writes | Operator payloads capped at **100 rows** per mutation |
 | Idempotency | `sourceKey` = normalized `sourceUrl` + project + stage |
@@ -100,6 +100,7 @@ A Phase 2 re-import does not wipe Hermes contacts: bundled seed rows omit contac
 | `campus_key` | `campusKey` | Optional stable campus/project-family id. Preserved on upsert when present. |
 | `campus_name` | `campusName` | Optional group header. Preserved on upsert when present. |
 | `is_primary_in_campus` | `isPrimaryInCampus` | Optional. `true`/`false`/`1`/`0`/`yes`/`no`/`primary`. Preferred contact row for the group. |
+| `category` | `category` | Optional vertical: `hospital` / `dot_civil` / `industrial_warehouse` / `data_center`. Alias: `vertical`. Empty / omitted = leave existing (legacy DC rows stay blank). Do not wipe on Phase 2 re-import. |
 
 JSON may use the camelCase field names. Payload may also be `{ "rows": [ ... ] }`.
 
@@ -123,11 +124,12 @@ DC21-P2 `sourceUrl` must be the BLDC-2025-030931 MLQ filing — not P3’s BLDC-
 ## UI
 
 - Default view is **Grouped** by `campusKey` (fallback: company). **Flat** is the raw permit list.
-- A compact **lead-count strip** sits above the list (signals, campuses in grouped mode, unique contacts, phone / email / LinkedIn / cell, high-confidence signals). Counts are computed **client-side** from the current `list` page (market + confidence filters, `.take(200)`). No extra Convex query.
+- A compact **lead-count strip** sits above the list (signals, campuses in grouped mode, unique contacts, phone / email / LinkedIn / cell, high-confidence signals). Counts are computed **client-side** from the current `list` page (market + confidence + category filters, `.take(200)`). No extra Convex query.
 - **Unique contacts** = one key per owner/principal: `company + contactName` when both are non-empty; otherwise contactName, email, phone digits (7+), or `linkedinUrl`. Campus children that share a key count once; channel flags are OR'd. Rows with no identity are signals only.
 - Group header shows campus/company and the **owner / principal once** (primary row’s contact, else first non-empty). Expand for child signals (stage, date, trade, source, confidence) plus full contact details.
 - Grouped mode has **Collapse all** / **Expand all** for campus groups (default: all expanded). Collapsed headers still show the owner/principal; only child rows hide. Expansion is component state (optional `localStorage`). Flat mode is unchanged.
 - Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.
+- **Vertical / category** filter: All, Hospital, DOT / Civil, Industrial / Warehouse, Data center (incl. blank), Data center (explicit). Indexed via `by_category` / `by_market_and_category`. Legacy DC rows with `category` undefined still list under All and “Data center (incl. blank)”.
 - **Owner / principal** stays visible in grouped mode (Joshua). Expand for LinkedIn, website, and why-cell/direct notes.
 - Operator secret matches `DATA_MIGRATION_ADMIN_SECRET` (fallback `ORG_INTEGRITY_ADMIN_SECRET`).
 - **Scrape with Hermes** is the primary refresh control; paste/CLI import is the fallback when the webhook is unset or Hermes is unavailable.

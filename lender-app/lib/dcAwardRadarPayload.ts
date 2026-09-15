@@ -9,11 +9,14 @@ import {
   DC_AWARD_CONTACT_STRING_KEYS,
   DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
   isDcAwardRadarConfidence,
+  parseDcAwardRadarCategory,
   parseDcAwardRadarEmailType,
   parseDcAwardRadarPhoneType,
   pickDefinedCampusFields,
+  pickDefinedCategory,
   pickDefinedContactFields,
   type DcAwardRadarCampusFields,
+  type DcAwardRadarCategory,
   type DcAwardRadarContactFields,
   type DcAwardRadarSeedRow,
 } from "./dcAwardRadar";
@@ -87,6 +90,9 @@ const HEADER_ALIASES: Record<string, string> = {
   is_primary_in_campus: "isPrimaryInCampus",
   isprimaryincampus: "isPrimaryInCampus",
   primary_in_campus: "isPrimaryInCampus",
+  category: "category",
+  vertical: "category",
+  vertical_category: "category",
 };
 
 function normalizeHeader(raw: string): string {
@@ -198,6 +204,14 @@ function campusFieldsFromRecord(
   return pickDefinedCampusFields(raw);
 }
 
+function categoryFromRecord(
+  record: Record<string, unknown>,
+): { category?: DcAwardRadarCategory } {
+  const raw = stringField(record, "category")?.trim();
+  if (!raw) return {};
+  return pickDefinedCategory({ category: parseDcAwardRadarCategory(raw) });
+}
+
 function contactFieldsFromRecord(
   record: Record<string, unknown>,
 ): DcAwardRadarContactFields {
@@ -235,6 +249,7 @@ export function recordToSeedRow(record: Record<string, unknown>): DcAwardRadarSe
     confidence: confidenceRaw,
     whyItMattersForDlc: requiredString(record, "whyItMattersForDlc"),
     notes: requiredString(record, "notes"),
+    ...categoryFromRecord(record),
     ...contactFieldsFromRecord(record),
     ...campusFieldsFromRecord(record),
   });

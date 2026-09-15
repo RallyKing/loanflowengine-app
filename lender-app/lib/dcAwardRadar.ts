@@ -12,6 +12,19 @@
 export const DC_AWARD_RADAR_CONFIDENCE = ["high", "med", "low"] as const;
 export type DcAwardRadarConfidence = (typeof DC_AWARD_RADAR_CONFIDENCE)[number];
 
+/**
+ * Optional multi-vertical radar category. Existing DC rows may omit this
+ * (undefined/absent) and must keep working. Explicit `data_center` is allowed
+ * for new DC rows; blank remains valid for legacy DC signals.
+ */
+export const DC_AWARD_RADAR_CATEGORIES = [
+  "hospital",
+  "dot_civil",
+  "industrial_warehouse",
+  "data_center",
+] as const;
+export type DcAwardRadarCategory = (typeof DC_AWARD_RADAR_CATEGORIES)[number];
+
 /** Historical Phase 2 corpus labels only — do not hard-code the UI filter to these. */
 export const PHASE2_DC_AWARD_RADAR_MARKETS = [
   "Ashburn VA",
@@ -79,6 +92,8 @@ export type DcAwardRadarSeedRow = {
   confidence: DcAwardRadarConfidence;
   whyItMattersForDlc: string;
   notes: string;
+  /** Optional vertical; omit for legacy DC rows. */
+  category?: DcAwardRadarCategory;
 } & DcAwardRadarContactFields &
   DcAwardRadarCampusFields;
 
@@ -96,6 +111,7 @@ export type DcAwardRadarPreparedRow = {
   confidence: DcAwardRadarConfidence;
   whyItMattersForDlc: string;
   notes: string;
+  category?: DcAwardRadarCategory;
 } & DcAwardRadarContactFields &
   DcAwardRadarCampusFields;
 
@@ -143,6 +159,54 @@ export function isDcAwardRadarEmailType(
   value: string,
 ): value is DcAwardRadarEmailType {
   return (DC_AWARD_EMAIL_TYPES as readonly string[]).includes(value);
+}
+
+export function isDcAwardRadarCategory(
+  value: string,
+): value is DcAwardRadarCategory {
+  return (DC_AWARD_RADAR_CATEGORIES as readonly string[]).includes(value);
+}
+
+export function parseDcAwardRadarCategory(
+  value: string,
+): DcAwardRadarCategory {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!isDcAwardRadarCategory(normalized)) {
+    throw new Error(`Invalid category: ${value}`);
+  }
+  return normalized;
+}
+
+/**
+ * Category is optional. `undefined` means "leave existing value" on upsert so
+ * Phase 2 / DC re-runs do not wipe or invent a category.
+ */
+export function pickDefinedCategory(row: {
+  category?: DcAwardRadarCategory;
+}): { category?: DcAwardRadarCategory } {
+  if (row.category === undefined) return {};
+  return { category: row.category };
+}
+
+export function dcAwardCategoryUiLabel(
+  category: DcAwardRadarCategory | undefined,
+): string {
+  switch (category) {
+    case "hospital":
+      return "Hospital";
+    case "dot_civil":
+      return "DOT / Civil";
+    case "industrial_warehouse":
+      return "Industrial / Warehouse";
+    case "data_center":
+      return "Data center";
+    case undefined:
+      return "Data center (uncategorized)";
+    default: {
+      const _exhaustive: never = category;
+      return _exhaustive;
+    }
+  }
 }
 
 export function parseDcAwardRadarPhoneType(
@@ -280,6 +344,9 @@ export function prepareDcAwardRadarSeedRow(
   if (!isDcAwardRadarConfidence(row.confidence)) {
     throw new Error(`Invalid confidence: ${row.confidence}`);
   }
+  if (row.category !== undefined && !isDcAwardRadarCategory(row.category)) {
+    throw new Error(`Invalid category: ${row.category}`);
+  }
   const projectOrCampus = collapseWs(row.projectOrCampus);
   const stageSignal = collapseWs(row.stageSignal);
   return {
@@ -300,6 +367,7 @@ export function prepareDcAwardRadarSeedRow(
     confidence: row.confidence,
     whyItMattersForDlc: collapseWs(row.whyItMattersForDlc),
     notes: collapseWs(row.notes),
+    ...pickDefinedCategory(row),
     ...pickDefinedContactFields(row),
     ...pickDefinedCampusFields(row),
   };

@@ -15,9 +15,11 @@ import { cn } from "@/lib/cn";
 import { dataTableClassNames } from "@/lib/dataTableClasses";
 import {
   DC_AWARD_RADAR_CONFIDENCE,
+  dcAwardCategoryUiLabel,
   dcAwardEmailUiLabel,
   dcAwardPhoneUiLabel,
   dcAwardSafeHttpUrl,
+  type DcAwardRadarCategory,
   type DcAwardRadarConfidence,
   type DcAwardRadarEmailType,
   type DcAwardRadarPhoneType,
@@ -48,11 +50,32 @@ import { DcAwardRadarOpsPanel } from "./DcAwardRadarOpsPanel";
 
 type RadarViewMode = "grouped" | "flat";
 
+/** List filter: All, stored verticals, or data_center + blank legacy DC rows. */
+type CategoryFilter = "" | DcAwardRadarCategory | "data_center_or_blank";
+
 const CONFIDENCE_LABEL: Record<DcAwardRadarConfidence, string> = {
   high: "High",
   med: "Med",
   low: "Low",
 };
+
+const CATEGORY_FILTER_OPTIONS: Array<{
+  value: CategoryFilter;
+  label: string;
+}> = [
+  { value: "", label: "All verticals" },
+  { value: "hospital", label: dcAwardCategoryUiLabel("hospital") },
+  { value: "dot_civil", label: dcAwardCategoryUiLabel("dot_civil") },
+  {
+    value: "industrial_warehouse",
+    label: dcAwardCategoryUiLabel("industrial_warehouse"),
+  },
+  {
+    value: "data_center_or_blank",
+    label: "Data center (incl. blank)",
+  },
+  { value: "data_center", label: "Data center (explicit)" },
+];
 
 const MARKET_DATALIST_ID = "dc-award-radar-markets";
 
@@ -391,6 +414,7 @@ function RadarTable() {
   const [marketDraft, setMarketDraft] = useState("");
   const [market, setMarket] = useState("");
   const [confidence, setConfidence] = useState<"" | DcAwardRadarConfidence>("");
+  const [category, setCategory] = useState<CategoryFilter>("");
   const [viewMode, setViewMode] = useState<RadarViewMode>("grouped");
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -417,6 +441,7 @@ function RadarTable() {
           memberUserKey,
           ...(market ? { market } : {}),
           ...(confidence ? { confidence } : {}),
+          ...(category ? { category } : {}),
         }
       : "skip",
   );
@@ -547,6 +572,23 @@ function RadarTable() {
             ))}
           </Select>
         </Label>
+        <Label className="min-w-[12rem]">
+          Vertical
+          <Select
+            aria-label="Filter by category vertical"
+            data-testid="dc-award-category-filter"
+            value={category}
+            onChange={(event) =>
+              setCategory(event.target.value as CategoryFilter)
+            }
+          >
+            {CATEGORY_FILTER_OPTIONS.map((option) => (
+              <option key={option.value || "all"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+        </Label>
         <div
           className="inline-flex rounded-lg border border-border p-0.5"
           role="group"
@@ -612,10 +654,14 @@ function RadarTable() {
       />
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
-        list. Grouped view merges by campusKey (company fallback) and shows the
-        owner/principal once — Equinix DC17 is not DC21. Collapse all hides
-        child permits; owner/principal stays on the group header. Flat is the
-        raw permit list. Contact chips dedupe campus children by company + name.
+        list. Vertical filter uses optional `category` (`hospital` /
+        `dot_civil` / `industrial_warehouse` / `data_center`); legacy DC rows
+        with blank category still appear under All and &quot;Data center (incl.
+        blank)&quot;. Grouped view merges by campusKey (company fallback) and
+        shows the owner/principal once — Equinix DC17 is not DC21. Collapse all
+        hides child permits; owner/principal stays on the group header. Flat is
+        the raw permit list. Contact chips dedupe campus children by company +
+        name.
       </p>
 
       {signals.length === 0 ? (
