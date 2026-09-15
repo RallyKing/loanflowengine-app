@@ -1,12 +1,9 @@
 /**
- * Client-side lead counts for the DC award-radar list page.
+ * Lead-count uniqueness + channel flags for DC award radar.
  *
- * Counts use the already-loaded, filtered `dcAwardSignals.list` pages
- * (client-accumulated; each Convex call is `.paginate` / pageSize ≤ 200) —
- * no extra Convex query, no `.collect()`, no scheduler.
- *
- * When more pages are available, chips reflect loaded pages only until the
- * operator uses Load more / Load all.
+ * The list page prefers Convex `dcAwardSignals.leadStats` (indexed `.take`
+ * with a hard cap — no `.collect()`, no scheduler). This helper is the
+ * shared rollup used by that query and by loaded-page fallback.
  *
  * Uniqueness (unique contacts):
  * 1. `company + contactName` when both are non-empty (normalized)

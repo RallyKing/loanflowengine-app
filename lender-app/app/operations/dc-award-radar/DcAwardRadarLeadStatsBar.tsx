@@ -1,5 +1,4 @@
 import type { DcAwardRadarLeadStats } from "@/lib/dcAwardRadarStats";
-import { formatDcAwardRadarLoadedStatsNote } from "@/lib/dcAwardRadarPagination";
 
 const CONTACT_UNIQUENESS_TITLE =
   "Unique contacts: company + contact name when both are present; otherwise email, phone, or LinkedIn. Campus children that share a key count once.";
@@ -14,15 +13,19 @@ type StatChip = {
 function chipsForStats(
   stats: DcAwardRadarLeadStats,
   viewMode: "grouped" | "flat",
-  loadedStatsNote: string | null,
+  statsNote: string | null,
+  fullFilter: boolean,
 ): StatChip[] {
-  const loadedNote = loadedStatsNote ? ` (${loadedStatsNote})` : "";
+  const note = statsNote ? ` (${statsNote})` : "";
+  const scope = fullFilter
+    ? "full filtered result set"
+    : "loaded filtered list";
   const chips: StatChip[] = [
     {
       id: "signals",
       label: "Signals",
       value: stats.signalCount,
-      title: `Permit / news rows in the loaded filtered list${loadedNote}`,
+      title: `Permit / news rows in the ${scope}${note}`,
     },
   ];
   if (viewMode === "grouped") {
@@ -30,7 +33,7 @@ function chipsForStats(
       id: "campuses",
       label: "Campuses",
       value: stats.campusGroupCount,
-      title: `Campus groups in the loaded filtered list (company fallback)${loadedNote}`,
+      title: `Campus groups in the ${scope} (company fallback)${note}`,
     });
   }
   chips.push(
@@ -38,37 +41,37 @@ function chipsForStats(
       id: "contacts",
       label: "Contacts",
       value: stats.uniqueContactCount,
-      title: CONTACT_UNIQUENESS_TITLE + loadedNote,
+      title: CONTACT_UNIQUENESS_TITLE + note,
     },
     {
       id: "phone",
       label: "Phone",
       value: stats.contactsWithPhone,
-      title: `Unique contacts with a non-empty phone${loadedNote}`,
+      title: `Unique contacts with a non-empty phone${note}`,
     },
     {
       id: "email",
       label: "Email",
       value: stats.contactsWithEmail,
-      title: `Unique contacts with a non-empty email${loadedNote}`,
+      title: `Unique contacts with a non-empty email${note}`,
     },
     {
       id: "linkedin",
       label: "LinkedIn",
       value: stats.contactsWithLinkedIn,
-      title: `Unique contacts with a LinkedIn URL${loadedNote}`,
+      title: `Unique contacts with a LinkedIn URL${note}`,
     },
     {
       id: "cell",
       label: "Cell",
       value: stats.contactsWithCell,
-      title: `Unique contacts with phoneType = cell${loadedNote}`,
+      title: `Unique contacts with phoneType = cell${note}`,
     },
     {
       id: "high",
       label: "High conf.",
       value: stats.highConfidenceSignalCount,
-      title: `High-confidence signals in the loaded filtered list${loadedNote}`,
+      title: `High-confidence signals in the ${scope}${note}`,
     },
   );
   return chips;
@@ -83,6 +86,10 @@ export function DcAwardRadarLeadStatsBar({
   market,
   contactFiltersActive = false,
   hitPageCap = false,
+  statsSource = "loaded",
+  statsPartial = false,
+  statsLoading = false,
+  statsNote = null,
 }: {
   stats: DcAwardRadarLeadStats;
   viewMode: "grouped" | "flat";
@@ -93,25 +100,32 @@ export function DcAwardRadarLeadStatsBar({
   contactFiltersActive?: boolean;
   /** True when Load-all hit the hard page cap (more may still exist). */
   hitPageCap?: boolean;
+  statsSource?: "server" | "loaded";
+  statsPartial?: boolean;
+  statsLoading?: boolean;
+  statsNote?: string | null;
 }) {
-  const loadedStatsNote = formatDcAwardRadarLoadedStatsNote({
-    truncated,
-    hitPageCap,
-  });
-  const chips = chipsForStats(stats, viewMode, loadedStatsNote);
+  const fullFilter = statsSource === "server" && !statsPartial && !statsLoading;
+  const chips = chipsForStats(stats, viewMode, statsNote, fullFilter);
   return (
     <div
       data-testid="dc-award-lead-stats"
+      data-stats-source={statsSource}
+      data-stats-partial={statsPartial ? "true" : "false"}
+      data-stats-loading={statsLoading ? "true" : "false"}
+      aria-busy={statsLoading || undefined}
       className="flex flex-col gap-1.5"
     >
       <p id="dc-award-lead-stats-help" className="sr-only">
-        {CONTACT_UNIQUENESS_TITLE} Counts follow the market, confidence, and
-        contact-channel filters. Lead chips use loaded pages only
-        {truncated
-          ? hitPageCap
-            ? " — page cap reached; more may exist."
-            : " until you Load more or Load all."
-          : "."}
+        {CONTACT_UNIQUENESS_TITLE} Counts follow the market, confidence,
+        category, and contact-channel filters.
+        {fullFilter
+          ? " Lead chips are full-filter totals from a bounded server scan."
+          : statsLoading
+            ? " Full-filter totals are loading."
+            : statsPartial
+              ? " Lead chips are a bounded scan or loaded pages — more may exist."
+              : " Lead chips use loaded pages only."}
       </p>
       <ul
         aria-label="Lead counts for current filters"
@@ -133,14 +147,20 @@ export function DcAwardRadarLeadStatsBar({
           </li>
         ))}
       </ul>
-      {market || truncated || contactFiltersActive || loadedCount > 0 ? (
+      {market ||
+      truncated ||
+      hitPageCap ||
+      contactFiltersActive ||
+      loadedCount > 0 ||
+      statsLoading ||
+      statsPartial ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid="dc-award-lead-stats-footnote"
         >
-          {market ? `Filtered to ${market}` : "All markets on loaded pages"}
+          {market ? `Filtered to ${market}` : "All markets"}
           {contactFiltersActive ? " · contact filters on" : ""}
-          {loadedStatsNote ? ` · stats ${loadedStatsNote}` : ""}
+          {statsNote ? ` · stats ${statsNote}` : ""}
           {" · "}
           {listStatus}
         </p>

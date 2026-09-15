@@ -69,6 +69,7 @@ import {
 } from "@/lib/export/dcAwardRadarContactsExport";
 import { downloadTextFile } from "@/lib/export/downloadClient";
 import { summarizeDcAwardRadarLeads } from "@/lib/dcAwardRadarStats";
+import { resolveDcAwardRadarLeadStatsDisplay } from "@/lib/dcAwardRadarLeadStatsScan";
 import {
   DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
   DC_AWARD_RADAR_PAGE_SIZE,
@@ -555,6 +556,30 @@ function RadarTable() {
     listArgs ?? "skip",
   );
 
+  const contactFilterList = useMemo(
+    () => [...contactFilters].sort(),
+    [contactFilters],
+  );
+  const leadStatsArgs = useMemo(
+    () =>
+      memberUserKey
+        ? {
+            memberUserKey,
+            ...(market ? { market } : {}),
+            ...(confidence ? { confidence } : {}),
+            ...(category ? { category } : {}),
+            ...(contactFilterList.length > 0
+              ? { contactFilters: contactFilterList }
+              : {}),
+          }
+        : "skip",
+    [memberUserKey, market, confidence, category, contactFilterList],
+  );
+  const serverLeadStats = useQuery(
+    api.dcAwardSignals.leadStats,
+    leadStatsArgs,
+  );
+
   // When filters change, `firstPage` goes undefined then refreshes — drop
   // appended pages so GA/NC loads are not mixed with a stale first page.
   // Bump generation so mid-flight Load more / Load all cannot append or
@@ -610,9 +635,19 @@ function RadarTable() {
     groupKeys,
     groupExpansion,
   );
-  const leadStats = useMemo(
+  const loadedLeadStats = useMemo(
     () => summarizeDcAwardRadarLeads(filteredSignals, groups.length),
     [filteredSignals, groups],
+  );
+  const leadStatsDisplay = useMemo(
+    () =>
+      resolveDcAwardRadarLeadStatsDisplay({
+        server: serverLeadStats,
+        loaded: loadedLeadStats,
+        listTruncated,
+        hitPageCap,
+      }),
+    [serverLeadStats, loadedLeadStats, listTruncated, hitPageCap],
   );
   const contactFiltersActive = contactFilters.size > 0;
   const markets = useMemo(() => {
@@ -1149,7 +1184,7 @@ function RadarTable() {
         ) : null}
       </div>
       <DcAwardRadarLeadStatsBar
-        stats={leadStats}
+        stats={leadStatsDisplay.stats}
         viewMode={viewMode}
         truncated={listTruncated}
         loadedCount={signals?.length ?? 0}
@@ -1157,6 +1192,10 @@ function RadarTable() {
         market={market}
         contactFiltersActive={contactFiltersActive}
         hitPageCap={hitPageCap}
+        statsSource={leadStatsDisplay.source}
+        statsPartial={leadStatsDisplay.partial}
+        statsLoading={leadStatsDisplay.statsLoading}
+        statsNote={leadStatsDisplay.note}
       />
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
@@ -1171,9 +1210,11 @@ function RadarTable() {
         hides child permits; owner/principal stays on the group header. Flat is
         the raw permit list. Contact chips dedupe campus children by company +
         name. Contact filters and CSV / GHL actions use those unique contacts.
-        List pages are {DC_AWARD_RADAR_PAGE_SIZE} rows each — use Load more /
-        Load all to reach later markets. HighLevel send requires Load all
-        (or exhausted pages) first so the send is not a silent truncated subset.
+        Lead chips are full-filter totals from a bounded server scan (not the
+        first 200 list rows). List pages are {DC_AWARD_RADAR_PAGE_SIZE} rows
+        each — use Load more / Load all to reach later markets for the table,
+        CSV, and GHL send. HighLevel send requires Load all (or exhausted
+        pages) first so the send is not a silent truncated subset.
       </p>
 
       {signals.length === 0 ? (
