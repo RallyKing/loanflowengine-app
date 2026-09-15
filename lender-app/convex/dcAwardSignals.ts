@@ -40,6 +40,7 @@ const categoryV = v.union(
   v.literal("multifamily"),
   v.literal("hospitality_mixed_use"),
   v.literal("federal_municipal"),
+  v.literal("energy_renewables"),
 );
 
 /**

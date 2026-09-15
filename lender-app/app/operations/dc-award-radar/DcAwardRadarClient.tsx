@@ -107,6 +107,10 @@ const CATEGORY_FILTER_OPTIONS: Array<{
     label: dcAwardCategoryUiLabel("federal_municipal"),
   },
   {
+    value: "energy_renewables",
+    label: dcAwardCategoryUiLabel("energy_renewables"),
+  },
+  {
     value: "data_center_or_blank",
     label: "Data center (incl. blank)",
   },
@@ -913,7 +917,8 @@ function RadarTable() {
         list. Vertical filter uses optional `category` (`hospital` /
         `dot_civil` / `industrial_warehouse` / `k12_higher_ed` /
         `multifamily` / `hospitality_mixed_use` / `federal_municipal` /
-        `data_center`); legacy DC rows with blank category still appear under
+        `energy_renewables` / `data_center`); legacy DC rows with blank
+        category still appear under
         All and &quot;Data center (incl. blank)&quot;. Grouped view merges by
         campusKey (company fallback) and
         shows the owner/principal once — Equinix DC17 is not DC21. Collapse all
