@@ -1626,6 +1626,19 @@ console.log("dc award radar optional category vertical");
     "federal_municipal",
   );
   assert.equal(parseDcAwardRadarCategory("Federal Municipal"), "federal_municipal");
+  assert.equal(
+    parseDcAwardRadarCategory("energy_renewables"),
+    "energy_renewables",
+  );
+  assert.equal(
+    parseDcAwardRadarCategory("Energy / Renewables"),
+    "energy_renewables",
+  );
+  assert.equal(
+    parseDcAwardRadarCategory("Energy Renewables"),
+    "energy_renewables",
+  );
+  assert.equal(parseDcAwardRadarCategory("renewables"), "energy_renewables");
   assert.throws(() => parseDcAwardRadarCategory("retail"), /Invalid category/);
   assert.equal(dcAwardCategoryUiLabel(undefined), "Data center (uncategorized)");
   assert.equal(dcAwardCategoryUiLabel("hospital"), "Hospital");
@@ -1639,10 +1652,15 @@ console.log("dc award radar optional category vertical");
     dcAwardCategoryUiLabel("federal_municipal"),
     "Federal / Municipal",
   );
+  assert.equal(
+    dcAwardCategoryUiLabel("energy_renewables"),
+    "Energy / renewables",
+  );
 
   assert.ok(DC_AWARD_RADAR_CATEGORIES.includes("multifamily"));
   assert.ok(DC_AWARD_RADAR_CATEGORIES.includes("hospitality_mixed_use"));
   assert.ok(DC_AWARD_RADAR_CATEGORIES.includes("federal_municipal"));
+  assert.ok(DC_AWARD_RADAR_CATEGORIES.includes("energy_renewables"));
 
   const withK12 = prepareDcAwardRadarSeedRow({
     ...base,
@@ -1660,6 +1678,16 @@ console.log("dc award radar optional category vertical");
   assert.equal(withHospitality.category, "hospitality_mixed_use");
   assert.deepEqual(pickDefinedCategory(withHospitality), {
     category: "hospitality_mixed_use",
+  });
+  assert.deepEqual(pickDefinedCategory({ category: undefined }), {});
+
+  const withEnergy = prepareDcAwardRadarSeedRow({
+    ...base,
+    category: "energy_renewables",
+  });
+  assert.equal(withEnergy.category, "energy_renewables");
+  assert.deepEqual(pickDefinedCategory(withEnergy), {
+    category: "energy_renewables",
   });
   assert.deepEqual(pickDefinedCategory({ category: undefined }), {});
 
@@ -1705,6 +1733,20 @@ console.log("dc award radar optional category vertical");
   ].join("\n");
   const parsedFederal = parseDcAwardRadarNationwidePayload(federalCsv);
   assert.equal(parsedFederal.rows[0]?.category, "federal_municipal");
+
+  const energyCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
+    'Bakersfield CA,Solar Farm,Awarded,Electrical,Acme GC,GC,2026-09-01,https://example.com/permit/er1,County permit,high,CA energy,n,"Energy / Renewables"',
+  ].join("\n");
+  const parsedEnergy = parseDcAwardRadarNationwidePayload(energyCsv);
+  assert.equal(parsedEnergy.rows[0]?.category, "energy_renewables");
+
+  const renewablesAliasCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
+    "Fresno CA,Wind Project,Bid,Civil,Acme GC,GC,2026-09-01,https://example.com/permit/er2,County permit,med,CA renewables,n,renewables",
+  ].join("\n");
+  const parsedRenewables = parseDcAwardRadarNationwidePayload(renewablesAliasCsv);
+  assert.equal(parsedRenewables.rows[0]?.category, "energy_renewables");
 
   const blankCategoryCsv = [
     "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",

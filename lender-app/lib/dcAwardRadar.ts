@@ -26,6 +26,7 @@ export const DC_AWARD_RADAR_CATEGORIES = [
   "multifamily",
   "hospitality_mixed_use",
   "federal_municipal",
+  "energy_renewables",
 ] as const;
 export type DcAwardRadarCategory = (typeof DC_AWARD_RADAR_CATEGORIES)[number];
 
@@ -38,6 +39,9 @@ const DC_AWARD_CATEGORY_PARSE_ALIASES: Record<string, DcAwardRadarCategory> = {
   federal_muni: "federal_municipal",
   fed_municipal: "federal_municipal",
   fed_muni: "federal_municipal",
+  renewables: "energy_renewables",
+  energy: "energy_renewables",
+  renewable_energy: "energy_renewables",
 };
 
 /** Historical Phase 2 corpus labels only — do not hard-code the UI filter to these. */
@@ -185,8 +189,9 @@ export function isDcAwardRadarCategory(
 export function parseDcAwardRadarCategory(
   value: string,
 ): DcAwardRadarCategory {
-  // Labels like "K-12 / higher ed", "DOT / Civil", "Hospitality / Mixed Use"
-  // → snake_case tokens. Slash/space/hyphen collapse; then known aliases.
+  // Labels like "K-12 / higher ed", "DOT / Civil", "Hospitality / Mixed Use",
+  // "Energy / Renewables" → snake_case tokens. Slash/space/hyphen collapse;
+  // then known aliases (e.g. renewables → energy_renewables).
   const normalized = value
     .trim()
     .toLowerCase()
@@ -233,6 +238,8 @@ export function dcAwardCategoryUiLabel(
       return "Hospitality / Mixed Use";
     case "federal_municipal":
       return "Federal / Municipal";
+    case "energy_renewables":
+      return "Energy / renewables";
     case undefined:
       return "Data center (uncategorized)";
     default: {
