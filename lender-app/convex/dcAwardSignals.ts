@@ -37,6 +37,9 @@ const categoryV = v.union(
   v.literal("industrial_warehouse"),
   v.literal("k12_higher_ed"),
   v.literal("data_center"),
+  v.literal("multifamily"),
+  v.literal("hospitality_mixed_use"),
+  v.literal("federal_municipal"),
 );
 
 /**
