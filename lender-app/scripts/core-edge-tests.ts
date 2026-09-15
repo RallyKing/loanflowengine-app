@@ -122,9 +122,12 @@ import {
   type DcAwardRadarUniqueContact,
 } from "../lib/dcAwardRadarContacts";
 import {
+  AWARD_RADAR_GHL_CATEGORY_TAG,
   DC_AWARD_RADAR_GHL_CHUNK_SIZE,
   DC_AWARD_RADAR_GHL_SOURCE,
   DC_AWARD_RADAR_GHL_TAG,
+  awardRadarGhlCategoryTag,
+  buildDcAwardGhlSource,
   buildDcAwardGhlTags,
   buildDcAwardGhlUpsertBody,
   chunkDcAwardGhlContacts,
@@ -132,6 +135,7 @@ import {
   ghlSerializedBodyIsAllowlisted,
   ghlUpsertBodyHasForbiddenKeys,
   ghlUpsertBodyKeys,
+  isAllowedDcAwardGhlSource,
   isDcAwardGhlConfigured,
   selectDcAwardGhlContactBatch,
   serializeDcAwardGhlAddTagsBody,
@@ -2667,6 +2671,7 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
       market: "Ashburn VA",
       projectOrCampus: "Equinix DC21-P3",
       tradeFocus: "Electrical + Mechanical",
+      category: "data_center" as const,
     },
     {
       company: "DPR Construction",
@@ -2676,6 +2681,7 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
       market: "Ashburn VA",
       projectOrCampus: "Equinix DC21-P2",
       tradeFocus: "Electrical",
+      category: "data_center" as const,
     },
     {
       company: "HITT Contracting",
@@ -2703,6 +2709,7 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
   assert.equal(george.hasLinkedIn, true);
   assert.equal(george.hasCell, true);
   assert.deepEqual(george.projects, ["Equinix DC21-P2", "Equinix DC21-P3"]);
+  assert.deepEqual(george.categories, ["data_center"]);
   assert.equal(uniqueContactHasGhlIdentity(george), true);
 
   const hasPhone = filterSignalsByContactFilters(rows, new Set(["hasPhone"]));
@@ -2792,6 +2799,8 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
   );
   assert.ok(ghlCsv.includes(DC_AWARD_RADAR_GHL_SOURCE));
   assert.ok(ghlCsv.includes(DC_AWARD_RADAR_GHL_TAG));
+  assert.ok(ghlCsv.includes(AWARD_RADAR_GHL_CATEGORY_TAG.data_center));
+  assert.ok(!ghlCsv.includes("dc-award-radar"));
   assert.ok(ghlCsv.includes("exportNote"));
   assert.ok(ghlCsv.includes("all "));
   assert.ok(ghlCsv.includes("no send-size cap"));
@@ -2809,6 +2818,7 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
       markets: [],
       projects: [],
       trades: [],
+      categories: [],
       confidence: "med",
       hasPhone: false,
       hasEmail: eligible,
@@ -2867,7 +2877,7 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
   assert.ok(!handoff.includes("first 100"));
   assert.equal(
     dcAwardRadarGhlHandoffCsvFilename(new Date("2026-09-15")),
-    "dc-award-radar-ghl-tag-only-2026-09-15.csv",
+    "award-radar-ghl-tag-only-2026-09-15.csv",
   );
   assert.equal(
     summarizeDcAwardGhlPushOutcome({
@@ -2904,13 +2914,53 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
   );
 
   const tags = buildDcAwardGhlTags({
-    markets: ["Ashburn VA"],
-    trades: ["Electrical + Mechanical"],
+    category: "data_center",
   });
   assert.ok(tags.includes(DC_AWARD_RADAR_GHL_TAG));
-  assert.ok(tags.includes(`${DC_AWARD_RADAR_GHL_TAG}-ashburn-va`));
+  assert.ok(tags.includes(AWARD_RADAR_GHL_CATEGORY_TAG.data_center));
+  assert.ok(!tags.includes("dc-award-radar"));
   assert.ok(!tags.some((tag) => /sms|workflow|campaign/i.test(tag)));
   assert.deepEqual(Object.keys(serializeDcAwardGhlAddTagsBody(tags)), ["tags"]);
+
+  assert.deepEqual(buildDcAwardGhlTags({}), [DC_AWARD_RADAR_GHL_TAG]);
+  assert.deepEqual(buildDcAwardGhlTags({ category: "unknown_vertical" }), [
+    DC_AWARD_RADAR_GHL_TAG,
+  ]);
+  assert.deepEqual(buildDcAwardGhlTags({ categories: ["", undefined, "nope"] }), [
+    DC_AWARD_RADAR_GHL_TAG,
+  ]);
+  for (const category of DC_AWARD_RADAR_CATEGORIES) {
+    const expected = AWARD_RADAR_GHL_CATEGORY_TAG[category];
+    assert.equal(awardRadarGhlCategoryTag(category), expected);
+    const mapped = buildDcAwardGhlTags({ category });
+    assert.ok(mapped.includes(DC_AWARD_RADAR_GHL_TAG));
+    assert.ok(mapped.includes(expected));
+    assert.ok(!mapped.includes("dc-award-radar"));
+    assert.ok(!mapped.some((tag) => tag.startsWith("dc-award-radar")));
+  }
+  const multi = buildDcAwardGhlTags({
+    categories: ["hospital", "energy_renewables"],
+  });
+  assert.ok(multi.includes(AWARD_RADAR_GHL_CATEGORY_TAG.hospital));
+  assert.ok(multi.includes(AWARD_RADAR_GHL_CATEGORY_TAG.energy_renewables));
+
+  assert.equal(buildDcAwardGhlSource(), DC_AWARD_RADAR_GHL_SOURCE);
+  assert.equal(
+    buildDcAwardGhlSource("https://www.linkedin.com/in/george-pfeffer"),
+    "award-radar | LinkedIn: https://www.linkedin.com/in/george-pfeffer",
+  );
+  assert.equal(isAllowedDcAwardGhlSource("award-radar"), true);
+  assert.equal(
+    isAllowedDcAwardGhlSource(
+      "award-radar | LinkedIn: https://www.linkedin.com/in/george-pfeffer",
+    ),
+    true,
+  );
+  assert.equal(isAllowedDcAwardGhlSource("dc-award-radar"), false);
+  assert.equal(
+    isAllowedDcAwardGhlSource("award-radar | LinkedIn: javascript:alert(1)"),
+    false,
+  );
 
   const upsert = buildDcAwardGhlUpsertBody(
     {
@@ -2921,6 +2971,8 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
       companyWebsite: "https://www.dpr.com",
       markets: ["Ashburn VA"],
       trades: ["Electrical"],
+      categories: ["data_center"],
+      linkedinUrl: "https://www.linkedin.com/in/george-pfeffer",
     },
     "loc_test",
   );
@@ -2931,7 +2983,19 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
     sms: "nope",
     workflow: "nope",
   } as typeof upsert);
-  assert.equal(serialized.source, DC_AWARD_RADAR_GHL_SOURCE);
+  assert.equal(
+    serialized.source,
+    "award-radar | LinkedIn: https://www.linkedin.com/in/george-pfeffer",
+  );
+  assert.equal(isAllowedDcAwardGhlSource(serialized.source), true);
+  assert.throws(
+    () =>
+      serializeDcAwardGhlUpsertBody({
+        ...upsert,
+        source: "dc-award-radar",
+      }),
+    /award-radar/,
+  );
   assert.equal(serialized.firstName, "George");
   assert.equal(serialized.lastName, "Pfeffer");
   assert.equal(ghlSerializedBodyIsAllowlisted(serialized), true);

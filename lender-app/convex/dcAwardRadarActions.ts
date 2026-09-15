@@ -1,5 +1,5 @@
 /**
- * One-shot Hermes scrape + tag-only HighLevel contact push for DC award radar.
+ * One-shot Hermes scrape + tag-only HighLevel contact push for Award Radar.
  *
  * Ops click "Scrape with Hermes" → this action POSTs once to
  * GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_URL (BOSSMAN GrokBot routine
@@ -198,6 +198,8 @@ const ghlPushContactV = v.object({
   companyWebsite: v.string(),
   markets: v.array(v.string()),
   trades: v.array(v.string()),
+  linkedinUrl: v.optional(v.string()),
+  categories: v.optional(v.array(v.string())),
 });
 
 const ghlPushResultV = v.object({
@@ -346,8 +348,7 @@ export const pushFilteredContactsToGhl = action({
 
           const tagBody = serializeDcAwardGhlAddTagsBody(
             buildDcAwardGhlTags({
-              markets: contact.markets,
-              trades: contact.trades,
+              categories: contact.categories,
             }),
           );
           const tagRes = await ghlJsonRequest(

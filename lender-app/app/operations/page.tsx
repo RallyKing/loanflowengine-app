@@ -49,11 +49,11 @@ export default function OperationsPage() {
               </p>
               <p className="mt-2">
                 <Link
-                  href="/operations/dc-award-radar"
+                  href="/operations/award-radar"
                   className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
                 >
                   <Radar className="h-3.5 w-3.5" aria-hidden />
-                  Data-center award radar
+                  Award Radar
                 </Link>
               </p>
             </div>

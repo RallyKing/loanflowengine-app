@@ -1,5 +1,5 @@
 /**
- * Contact-centric filters and unique-contact rollup for DC award radar.
+ * Contact-centric filters and unique-contact rollup for Award Radar.
  *
  * Uses the already-loaded, capped list page — no extra Convex query,
  * no `.collect()`, no scrape. Identity matches `dcAwardRadarStats`
@@ -8,6 +8,7 @@
 
 import { collapseWs, type DcAwardRadarConfidence } from "./dcAwardRadar";
 import type {
+  DcAwardRadarCategory,
   DcAwardRadarEmailType,
   DcAwardRadarPhoneType,
 } from "./dcAwardRadar";
@@ -57,6 +58,7 @@ export type DcAwardRadarUniqueContact = {
   markets: string[];
   projects: string[];
   trades: string[];
+  categories: DcAwardRadarCategory[];
   confidence: DcAwardRadarConfidence;
   hasPhone: boolean;
   hasEmail: boolean;
@@ -68,6 +70,7 @@ export type DcAwardRadarContactSourceRow = DcAwardRadarLeadStatRow & {
   projectOrCampus?: string;
   tradeFocus?: string;
   market?: string;
+  category?: DcAwardRadarCategory;
 } & DcAwardRadarListContact;
 
 const CONFIDENCE_RANK: Record<DcAwardRadarConfidence, number> = {
@@ -91,6 +94,15 @@ function pushUniqueSorted(list: string[], value: string | undefined): string[] {
   const key = next.toLowerCase();
   if (list.some((item) => item.toLowerCase() === key)) return list;
   return [...list, next].sort((a, b) => a.localeCompare(b));
+}
+
+function pushUniqueCategory(
+  list: DcAwardRadarCategory[],
+  value: DcAwardRadarCategory | undefined,
+): DcAwardRadarCategory[] {
+  if (!value) return list;
+  if (list.includes(value)) return list;
+  return [...list, value].sort((a, b) => a.localeCompare(b));
 }
 
 function preferPhoneType(
@@ -131,6 +143,7 @@ function emptyUnique(identityKey: string): DcAwardRadarUniqueContact {
     markets: [],
     projects: [],
     trades: [],
+    categories: [],
     confidence: "low",
     hasPhone: false,
     hasEmail: false,
@@ -165,6 +178,7 @@ function mergeUniqueContact(
     markets: pushUniqueSorted(current.markets, row.market),
     projects: pushUniqueSorted(current.projects, row.projectOrCampus),
     trades: pushUniqueSorted(current.trades, row.tradeFocus),
+    categories: pushUniqueCategory(current.categories, row.category),
     confidence: preferConfidence(current.confidence, row.confidence),
     hasPhone,
     hasEmail,

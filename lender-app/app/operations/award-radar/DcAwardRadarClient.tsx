@@ -941,9 +941,12 @@ function RadarTable() {
               },
               {
                 label: "Tags",
-                value: "dc-award-radar + market/trade when present",
+                value: "award-radar + category tag when known",
               },
-              { label: "Source", value: "dc-award-radar" },
+              {
+                label: "Source",
+                value: "award-radar or award-radar | LinkedIn: …",
+              },
               { label: "Outbound", value: "None — no email or SMS" },
             ],
           },
@@ -1444,13 +1447,13 @@ export function DcAwardRadarClient() {
               Operations
             </Link>
             <span aria-hidden> › </span>
-            <span className="font-medium text-foreground">DC award radar</span>
+            <span className="font-medium text-foreground">Award Radar</span>
           </nav>
           <div className="flex flex-wrap items-start gap-3">
             <Radar className="mt-0.5 h-8 w-8 text-primary" aria-hidden />
             <div>
               <h1 className="text-xl font-semibold tracking-tight">
-                Data-center award radar
+                Award Radar
               </h1>
               <p className="text-sm text-muted-foreground">
                 Public permit, registration, and construction signals for DLC —

@@ -4,7 +4,7 @@
  */
 
 import {
-  DC_AWARD_RADAR_GHL_SOURCE,
+  buildDcAwardGhlSource,
   buildDcAwardGhlTags,
   type DcAwardGhlContactBatch,
 } from "@/lib/dcAwardRadarGhl";
@@ -84,13 +84,12 @@ export function buildDcAwardRadarGhlHandoffCsv(
   const lines = [joinCsvLine([...DC_AWARD_RADAR_GHL_HANDOFF_CSV_HEADERS])];
   for (const contact of contacts) {
     const tags = buildDcAwardGhlTags({
-      markets: contact.markets,
-      trades: contact.trades,
+      categories: contact.categories,
     });
     lines.push(
       joinCsvLine([
         ...contactCsvCells(contact),
-        DC_AWARD_RADAR_GHL_SOURCE,
+        buildDcAwardGhlSource(contact.linkedinUrl),
         tags.join("; "),
         note,
       ]),
@@ -100,9 +99,9 @@ export function buildDcAwardRadarGhlHandoffCsv(
 }
 
 export function dcAwardRadarContactsCsvFilename(now = new Date()): string {
-  return `dc-award-radar-contacts-full-filtered-${now.toISOString().slice(0, 10)}.csv`;
+  return `award-radar-contacts-full-filtered-${now.toISOString().slice(0, 10)}.csv`;
 }
 
 export function dcAwardRadarGhlHandoffCsvFilename(now = new Date()): string {
-  return `dc-award-radar-ghl-tag-only-${now.toISOString().slice(0, 10)}.csv`;
+  return `award-radar-ghl-tag-only-${now.toISOString().slice(0, 10)}.csv`;
 }

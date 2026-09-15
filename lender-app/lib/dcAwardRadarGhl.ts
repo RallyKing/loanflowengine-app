@@ -1,19 +1,42 @@
 /**
- * Tag-only HighLevel helpers for DC award radar.
+ * Tag-only HighLevel helpers for Award Radar.
  *
  * HARD RULE: create/update contacts + tags only. Never SMS, email, sequences,
  * workflows, campaigns, or Conversation AI. Upsert bodies are an allowlist —
  * messaging keys cannot be added accidentally.
+ *
+ * New writes use `award-radar` (+ category tag). Existing GHL contacts that
+ * still carry `dc-award-radar` are left as-is — no mass migrate.
  */
 
-import { collapseWs, dcAwardSafeHttpUrl } from "./dcAwardRadar";
+import {
+  collapseWs,
+  dcAwardSafeHttpUrl,
+  isDcAwardRadarCategory,
+  type DcAwardRadarCategory,
+} from "./dcAwardRadar";
 import {
   uniqueContactHasGhlIdentity,
   type DcAwardRadarUniqueContact,
 } from "./dcAwardRadarContacts";
 
-export const DC_AWARD_RADAR_GHL_SOURCE = "dc-award-radar" as const;
-export const DC_AWARD_RADAR_GHL_TAG = "dc-award-radar" as const;
+export const DC_AWARD_RADAR_GHL_SOURCE = "award-radar" as const;
+export const DC_AWARD_RADAR_GHL_TAG = "award-radar" as const;
+export const DC_AWARD_RADAR_GHL_LINKEDIN_SOURCE_PREFIX =
+  `${DC_AWARD_RADAR_GHL_SOURCE} | LinkedIn: ` as const;
+
+/** Canonical category → GHL tag. Blank/unknown category → master tag only. */
+export const AWARD_RADAR_GHL_CATEGORY_TAG = {
+  data_center: "award-radar-data-center",
+  hospital: "award-radar-hospital",
+  dot_civil: "award-radar-dot-civil",
+  industrial_warehouse: "award-radar-industrial",
+  multifamily: "award-radar-multifamily",
+  k12_higher_ed: "award-radar-k12",
+  energy_renewables: "award-radar-energy",
+  hospitality_mixed_use: "award-radar-hospitality",
+  federal_municipal: "award-radar-federal",
+} as const satisfies Record<DcAwardRadarCategory, string>;
 export const DC_AWARD_RADAR_GHL_API_VERSION = "2021-07-28" as const;
 export const DC_AWARD_RADAR_GHL_API_BASE =
   "https://services.leadconnectorhq.com" as const;
@@ -52,7 +75,7 @@ export type DcAwardGhlUpsertBody = {
   phone?: string;
   companyName?: string;
   website?: string;
-  source: typeof DC_AWARD_RADAR_GHL_SOURCE;
+  source: string;
 };
 
 export type DcAwardGhlPushContact = {
@@ -63,6 +86,8 @@ export type DcAwardGhlPushContact = {
   companyWebsite: string;
   markets: string[];
   trades: string[];
+  linkedinUrl?: string;
+  categories?: readonly string[];
 };
 
 export function slugDcAwardGhlTagPart(value: string): string {
@@ -73,22 +98,50 @@ export function slugDcAwardGhlTagPart(value: string): string {
     .slice(0, TAG_PART_MAX);
 }
 
+export function awardRadarGhlCategoryTag(
+  category: string | undefined | null,
+): string | undefined {
+  if (!category || !isDcAwardRadarCategory(category)) return undefined;
+  return AWARD_RADAR_GHL_CATEGORY_TAG[category];
+}
+
+/**
+ * Master `award-radar` on every push. Known signal.category adds one mapped
+ * tag. Blank / unknown category → master only. Does not emit `dc-award-radar`.
+ */
 export function buildDcAwardGhlTags(input: {
-  markets?: readonly string[];
-  trades?: readonly string[];
+  category?: string | null;
+  categories?: readonly (string | undefined | null)[];
 }): string[] {
   const tags = new Set<string>([DC_AWARD_RADAR_GHL_TAG]);
-  for (const market of input.markets ?? []) {
-    const slug = slugDcAwardGhlTagPart(market);
-    if (slug) tags.add(`${DC_AWARD_RADAR_GHL_TAG}-${slug}`);
+  const values = [
+    ...(input.category ? [input.category] : []),
+    ...(input.categories ?? []),
+  ];
+  for (const value of values) {
+    const tag = awardRadarGhlCategoryTag(value);
+    if (!tag) continue;
+    tags.add(tag);
     if (tags.size >= TAG_MAX_COUNT) break;
-  }
-  for (const trade of input.trades ?? []) {
-    if (tags.size >= TAG_MAX_COUNT) break;
-    const slug = slugDcAwardGhlTagPart(trade);
-    if (slug) tags.add(`${DC_AWARD_RADAR_GHL_TAG}-${slug}`);
   }
   return [...tags];
+}
+
+/** `award-radar` or `award-radar | LinkedIn: <https url>`. */
+export function buildDcAwardGhlSource(linkedinUrl?: string): string {
+  const url = dcAwardSafeHttpUrl(linkedinUrl);
+  if (url) return `${DC_AWARD_RADAR_GHL_LINKEDIN_SOURCE_PREFIX}${url}`;
+  return DC_AWARD_RADAR_GHL_SOURCE;
+}
+
+export function isAllowedDcAwardGhlSource(source: string): boolean {
+  const trimmed = collapseWs(source);
+  if (trimmed === DC_AWARD_RADAR_GHL_SOURCE) return true;
+  if (!trimmed.startsWith(DC_AWARD_RADAR_GHL_LINKEDIN_SOURCE_PREFIX)) {
+    return false;
+  }
+  const rest = trimmed.slice(DC_AWARD_RADAR_GHL_LINKEDIN_SOURCE_PREFIX.length);
+  return Boolean(dcAwardSafeHttpUrl(rest));
 }
 
 export function splitDcAwardContactDisplayName(name: string): {
@@ -117,6 +170,8 @@ export function uniqueContactToGhlPush(
     companyWebsite: contact.companyWebsite,
     markets: contact.markets,
     trades: contact.trades,
+    linkedinUrl: contact.linkedinUrl,
+    categories: contact.categories,
   };
 }
 
@@ -238,7 +293,7 @@ export function buildDcAwardGhlUpsertBody(
   const website = dcAwardSafeHttpUrl(contact.companyWebsite);
   const body: DcAwardGhlUpsertBody = {
     locationId,
-    source: DC_AWARD_RADAR_GHL_SOURCE,
+    source: buildDcAwardGhlSource(contact.linkedinUrl),
   };
   if (firstName) body.firstName = firstName;
   if (lastName) body.lastName = lastName;
@@ -258,7 +313,7 @@ export function serializeDcAwardGhlUpsertBody(
   body: DcAwardGhlUpsertBody,
 ): {
   locationId: string;
-  source: typeof DC_AWARD_RADAR_GHL_SOURCE;
+  source: string;
 } & Partial<
   Record<
     Exclude<(typeof GHL_UPSERT_ALLOWED_KEYS)[number], "locationId" | "source">,
@@ -269,12 +324,15 @@ export function serializeDcAwardGhlUpsertBody(
   if (!locationId) {
     throw new Error("GHL upsert serialize requires locationId.");
   }
-  if (body.source !== DC_AWARD_RADAR_GHL_SOURCE) {
-    throw new Error("GHL upsert source must be dc-award-radar.");
+  const source = collapseWs(body.source);
+  if (!isAllowedDcAwardGhlSource(source)) {
+    throw new Error(
+      "GHL upsert source must be award-radar or award-radar | LinkedIn: …",
+    );
   }
   const serialized: {
     locationId: string;
-    source: typeof DC_AWARD_RADAR_GHL_SOURCE;
+    source: string;
     firstName?: string;
     lastName?: string;
     name?: string;
@@ -284,7 +342,7 @@ export function serializeDcAwardGhlUpsertBody(
     website?: string;
   } = {
     locationId,
-    source: DC_AWARD_RADAR_GHL_SOURCE,
+    source,
   };
   const firstName = collapseWs(body.firstName ?? "");
   const lastName = collapseWs(body.lastName ?? "");

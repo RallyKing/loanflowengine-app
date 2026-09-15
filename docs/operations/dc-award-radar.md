@@ -1,10 +1,29 @@
-# DC award radar — nationwide + contact enrichment
+# Award Radar — nationwide + contact enrichment
 
-**Route:** `/operations/dc-award-radar`  
+**Route:** `/operations/award-radar` (legacy `/operations/dc-award-radar` redirects)  
 **Table:** Convex `dcAwardSignals` (platform catalog, not org-scoped)  
 **CLI:** `npm run import:dc-award-radar` (from `lender-app/`)
 
-HighLevel from this page is **tag/create only** (`dc-award-radar` + market/trade tags, source `dc-award-radar`). No SMS, email, sequences, workflows, campaigns, or Conversation AI. Convex does **not** scrape the web, poll, or schedule cron/scheduler pumps.
+HighLevel from this page is **tag/create only** — no SMS, email, sequences, workflows, campaigns, or Conversation AI. Convex does **not** scrape the web, poll, or schedule cron/scheduler pumps.
+
+### GHL tag map (new writes only)
+
+Master tag on **every** push: `award-radar`. Plus one category tag from `signal.category` when known. Blank / unknown category → master only. Existing HighLevel contacts that still have `dc-award-radar` are left as-is — **no mass migrate**.
+
+| `signal.category` | GHL tag |
+|-------------------|---------|
+| *(blank / unknown)* | `award-radar` only |
+| `data_center` | `award-radar-data-center` |
+| `hospital` | `award-radar-hospital` |
+| `dot_civil` | `award-radar-dot-civil` |
+| `industrial_warehouse` | `award-radar-industrial` |
+| `multifamily` | `award-radar-multifamily` |
+| `k12_higher_ed` | `award-radar-k12` |
+| `energy_renewables` | `award-radar-energy` |
+| `hospitality_mixed_use` | `award-radar-hospitality` |
+| `federal_municipal` | `award-radar-federal` |
+
+Source field for new writes: `award-radar`, or `award-radar | LinkedIn: <https url>` when a LinkedIn URL is present.
 
 ## Loop / usage fail-closed
 
@@ -22,7 +41,7 @@ HighLevel from this page is **tag/create only** (`dc-award-radar` + market/trade
 
 Ops refresh is a **BOSSMAN GrokBot → Hermes** webhook, not paste-CSV-only.
 
-1. On `/operations/dc-award-radar`, while signed in, click **Scrape with Hermes** (mode: nationwide / contacts / both). **No operator / migration secret** is required for scrape — auth matches `dcAwardSignals.list` (session `memberUserKey` / JWT via `assertHermesScrapeAccessForAction`).
+1. On `/operations/award-radar`, while signed in, click **Scrape with Hermes** (mode: nationwide / contacts / both). **No operator / migration secret** is required for scrape — auth matches `dcAwardSignals.list` (session `memberUserKey` / JWT via `assertHermesScrapeAccessForAction`).
 2. Convex action `dcAwardRadarActions.requestHermesScrape` POSTs **one-shot** JSON to `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_URL` (set on the **Convex** dashboard). Optional auth: `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_AUTHORIZATION` or `GROKBOT_DC_RADAR_SCRAPE_WEBHOOK_KEY`.
 3. Target is **BOSSMAN’s** routine `dc-award-radar-hermes-scrape` (not Cursor Cloud Minion’s webhook).
 4. Payload shape: `{ kind: "dc_award_radar_scrape", routine: "dc-award-radar-hermes-scrape", mode, requestedBy, requestedAt, notes?, source: "lfe_dc_award_radar_ops" }`.

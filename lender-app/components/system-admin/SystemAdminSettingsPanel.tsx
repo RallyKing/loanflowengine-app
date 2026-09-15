@@ -32,14 +32,14 @@ export function SystemAdminSettingsPanel() {
           </p>
           <p className="text-sm">
             <Link
-              href="/operations/dc-award-radar"
+              href="/operations/award-radar"
               className="font-medium text-primary underline"
             >
-              Data-center award radar
+              Award Radar
             </Link>
             {" — "}
             <span className="text-muted-foreground">
-              nationwide public DC signals + Hermes contact refresh. HighLevel
+              nationwide public award signals + Hermes contact refresh. HighLevel
               push is tag/create only.
             </span>
           </p>

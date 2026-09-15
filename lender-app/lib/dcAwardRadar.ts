@@ -6,7 +6,7 @@
  *
  * Contact enrichment is Hermes/ops-driven (CSV → operator upsert). No Convex
  * web-scrape, cron, or scheduler. HighLevel is tag/create only
- * (`dc-award-radar`, no auto-blast).
+ * (`award-radar` + category tag, no auto-blast).
  */
 
 export const DC_AWARD_RADAR_CONFIDENCE = ["high", "med", "low"] as const;
