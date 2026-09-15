@@ -30,9 +30,11 @@ import {
   buildDcAwardGhlTags,
   buildDcAwardGhlUpsertBody,
   formatGhlAuthorizationHeader,
-  ghlUpsertBodyHasForbiddenKeys,
+  ghlSerializedBodyIsAllowlisted,
   resolveGhlApiKey,
   resolveGhlLocationId,
+  serializeDcAwardGhlAddTagsBody,
+  serializeDcAwardGhlUpsertBody,
 } from "../lib/dcAwardRadarGhl";
 
 /** BOSSMAN GrokBot routine name (webhook target). */
@@ -302,9 +304,17 @@ export const pushFilteredContactsToGhl = action({
         continue;
       }
 
-      const upsertBody = buildDcAwardGhlUpsertBody(contact, locationId);
-      if (ghlUpsertBodyHasForbiddenKeys(upsertBody)) {
-        console.error("dcAwardRadar: GHL upsert body failed allowlist");
+      let upsertBody: ReturnType<typeof serializeDcAwardGhlUpsertBody>;
+      try {
+        upsertBody = serializeDcAwardGhlUpsertBody(
+          buildDcAwardGhlUpsertBody(contact, locationId),
+        );
+      } catch {
+        skipped += 1;
+        continue;
+      }
+      if (!ghlSerializedBodyIsAllowlisted(upsertBody)) {
+        console.error("dcAwardRadar: GHL upsert body failed allowlist serialize");
         skipped += 1;
         continue;
       }
@@ -333,14 +343,16 @@ export const pushFilteredContactsToGhl = action({
           continue;
         }
 
-        const tags = buildDcAwardGhlTags({
-          markets: contact.markets,
-          trades: contact.trades,
-        });
+        const tagBody = serializeDcAwardGhlAddTagsBody(
+          buildDcAwardGhlTags({
+            markets: contact.markets,
+            trades: contact.trades,
+          }),
+        );
         const tagRes = await ghlJsonRequest(
           `${DC_AWARD_RADAR_GHL_API_BASE}/contacts/${encodeURIComponent(contactId)}/tags`,
           authorization,
-          { tags },
+          tagBody,
         );
         if (!tagRes.ok) {
           console.error(

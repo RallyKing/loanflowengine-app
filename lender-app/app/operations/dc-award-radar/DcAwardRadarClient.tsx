@@ -51,7 +51,8 @@ import {
   type DcAwardRadarContactFilterId,
 } from "@/lib/dcAwardRadarContacts";
 import {
-  DC_AWARD_RADAR_GHL_MAX_CONTACTS,
+  describeDcAwardGhlSendBatch,
+  selectDcAwardGhlContactBatch,
   uniqueContactToGhlPush,
 } from "@/lib/dcAwardRadarGhl";
 import {
@@ -499,9 +500,13 @@ function RadarTable() {
     () => collectUniqueDcAwardContacts(filteredSignals),
     [filteredSignals],
   );
-  const ghlEligibleCount = useMemo(
-    () => uniqueContacts.filter(uniqueContactHasGhlIdentity).length,
+  const ghlSendBatch = useMemo(
+    () => selectDcAwardGhlContactBatch(uniqueContacts),
     [uniqueContacts],
+  );
+  const ghlEligibleCount = useMemo(
+    () => ghlSendBatch.batch.filter(uniqueContactHasGhlIdentity).length,
+    [ghlSendBatch],
   );
   const groupKeys = useMemo(
     () => groups.map((group) => group.groupKey),
@@ -546,17 +551,25 @@ function RadarTable() {
   }
 
   function downloadFilteredContacts(kind: "contacts" | "ghl") {
-    const csv =
-      kind === "ghl"
-        ? buildDcAwardRadarGhlHandoffCsv(uniqueContacts)
-        : buildDcAwardRadarContactsCsv(uniqueContacts);
-    const filename =
-      kind === "ghl"
-        ? dcAwardRadarGhlHandoffCsvFilename()
-        : dcAwardRadarContactsCsvFilename();
-    downloadTextFile(filename, csv, "text/csv;charset=utf-8", {
-      utf8Bom: true,
-    });
+    if (kind === "ghl") {
+      const csv = buildDcAwardRadarGhlHandoffCsv(
+        ghlSendBatch.batch,
+        ghlSendBatch,
+      );
+      downloadTextFile(
+        dcAwardRadarGhlHandoffCsvFilename(ghlSendBatch),
+        csv,
+        "text/csv;charset=utf-8",
+        { utf8Bom: true },
+      );
+      return;
+    }
+    downloadTextFile(
+      dcAwardRadarContactsCsvFilename(),
+      buildDcAwardRadarContactsCsv(uniqueContacts),
+      "text/csv;charset=utf-8",
+      { utf8Bom: true },
+    );
   }
 
   function handleDownloadContacts() {
@@ -564,27 +577,34 @@ function RadarTable() {
     downloadFilteredContacts("contacts");
     setContactActionStatus({
       kind: "ok",
-      detail: `Downloaded ${uniqueContacts.length} unique contact${
+      detail: `Downloaded full filtered set: ${uniqueContacts.length} unique contact${
         uniqueContacts.length === 1 ? "" : "s"
-      } (current filters).`,
+      }.`,
     });
   }
 
   async function handleGhlPush() {
-    if (uniqueContacts.length === 0) return;
+    if (ghlSendBatch.sent === 0) return;
+    const sendCopy = describeDcAwardGhlSendBatch(ghlSendBatch);
     const confirmed = confirmApi
       ? await confirmApi.confirm({
           title: "Send filtered contacts to HighLevel",
-          entityName: `${uniqueContacts.length} unique contact${
-            uniqueContacts.length === 1 ? "" : "s"
-          }`,
+          entityName: sendCopy.entityName,
           impact:
             "Tag/create only. No SMS, email, sequences, workflows, campaigns, or Conversation AI.",
           preview: {
             rows: [
               {
-                label: "Unique contacts",
-                value: String(uniqueContacts.length),
+                label: "Filtered unique",
+                value: String(ghlSendBatch.total),
+              },
+              {
+                label: "This send",
+                value: String(ghlSendBatch.sent),
+              },
+              {
+                label: "Not in this batch",
+                value: String(ghlSendBatch.omitted),
               },
               {
                 label: "Have email or phone",
@@ -602,34 +622,43 @@ function RadarTable() {
             {
               text: "Creates or updates HighLevel contacts. Existing HighLevel tags are not overwritten — tags are appended.",
             },
+            ...(sendCopy.truncationNote
+              ? [
+                  {
+                    text: sendCopy.truncationNote,
+                    tone: "attention" as const,
+                  },
+                ]
+              : []),
             {
-              text: "If HighLevel credentials are unset on Convex, a tag-only CSV downloads for Stacy/ops handoff.",
+              text: "If HighLevel credentials are unset on Convex, a tag-only CSV downloads for the same disclosed batch (not the full filtered set).",
               tone: "attention",
             },
           ],
-          confirmLabel: "Send tag-only",
+          confirmLabel: ghlSendBatch.truncated
+            ? `Send first ${ghlSendBatch.sent}`
+            : "Send tag-only",
           cancelLabel: "Cancel",
           variant: "transfer",
           testId: "dc-award-ghl-confirm",
         })
-      : window.confirm(
-          `Send ${uniqueContacts.length} unique contacts to HighLevel (tag-only)? No email or SMS.`,
-        );
+      : window.confirm(sendCopy.confirmPrompt);
     if (!confirmed) return;
 
     setContactActionStatus({ kind: "busy", label: "Send to GHL" });
     try {
       const result = await pushFilteredContactsToGhl({
         memberUserKey: memberUserKey || undefined,
-        contacts: uniqueContacts
-          .slice(0, DC_AWARD_RADAR_GHL_MAX_CONTACTS)
-          .map(uniqueContactToGhlPush),
+        contacts: ghlSendBatch.batch.map(uniqueContactToGhlPush),
       });
+      const capNote = ghlSendBatch.truncated
+        ? ` Sent first ${ghlSendBatch.sent} of ${ghlSendBatch.total}.`
+        : "";
       if (!result.configured) {
         downloadFilteredContacts("ghl");
         setContactActionStatus({
           kind: "ok",
-          detail: `HighLevel is not configured (${result.skipped} skipped). Downloaded tag-only CSV for Stacy/ops handoff. No SMS or email.`,
+          detail: `HighLevel is not configured (${result.skipped} skipped).${capNote} Downloaded tag-only CSV for that same batch. Use Download contacts CSV for the full filtered set. No SMS or email.`,
         });
         return;
       }
@@ -639,7 +668,7 @@ function RadarTable() {
           : "";
       setContactActionStatus({
         kind: "ok",
-        detail: `${result.created} created, ${result.updated} updated, ${result.skipped} skipped.${tagNote} Tag-only — no email/SMS.`,
+        detail: `${result.created} created, ${result.updated} updated, ${result.skipped} skipped.${capNote}${tagNote} Tag-only — no email/SMS.`,
       });
     } catch (error) {
       setContactActionStatus({

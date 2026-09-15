@@ -98,18 +98,25 @@ import {
   uniqueContactMatchesFilters,
 } from "../lib/dcAwardRadarContacts";
 import {
+  DC_AWARD_RADAR_GHL_MAX_CONTACTS,
   DC_AWARD_RADAR_GHL_SOURCE,
   DC_AWARD_RADAR_GHL_TAG,
   buildDcAwardGhlTags,
   buildDcAwardGhlUpsertBody,
+  describeDcAwardGhlSendBatch,
+  ghlSerializedBodyIsAllowlisted,
   ghlUpsertBodyHasForbiddenKeys,
   ghlUpsertBodyKeys,
   isDcAwardGhlConfigured,
+  selectDcAwardGhlContactBatch,
+  serializeDcAwardGhlAddTagsBody,
+  serializeDcAwardGhlUpsertBody,
 } from "../lib/dcAwardRadarGhl";
 import {
   DC_AWARD_RADAR_CONTACT_CSV_HEADERS,
   buildDcAwardRadarContactsCsv,
   buildDcAwardRadarGhlHandoffCsv,
+  dcAwardRadarGhlHandoffCsvFilename,
 } from "../lib/export/dcAwardRadarContactsExport";
 import {
   DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
@@ -2236,9 +2243,31 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
   assert.ok(csv.includes("George Pfeffer"));
   assert.ok(csv.includes("Equinix DC21-P2 | Equinix DC21-P3"));
 
-  const ghlCsv = buildDcAwardRadarGhlHandoffCsv(unique);
+  const underCap = selectDcAwardGhlContactBatch(unique);
+  assert.equal(underCap.truncated, false);
+  assert.equal(underCap.sent, unique.length);
+  const ghlCsv = buildDcAwardRadarGhlHandoffCsv(underCap.batch, underCap);
   assert.ok(ghlCsv.includes(DC_AWARD_RADAR_GHL_SOURCE));
   assert.ok(ghlCsv.includes(DC_AWARD_RADAR_GHL_TAG));
+  assert.ok(ghlCsv.includes("exportNote"));
+
+  const overCapIds = Array.from({ length: 107 }, (_, i) => `c-${i}`);
+  const overCap = selectDcAwardGhlContactBatch(overCapIds);
+  assert.equal(overCap.sent, DC_AWARD_RADAR_GHL_MAX_CONTACTS);
+  assert.equal(overCap.total, 107);
+  assert.equal(overCap.omitted, 7);
+  assert.equal(overCap.truncated, true);
+  const overCopy = describeDcAwardGhlSendBatch(overCap);
+  assert.equal(overCopy.entityName, "first 100 of 107 unique contacts");
+  assert.ok(overCopy.confirmPrompt.includes("first 100 of 107"));
+  assert.ok(overCopy.truncationNote?.includes("first 100 of 107"));
+  const cappedHandoff = buildDcAwardRadarGhlHandoffCsv(unique, overCap);
+  assert.ok(cappedHandoff.includes("first 100 of 107"));
+  assert.ok(
+    dcAwardRadarGhlHandoffCsvFilename(overCap, new Date("2026-09-15")).includes(
+      "first-100-of-107",
+    ),
+  );
 
   const tags = buildDcAwardGhlTags({
     markets: ["Ashburn VA"],
@@ -2247,6 +2276,7 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
   assert.ok(tags.includes(DC_AWARD_RADAR_GHL_TAG));
   assert.ok(tags.includes(`${DC_AWARD_RADAR_GHL_TAG}-ashburn-va`));
   assert.ok(!tags.some((tag) => /sms|workflow|campaign/i.test(tag)));
+  assert.deepEqual(Object.keys(serializeDcAwardGhlAddTagsBody(tags)), ["tags"]);
 
   const upsert = buildDcAwardGhlUpsertBody(
     {
@@ -2260,11 +2290,19 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
     },
     "loc_test",
   );
-  assert.equal(upsert.source, DC_AWARD_RADAR_GHL_SOURCE);
-  assert.equal(upsert.firstName, "George");
-  assert.equal(upsert.lastName, "Pfeffer");
-  assert.equal(ghlUpsertBodyHasForbiddenKeys(upsert), false);
-  for (const key of ghlUpsertBodyKeys(upsert)) {
+  const serialized = serializeDcAwardGhlUpsertBody({
+    ...upsert,
+    // extra keys on the builder object must not survive serialize
+    campaign: "nope",
+    sms: "nope",
+    workflow: "nope",
+  } as typeof upsert);
+  assert.equal(serialized.source, DC_AWARD_RADAR_GHL_SOURCE);
+  assert.equal(serialized.firstName, "George");
+  assert.equal(serialized.lastName, "Pfeffer");
+  assert.equal(ghlSerializedBodyIsAllowlisted(serialized), true);
+  assert.equal(ghlUpsertBodyHasForbiddenKeys(serialized), false);
+  for (const key of ghlUpsertBodyKeys(serialized)) {
     assert.ok(
       [
         "locationId",
@@ -2279,10 +2317,10 @@ console.log("dc award radar contact filters + unique CSV + GHL tag-only");
       ].includes(key),
     );
   }
-  assert.equal("tags" in upsert, false);
-  assert.equal("campaign" in upsert, false);
-  assert.equal("workflow" in upsert, false);
-  assert.equal("sms" in upsert, false);
+  assert.equal("tags" in serialized, false);
+  assert.equal("campaign" in serialized, false);
+  assert.equal("workflow" in serialized, false);
+  assert.equal("sms" in serialized, false);
   assert.equal(
     isDcAwardGhlConfigured({ HIGHLEVEL_API_KEY: "k", HIGHLEVEL_LOCATION_ID: "l" }),
     true,

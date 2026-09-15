@@ -110,6 +110,59 @@ export function uniqueContactToGhlPush(
   };
 }
 
+export type DcAwardGhlContactBatch<T> = {
+  batch: T[];
+  total: number;
+  sent: number;
+  omitted: number;
+  truncated: boolean;
+};
+
+/** One-shot client batch — same cap the Convex action enforces. */
+export function selectDcAwardGhlContactBatch<T>(
+  contacts: readonly T[],
+  max = DC_AWARD_RADAR_GHL_MAX_CONTACTS,
+): DcAwardGhlContactBatch<T> {
+  const safeMax = Math.max(0, Math.floor(max));
+  const total = contacts.length;
+  const batch = contacts.slice(0, safeMax);
+  const sent = batch.length;
+  const omitted = Math.max(0, total - sent);
+  return {
+    batch,
+    total,
+    sent,
+    omitted,
+    truncated: omitted > 0,
+  };
+}
+
+export function describeDcAwardGhlSendBatch(
+  selection: Pick<
+    DcAwardGhlContactBatch<unknown>,
+    "total" | "sent" | "omitted" | "truncated"
+  >,
+): {
+  entityName: string;
+  confirmPrompt: string;
+  truncationNote: string | undefined;
+} {
+  if (selection.truncated) {
+    return {
+      entityName: `first ${selection.sent} of ${selection.total} unique contacts`,
+      confirmPrompt: `Send first ${selection.sent} of ${selection.total} unique contacts to HighLevel (tag-only)? No email or SMS. Remaining ${selection.omitted} stay on this page.`,
+      truncationNote: `Sending first ${selection.sent} of ${selection.total} (one-shot cap). Remaining ${selection.omitted} are not in this batch — use Download contacts CSV for the full filtered set.`,
+    };
+  }
+  return {
+    entityName: `${selection.total} unique contact${
+      selection.total === 1 ? "" : "s"
+    }`,
+    confirmPrompt: `Send ${selection.total} unique contacts to HighLevel (tag-only)? No email or SMS.`,
+    truncationNote: undefined,
+  };
+}
+
 export function buildDcAwardGhlUpsertBody(
   contact: DcAwardGhlPushContact,
   locationId: string,
@@ -134,12 +187,78 @@ export function buildDcAwardGhlUpsertBody(
   return body;
 }
 
-export function ghlUpsertBodyKeys(
+/**
+ * Positive allowlist serialize — only these keys can leave the process.
+ * Messaging / campaign / workflow / conversation fields cannot be copied through.
+ */
+export function serializeDcAwardGhlUpsertBody(
   body: DcAwardGhlUpsertBody,
+): Record<(typeof GHL_UPSERT_ALLOWED_KEYS)[number], string | undefined> & {
+  locationId: string;
+  source: typeof DC_AWARD_RADAR_GHL_SOURCE;
+} {
+  const locationId = collapseWs(body.locationId);
+  if (!locationId) {
+    throw new Error("GHL upsert serialize requires locationId.");
+  }
+  if (body.source !== DC_AWARD_RADAR_GHL_SOURCE) {
+    throw new Error("GHL upsert source must be dc-award-radar.");
+  }
+  const serialized: {
+    locationId: string;
+    source: typeof DC_AWARD_RADAR_GHL_SOURCE;
+    firstName?: string;
+    lastName?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    companyName?: string;
+    website?: string;
+  } = {
+    locationId,
+    source: DC_AWARD_RADAR_GHL_SOURCE,
+  };
+  const firstName = collapseWs(body.firstName ?? "");
+  const lastName = collapseWs(body.lastName ?? "");
+  const name = collapseWs(body.name ?? "");
+  const email = collapseWs(body.email ?? "");
+  const phone = collapseWs(body.phone ?? "");
+  const companyName = collapseWs(body.companyName ?? "");
+  const website = dcAwardSafeHttpUrl(body.website) ?? "";
+  if (firstName) serialized.firstName = firstName;
+  if (lastName) serialized.lastName = lastName;
+  if (name) serialized.name = name;
+  if (email) serialized.email = email;
+  if (phone) serialized.phone = phone;
+  if (companyName) serialized.companyName = companyName;
+  if (website) serialized.website = website;
+  return serialized;
+}
+
+export function serializeDcAwardGhlAddTagsBody(
+  tags: readonly string[],
+): { tags: string[] } {
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const tag of tags) {
+    const trimmed = collapseWs(tag);
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    next.push(trimmed);
+    if (next.length >= TAG_MAX_COUNT) break;
+  }
+  return { tags: next };
+}
+
+export function ghlUpsertBodyKeys(
+  body: object,
 ): readonly string[] {
-  return (GHL_UPSERT_ALLOWED_KEYS as readonly string[]).filter(
-    (key) => body[key as keyof DcAwardGhlUpsertBody] !== undefined,
-  );
+  return Object.keys(body).sort((a, b) => a.localeCompare(b));
+}
+
+export function ghlSerializedBodyIsAllowlisted(body: object): boolean {
+  const allowed = new Set<string>(GHL_UPSERT_ALLOWED_KEYS);
+  return ghlUpsertBodyKeys(body).every((key) => allowed.has(key));
 }
 
 const FORBIDDEN_GHL_KEYS = [

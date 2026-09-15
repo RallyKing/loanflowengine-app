@@ -8,6 +8,7 @@ import {
   type DcAwardRadarContactFilterId,
   type DcAwardRadarContactFilterSet,
 } from "@/lib/dcAwardRadarContacts";
+import { DC_AWARD_RADAR_GHL_MAX_CONTACTS } from "@/lib/dcAwardRadarGhl";
 import { cn } from "@/lib/cn";
 
 export function DcAwardRadarContactFilterChips({
@@ -84,7 +85,11 @@ export function DcAwardRadarContactActions({
         disabled={disabled}
         onClick={onGhlPush}
         data-testid="dc-award-ghl-push"
-        aria-label={`Send ${uniqueCount} filtered unique contacts to HighLevel, tag only`}
+        aria-label={
+          uniqueCount > DC_AWARD_RADAR_GHL_MAX_CONTACTS
+            ? `Send first ${DC_AWARD_RADAR_GHL_MAX_CONTACTS} of ${uniqueCount} filtered unique contacts to HighLevel, tag only`
+            : `Send ${uniqueCount} filtered unique contacts to HighLevel, tag only`
+        }
         aria-busy={ghlBusy}
       >
         {ghlBusy ? (
@@ -103,9 +108,13 @@ export function DcAwardRadarContactActions({
         {uniqueCount} unique contact{uniqueCount === 1 ? "" : "s"} in the
         current filters
         {uniqueCount > 0
-          ? ` · ${ghlEligibleCount} have email or phone for HighLevel`
+          ? ` · ${ghlEligibleCount} in this GHL batch have email or phone`
           : ""}
-        . GHL is tag/create only — no SMS, email, sequences, or campaigns.
+        {uniqueCount > DC_AWARD_RADAR_GHL_MAX_CONTACTS
+          ? ` · Send/handoff cap is first ${DC_AWARD_RADAR_GHL_MAX_CONTACTS} of ${uniqueCount}`
+          : ""}
+        . Download contacts CSV is the full filtered set. GHL is tag/create
+        only — no SMS, email, sequences, or campaigns.
       </p>
     </div>
   );
