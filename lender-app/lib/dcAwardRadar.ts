@@ -23,8 +23,22 @@ export const DC_AWARD_RADAR_CATEGORIES = [
   "industrial_warehouse",
   "k12_higher_ed",
   "data_center",
+  "multifamily",
+  "hospitality_mixed_use",
+  "federal_municipal",
 ] as const;
 export type DcAwardRadarCategory = (typeof DC_AWARD_RADAR_CATEGORIES)[number];
+
+/** Extra label → token maps after slash/space/hyphen normalize (CA pipeline CSVs). */
+const DC_AWARD_CATEGORY_PARSE_ALIASES: Record<string, DcAwardRadarCategory> = {
+  multi_family: "multifamily",
+  multi_family_housing: "multifamily",
+  hospitality_mixed: "hospitality_mixed_use",
+  hospitality_mixeduse: "hospitality_mixed_use",
+  federal_muni: "federal_municipal",
+  fed_municipal: "federal_municipal",
+  fed_muni: "federal_municipal",
+};
 
 /** Historical Phase 2 corpus labels only — do not hard-code the UI filter to these. */
 export const PHASE2_DC_AWARD_RADAR_MARKETS = [
@@ -171,7 +185,8 @@ export function isDcAwardRadarCategory(
 export function parseDcAwardRadarCategory(
   value: string,
 ): DcAwardRadarCategory {
-  // Labels like "K-12 / higher ed" and "DOT / Civil" → snake_case tokens.
+  // Labels like "K-12 / higher ed", "DOT / Civil", "Hospitality / Mixed Use"
+  // → snake_case tokens. Slash/space/hyphen collapse; then known aliases.
   const normalized = value
     .trim()
     .toLowerCase()
@@ -180,10 +195,11 @@ export function parseDcAwardRadarCategory(
     .replace(/[\s-]+/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "");
-  if (!isDcAwardRadarCategory(normalized)) {
+  const aliased = DC_AWARD_CATEGORY_PARSE_ALIASES[normalized] ?? normalized;
+  if (!isDcAwardRadarCategory(aliased)) {
     throw new Error(`Invalid category: ${value}`);
   }
-  return normalized;
+  return aliased;
 }
 
 /**
@@ -211,6 +227,12 @@ export function dcAwardCategoryUiLabel(
       return "K-12 / higher ed";
     case "data_center":
       return "Data center";
+    case "multifamily":
+      return "Multifamily";
+    case "hospitality_mixed_use":
+      return "Hospitality / Mixed Use";
+    case "federal_municipal":
+      return "Federal / Municipal";
     case undefined:
       return "Data center (uncategorized)";
     default: {

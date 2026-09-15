@@ -45,6 +45,7 @@ import {
 import JSZip from "jszip";
 import { isDealBackedPipelineRow } from "../lib/pipeline/dealBackedRow";
 import {
+  DC_AWARD_RADAR_CATEGORIES,
   PHASE2_DC_AWARD_SIGNAL_COUNT,
   PHASE2_DC_AWARD_SIGNAL_SEEDS,
   buildDcAwardSignalSourceKey,
@@ -1601,10 +1602,47 @@ console.log("dc award radar optional category vertical");
   assert.equal(parseDcAwardRadarCategory("data_center"), "data_center");
   assert.equal(parseDcAwardRadarCategory("k12_higher_ed"), "k12_higher_ed");
   assert.equal(parseDcAwardRadarCategory("K-12 / higher ed"), "k12_higher_ed");
+  assert.equal(parseDcAwardRadarCategory("multifamily"), "multifamily");
+  assert.equal(parseDcAwardRadarCategory("Multi Family"), "multifamily");
+  assert.equal(parseDcAwardRadarCategory("Multi-Family"), "multifamily");
+  assert.equal(
+    parseDcAwardRadarCategory("hospitality_mixed_use"),
+    "hospitality_mixed_use",
+  );
+  assert.equal(
+    parseDcAwardRadarCategory("Hospitality / Mixed Use"),
+    "hospitality_mixed_use",
+  );
+  assert.equal(
+    parseDcAwardRadarCategory("Hospitality Mixed-Use"),
+    "hospitality_mixed_use",
+  );
+  assert.equal(
+    parseDcAwardRadarCategory("federal_municipal"),
+    "federal_municipal",
+  );
+  assert.equal(
+    parseDcAwardRadarCategory("Federal / Municipal"),
+    "federal_municipal",
+  );
+  assert.equal(parseDcAwardRadarCategory("Federal Municipal"), "federal_municipal");
   assert.throws(() => parseDcAwardRadarCategory("retail"), /Invalid category/);
   assert.equal(dcAwardCategoryUiLabel(undefined), "Data center (uncategorized)");
   assert.equal(dcAwardCategoryUiLabel("hospital"), "Hospital");
   assert.equal(dcAwardCategoryUiLabel("k12_higher_ed"), "K-12 / higher ed");
+  assert.equal(dcAwardCategoryUiLabel("multifamily"), "Multifamily");
+  assert.equal(
+    dcAwardCategoryUiLabel("hospitality_mixed_use"),
+    "Hospitality / Mixed Use",
+  );
+  assert.equal(
+    dcAwardCategoryUiLabel("federal_municipal"),
+    "Federal / Municipal",
+  );
+
+  assert.ok(DC_AWARD_RADAR_CATEGORIES.includes("multifamily"));
+  assert.ok(DC_AWARD_RADAR_CATEGORIES.includes("hospitality_mixed_use"));
+  assert.ok(DC_AWARD_RADAR_CATEGORIES.includes("federal_municipal"));
 
   const withK12 = prepareDcAwardRadarSeedRow({
     ...base,
@@ -1614,6 +1652,16 @@ console.log("dc award radar optional category vertical");
   assert.deepEqual(pickDefinedCategory(withK12), {
     category: "k12_higher_ed",
   });
+
+  const withHospitality = prepareDcAwardRadarSeedRow({
+    ...base,
+    category: "hospitality_mixed_use",
+  });
+  assert.equal(withHospitality.category, "hospitality_mixed_use");
+  assert.deepEqual(pickDefinedCategory(withHospitality), {
+    category: "hospitality_mixed_use",
+  });
+  assert.deepEqual(pickDefinedCategory({ category: undefined }), {});
 
   const categoryCsv = [
     "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
@@ -1636,6 +1684,27 @@ console.log("dc award radar optional category vertical");
     prepareDcAwardRadarSeedRow(parsedK12.rows[0]!).category,
     "k12_higher_ed",
   );
+
+  const hospitalityCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
+    'Los Angeles CA,Hotel Mixed,Permit Issued,GC,Acme GC,GC,2026-09-01,https://example.com/permit/hm1,County permit,high,CA hospitality,n,"Hospitality / Mixed Use"',
+  ].join("\n");
+  const parsedHospitality = parseDcAwardRadarNationwidePayload(hospitalityCsv);
+  assert.equal(parsedHospitality.rows[0]?.category, "hospitality_mixed_use");
+
+  const multifamilyCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
+    "San Diego CA,Apartments,Awarded,MEP,Acme GC,GC,2026-09-01,https://example.com/permit/mf1,County permit,med,CA multifamily,n,Multi-Family",
+  ].join("\n");
+  const parsedMultifamily = parseDcAwardRadarNationwidePayload(multifamilyCsv);
+  assert.equal(parsedMultifamily.rows[0]?.category, "multifamily");
+
+  const federalCsv = [
+    "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",
+    "Sacramento CA,City Hall,Bid,Civil,Acme GC,GC,2026-09-01,https://example.com/permit/fm1,County permit,high,CA municipal,n,Federal / Municipal",
+  ].join("\n");
+  const parsedFederal = parseDcAwardRadarNationwidePayload(federalCsv);
+  assert.equal(parsedFederal.rows[0]?.category, "federal_municipal");
 
   const blankCategoryCsv = [
     "market,project_or_campus,stage_signal,trade_focus,company,role_if_known,signal_date,source_url,source_type,confidence,why_it_matters_for_DLC,notes,category",

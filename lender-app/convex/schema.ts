@@ -4936,7 +4936,8 @@ export default defineSchema({
    * campusKey/campusName/isPrimaryInCampus are display-merge only — do not
    * delete child permit rows. DC17 ≠ DC21 (different addresses).
    * Optional `category` supports multi-vertical radar rows (hospital /
-   * dot_civil / industrial_warehouse / k12_higher_ed / data_center). Existing
+   * dot_civil / industrial_warehouse / k12_higher_ed / data_center /
+   * multifamily / hospitality_mixed_use / federal_municipal). Existing
    * DC rows may omit category; do not require or wipe it on re-import.
    * HighLevel is tag/create only (client-called action). No cron / scrape from Convex.
    */
@@ -4965,6 +4966,9 @@ export default defineSchema({
         v.literal("industrial_warehouse"),
         v.literal("k12_higher_ed"),
         v.literal("data_center"),
+        v.literal("multifamily"),
+        v.literal("hospitality_mixed_use"),
+        v.literal("federal_municipal"),
       ),
     ),
     contactName: v.optional(v.string()),

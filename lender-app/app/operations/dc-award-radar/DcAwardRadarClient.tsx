@@ -97,6 +97,15 @@ const CATEGORY_FILTER_OPTIONS: Array<{
     value: "k12_higher_ed",
     label: dcAwardCategoryUiLabel("k12_higher_ed"),
   },
+  { value: "multifamily", label: dcAwardCategoryUiLabel("multifamily") },
+  {
+    value: "hospitality_mixed_use",
+    label: dcAwardCategoryUiLabel("hospitality_mixed_use"),
+  },
+  {
+    value: "federal_municipal",
+    label: dcAwardCategoryUiLabel("federal_municipal"),
+  },
   {
     value: "data_center_or_blank",
     label: "Data center (incl. blank)",
@@ -903,6 +912,7 @@ function RadarTable() {
         Market filter is exact free-text (indexed), not a hard-coded three-market
         list. Vertical filter uses optional `category` (`hospital` /
         `dot_civil` / `industrial_warehouse` / `k12_higher_ed` /
+        `multifamily` / `hospitality_mixed_use` / `federal_municipal` /
         `data_center`); legacy DC rows with blank category still appear under
         All and &quot;Data center (incl. blank)&quot;. Grouped view merges by
         campusKey (company fallback) and
