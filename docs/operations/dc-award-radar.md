@@ -4,7 +4,7 @@
 **Table:** Convex `dcAwardSignals` (platform catalog, not org-scoped)  
 **CLI:** `npm run import:dc-award-radar` (from `lender-app/`)
 
-GHL sync and outbound messages are **out of scope**. Convex does **not** scrape the web, poll, or schedule cron/scheduler pumps.
+HighLevel from this page is **tag/create only** (`dc-award-radar` + market/trade tags, source `dc-award-radar`). No SMS, email, sequences, workflows, campaigns, or Conversation AI. Convex does **not** scrape the web, poll, or schedule cron/scheduler pumps.
 
 ## Loop / usage fail-closed
 
@@ -13,6 +13,7 @@ GHL sync and outbound messages are **out of scope**. Convex does **not** scrape 
 | No scheduler pumps | No `ctx.scheduler`, no self-reschedule, no cron. Hermes wake is a **client-called** one-shot action (`requestHermesScrape`) — never scheduled |
 | No unbounded `.collect()` | `list` uses `.take(200)` + market/confidence/category indexes. `by_campusKey` exists for lookups; grouping is client-side on the capped page |
 | No polling | One-shot mutations/actions only; UI uses a single `useQuery` |
+| GHL no-outbound | `pushFilteredContactsToGhl` upserts contacts and **adds tags** only. Never writes SMS/email/sequence/workflow/campaign fields. Client sends the already-filtered unique contacts (max 100). If `HIGHLEVEL_API_KEY` + `HIGHLEVEL_LOCATION_ID` (or `GHL_*`) are unset, the UI downloads a tag-only CSV for Stacy/ops handoff |
 | Bounded writes | Operator payloads capped at **100 rows** per mutation |
 | Idempotency | `sourceKey` = normalized `sourceUrl` + project + stage |
 | No in-app scrape | Web research stays in Hermes (via BOSSMAN); Convex only POSTs the webhook or stores imported rows |
@@ -131,8 +132,24 @@ DC21-P2 `sourceUrl` must be the BLDC-2025-030931 MLQ filing — not P3’s BLDC-
 - Market filter is **free-text** (exact match, indexed). Suggestions come from the current page — not a hard-coded three-market dropdown.
 - **Vertical / category** filter: All, Hospital, DOT / Civil, Industrial / Warehouse, K-12 / higher ed, Data center (incl. blank), Data center (explicit). Indexed via `by_category` / `by_market_and_category`. Legacy DC rows with `category` undefined still list under All and “Data center (incl. blank)”.
 - **Owner / principal** stays visible in grouped mode (Joshua). Expand for LinkedIn, website, and why-cell/direct notes.
+- **Contact filters** (Has phone / Has email / Has LinkedIn / Has cell / Missing phone / Missing email) apply to unique contacts in both Grouped and Flat views. The lead-count strip follows those filters. Collapse all / Expand all is unchanged.
+- **Download contacts CSV** is client-side from the already-loaded, filtered unique contacts (company + contactName dedupe).
+- **Send filtered contacts to GHL** confirms count + “no email/SMS”, then upserts HighLevel contacts with tags only. Unset credentials → tag-only CSV handoff (no blast).
 - Operator secret matches `DATA_MIGRATION_ADMIN_SECRET` (fallback `ORG_INTEGRITY_ADMIN_SECRET`).
 - **Scrape with Hermes** is the primary refresh control; paste/CLI import is the fallback when the webhook is unset or Hermes is unavailable.
+
+## HighLevel (tag-only)
+
+Requires Convex env:
+
+| Variable | Also accepted |
+|----------|----------------|
+| `HIGHLEVEL_API_KEY` | `GHL_API_KEY`, `HIGHLEVEL_PIT` |
+| `HIGHLEVEL_LOCATION_ID` | `GHL_LOCATION_ID` |
+
+Upsert uses LeadConnector `POST /contacts/upsert` (no `tags` field — that would overwrite). Tags are appended with `POST /contacts/{id}/tags`. Contacts without email **and** phone are skipped.
+
+Before merge/prod: `/review-bugbot` + `/review` + `/review-agent` — fail closed on unresolved criticals. Minion reviews before ship.
 
 ## Convex deploy
 

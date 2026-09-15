@@ -92,6 +92,26 @@ import {
   summarizeDcAwardRadarLeads,
 } from "../lib/dcAwardRadarStats";
 import {
+  collectUniqueDcAwardContacts,
+  filterSignalsByContactFilters,
+  uniqueContactHasGhlIdentity,
+  uniqueContactMatchesFilters,
+} from "../lib/dcAwardRadarContacts";
+import {
+  DC_AWARD_RADAR_GHL_SOURCE,
+  DC_AWARD_RADAR_GHL_TAG,
+  buildDcAwardGhlTags,
+  buildDcAwardGhlUpsertBody,
+  ghlUpsertBodyHasForbiddenKeys,
+  ghlUpsertBodyKeys,
+  isDcAwardGhlConfigured,
+} from "../lib/dcAwardRadarGhl";
+import {
+  DC_AWARD_RADAR_CONTACT_CSV_HEADERS,
+  buildDcAwardRadarContactsCsv,
+  buildDcAwardRadarGhlHandoffCsv,
+} from "../lib/export/dcAwardRadarContactsExport";
+import {
   DC_AWARD_OPERATOR_UPSERT_MAX_ROWS,
   assertBoundedOperatorRows,
   chunkOperatorRows,
@@ -2085,6 +2105,197 @@ console.log("dc award radar lead-count uniqueness");
       company: "No Identity LLC",
     }),
     null,
+  );
+}
+passed += 1;
+
+console.log("dc award radar contact filters + unique CSV + GHL tag-only");
+{
+  const rows = [
+    {
+      company: "DPR Construction",
+      confidence: "high" as const,
+      contactName: "George Pfeffer",
+      phone: "(703) 555-0100",
+      phoneType: "cell" as const,
+      email: "george@dpr.com",
+      market: "Ashburn VA",
+      projectOrCampus: "Equinix DC21-P3",
+      tradeFocus: "Electrical + Mechanical",
+    },
+    {
+      company: "DPR Construction",
+      confidence: "high" as const,
+      contactName: "George Pfeffer",
+      linkedinUrl: "https://www.linkedin.com/in/george-pfeffer",
+      market: "Ashburn VA",
+      projectOrCampus: "Equinix DC21-P2",
+      tradeFocus: "Electrical",
+    },
+    {
+      company: "HITT Contracting",
+      confidence: "med" as const,
+      contactName: "Pat Lead",
+      email: "pat@hitt.com",
+      market: "Ashburn VA",
+      projectOrCampus: "NTT/VA6",
+      tradeFocus: "Electrical",
+    },
+    {
+      company: "No Identity LLC",
+      confidence: "low" as const,
+      market: "Phoenix AZ",
+      projectOrCampus: "Campus X",
+    },
+  ];
+
+  const unique = collectUniqueDcAwardContacts(rows);
+  assert.equal(unique.length, 2);
+  const george = unique.find((c) => c.contactName === "George Pfeffer");
+  assert.ok(george);
+  assert.equal(george.hasPhone, true);
+  assert.equal(george.hasEmail, true);
+  assert.equal(george.hasLinkedIn, true);
+  assert.equal(george.hasCell, true);
+  assert.deepEqual(george.projects, ["Equinix DC21-P2", "Equinix DC21-P3"]);
+  assert.equal(uniqueContactHasGhlIdentity(george), true);
+
+  const hasPhone = filterSignalsByContactFilters(rows, new Set(["hasPhone"]));
+  assert.equal(hasPhone.length, 2);
+  assert.ok(hasPhone.every((row) => row.contactName === "George Pfeffer"));
+
+  const hasLinkedIn = filterSignalsByContactFilters(
+    rows,
+    new Set(["hasLinkedIn"]),
+  );
+  assert.equal(hasLinkedIn.length, 2);
+
+  const missingPhone = filterSignalsByContactFilters(
+    rows,
+    new Set(["missingPhone"]),
+  );
+  assert.equal(missingPhone.length, 1);
+  assert.equal(missingPhone[0]?.contactName, "Pat Lead");
+
+  const contradictory = filterSignalsByContactFilters(
+    rows,
+    new Set(["hasPhone", "missingPhone"]),
+  );
+  assert.equal(contradictory.length, 0);
+
+  const noFilters = filterSignalsByContactFilters(rows, new Set());
+  assert.equal(noFilters.length, 4);
+
+  assert.equal(
+    uniqueContactMatchesFilters(george, new Set(["hasCell", "hasEmail"])),
+    true,
+  );
+  assert.equal(
+    uniqueContactMatchesFilters(george, new Set(["missingEmail"])),
+    false,
+  );
+
+  const filteredForStats = filterSignalsByContactFilters(
+    rows,
+    new Set(["hasEmail"]),
+  );
+  const filteredGroups = groupDcAwardRadarSignals(
+    filteredForStats.map((row, index) => ({
+      _id: `row-${index}`,
+      market: row.market ?? "",
+      projectOrCampus: row.projectOrCampus ?? "",
+      stageSignal: "stage",
+      tradeFocus: row.tradeFocus ?? "",
+      company: row.company,
+      roleIfKnown: "GC",
+      signalDate: "2026-01-01",
+      sourceUrl: "https://example.com/src",
+      sourceType: "test",
+      confidence: row.confidence,
+      whyItMattersForDlc: "test",
+      notes: "",
+      contactName: row.contactName,
+      email: row.email,
+      phone: row.phone,
+      phoneType: row.phoneType,
+      linkedinUrl: row.linkedinUrl,
+    })),
+  );
+  const leadStats = summarizeDcAwardRadarLeads(
+    filteredForStats,
+    filteredGroups.length,
+  );
+  assert.equal(leadStats.uniqueContactCount, 2);
+  assert.equal(leadStats.contactsWithEmail, 2);
+  assert.equal(leadStats.signalCount, 3);
+
+  const csv = buildDcAwardRadarContactsCsv(unique);
+  for (const header of DC_AWARD_RADAR_CONTACT_CSV_HEADERS) {
+    assert.ok(csv.includes(header), `CSV missing ${header}`);
+  }
+  assert.ok(csv.includes("George Pfeffer"));
+  assert.ok(csv.includes("Equinix DC21-P2 | Equinix DC21-P3"));
+
+  const ghlCsv = buildDcAwardRadarGhlHandoffCsv(unique);
+  assert.ok(ghlCsv.includes(DC_AWARD_RADAR_GHL_SOURCE));
+  assert.ok(ghlCsv.includes(DC_AWARD_RADAR_GHL_TAG));
+
+  const tags = buildDcAwardGhlTags({
+    markets: ["Ashburn VA"],
+    trades: ["Electrical + Mechanical"],
+  });
+  assert.ok(tags.includes(DC_AWARD_RADAR_GHL_TAG));
+  assert.ok(tags.includes(`${DC_AWARD_RADAR_GHL_TAG}-ashburn-va`));
+  assert.ok(!tags.some((tag) => /sms|workflow|campaign/i.test(tag)));
+
+  const upsert = buildDcAwardGhlUpsertBody(
+    {
+      company: "DPR Construction",
+      contactName: "George Pfeffer",
+      email: "george@dpr.com",
+      phone: "(703) 555-0100",
+      companyWebsite: "https://www.dpr.com",
+      markets: ["Ashburn VA"],
+      trades: ["Electrical"],
+    },
+    "loc_test",
+  );
+  assert.equal(upsert.source, DC_AWARD_RADAR_GHL_SOURCE);
+  assert.equal(upsert.firstName, "George");
+  assert.equal(upsert.lastName, "Pfeffer");
+  assert.equal(ghlUpsertBodyHasForbiddenKeys(upsert), false);
+  for (const key of ghlUpsertBodyKeys(upsert)) {
+    assert.ok(
+      [
+        "locationId",
+        "firstName",
+        "lastName",
+        "name",
+        "email",
+        "phone",
+        "companyName",
+        "website",
+        "source",
+      ].includes(key),
+    );
+  }
+  assert.equal("tags" in upsert, false);
+  assert.equal("campaign" in upsert, false);
+  assert.equal("workflow" in upsert, false);
+  assert.equal("sms" in upsert, false);
+  assert.equal(
+    isDcAwardGhlConfigured({ HIGHLEVEL_API_KEY: "k", HIGHLEVEL_LOCATION_ID: "l" }),
+    true,
+  );
+  assert.equal(isDcAwardGhlConfigured({}), false);
+
+  const collapsed = collapseAllDcAwardCampusGroups();
+  assert.equal(
+    areAllDcAwardCampusGroupsCollapsed(
+      filteredGroups.map((g) => g.groupKey),
+      collapsed,
+    ),
+    filteredGroups.length > 0,
   );
 }
 passed += 1;

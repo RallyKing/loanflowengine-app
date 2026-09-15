@@ -99,7 +99,7 @@ export function DcAwardRadarOpsPanel() {
       setStatus({
         kind: "ok",
         label: "Scrape with Hermes",
-        detail: `Scrape requested — Hermes running via BOSSMAN; import lands after Minion gets CSVs (${SCRAPE_MODE_LABEL[result.mode]}, ${formatRequestedAt(result.requestedAt)}). No Convex polling; no invented contacts; GHL out of scope.`,
+        detail: `Scrape requested — Hermes running via BOSSMAN; import lands after Minion gets CSVs (${SCRAPE_MODE_LABEL[result.mode]}, ${formatRequestedAt(result.requestedAt)}). No Convex polling; no invented contacts; GHL remains tag-only from the contact tools.`,
       });
     } catch (error) {
       setStatus({
@@ -175,7 +175,8 @@ export function DcAwardRadarOpsPanel() {
         Prefer owner/principal{" "}
         <strong className="font-medium text-foreground">cell / direct</strong>{" "}
         phone and <strong className="font-medium text-foreground">direct</strong> email —
-        no invented contacts. GHL and outbound messaging are out of scope.
+        no invented contacts. HighLevel from this page is tag/create only —
+        no SMS, email, sequences, or campaigns.
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
         Fallback: Manual CSV import (below) or CLI{" "}
@@ -206,7 +207,8 @@ export function DcAwardRadarOpsPanel() {
               dc-award-radar-hermes-scrape
             </code>
             . No Convex scrape or scheduler. After Hermes, BOSSMAN pings Minion
-            for import — not automatic GHL sync. Progress below is indeterminate:
+            for import — not automatic GHL blast. Contact tools can tag-only
+            upsert after import. Progress below is indeterminate:
             true Hermes completion is async outside this app.
           </p>
         </div>

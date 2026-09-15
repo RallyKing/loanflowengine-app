@@ -39,8 +39,8 @@ export function SystemAdminSettingsPanel() {
             </Link>
             {" — "}
             <span className="text-muted-foreground">
-              nationwide public DC signals + Hermes contact refresh. GHL sync is
-              out of scope.
+              nationwide public DC signals + Hermes contact refresh. HighLevel
+              push is tag/create only.
             </span>
           </p>
         </>
