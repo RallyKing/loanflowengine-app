@@ -80,3 +80,69 @@ export function formatDcAwardRadarListStatus(args: {
   }
   return `Showing ${loadedCount}`;
 }
+
+/**
+ * Empty first page after server post-filter, but Convex reports more DB pages.
+ * Operators must still see Load more / Load all (not a dead-end empty state).
+ */
+export function dcAwardRadarEmptyButMoreAvailable(args: {
+  loadedCount: number;
+  truncated: boolean;
+  continueCursor: string | null;
+}): boolean {
+  return (
+    args.loadedCount === 0 &&
+    args.truncated &&
+    typeof args.continueCursor === "string" &&
+    args.continueCursor.length > 0
+  );
+}
+
+/** Title/description when loaded pages are empty but more pages exist. */
+export function formatDcAwardRadarEmptyButMoreCopy(): {
+  title: string;
+  description: string;
+} {
+  return {
+    title: "No matching signals on loaded pages",
+    description:
+      "This page had no rows after filters, but more pages are available. Use Load more or Load all to continue — later pages may match.",
+  };
+}
+
+/**
+ * Chip / footnote honesty for loaded-page stats.
+ * After Load all exhausts (`truncated === false`), do not keep saying "load more".
+ */
+export function formatDcAwardRadarLoadedStatsNote(args: {
+  truncated: boolean;
+  hitPageCap?: boolean;
+}): string | null {
+  if (args.hitPageCap) {
+    return "from loaded pages only — page cap reached; more may exist";
+  }
+  if (args.truncated) {
+    return "from loaded pages only — load more to include more";
+  }
+  return null;
+}
+
+/**
+ * Fail-closed GHL: require exhausted pages before send when more can still load.
+ * Page-cap leftover allows send with an explicit loaded-pages-only caveat.
+ */
+export function dcAwardRadarGhlRequiresLoadAllFirst(args: {
+  truncated: boolean;
+  hitPageCap: boolean;
+}): boolean {
+  return args.truncated && !args.hitPageCap;
+}
+
+export function formatDcAwardRadarGhlTruncatedCaveat(args: {
+  hitPageCap: boolean;
+}): string {
+  if (args.hitPageCap) {
+    return "List hit the Load-all page cap — this HighLevel send uses contacts from loaded pages only; more signals may exist beyond the cap.";
+  }
+  return "List is still truncated — this HighLevel send uses contacts from loaded pages only.";
+}

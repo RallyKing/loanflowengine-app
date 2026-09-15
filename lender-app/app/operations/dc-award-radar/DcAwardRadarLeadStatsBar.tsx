@@ -1,4 +1,5 @@
 import type { DcAwardRadarLeadStats } from "@/lib/dcAwardRadarStats";
+import { formatDcAwardRadarLoadedStatsNote } from "@/lib/dcAwardRadarPagination";
 
 const CONTACT_UNIQUENESS_TITLE =
   "Unique contacts: company + contact name when both are present; otherwise email, phone, or LinkedIn. Campus children that share a key count once.";
@@ -13,11 +14,9 @@ type StatChip = {
 function chipsForStats(
   stats: DcAwardRadarLeadStats,
   viewMode: "grouped" | "flat",
-  statsFromLoadedPagesOnly: boolean,
+  loadedStatsNote: string | null,
 ): StatChip[] {
-  const loadedNote = statsFromLoadedPagesOnly
-    ? " (from loaded pages only — load more to include more)"
-    : "";
+  const loadedNote = loadedStatsNote ? ` (${loadedStatsNote})` : "";
   const chips: StatChip[] = [
     {
       id: "signals",
@@ -83,7 +82,7 @@ export function DcAwardRadarLeadStatsBar({
   listStatus,
   market,
   contactFiltersActive = false,
-  statsFromLoadedPagesOnly = false,
+  hitPageCap = false,
 }: {
   stats: DcAwardRadarLeadStats;
   viewMode: "grouped" | "flat";
@@ -92,10 +91,14 @@ export function DcAwardRadarLeadStatsBar({
   listStatus: string;
   market: string;
   contactFiltersActive?: boolean;
-  /** When more pages exist (or extra pages were loaded), chips are from loaded rows only. */
-  statsFromLoadedPagesOnly?: boolean;
+  /** True when Load-all hit the hard page cap (more may still exist). */
+  hitPageCap?: boolean;
 }) {
-  const chips = chipsForStats(stats, viewMode, statsFromLoadedPagesOnly);
+  const loadedStatsNote = formatDcAwardRadarLoadedStatsNote({
+    truncated,
+    hitPageCap,
+  });
+  const chips = chipsForStats(stats, viewMode, loadedStatsNote);
   return (
     <div
       data-testid="dc-award-lead-stats"
@@ -105,7 +108,9 @@ export function DcAwardRadarLeadStatsBar({
         {CONTACT_UNIQUENESS_TITLE} Counts follow the market, confidence, and
         contact-channel filters. Lead chips use loaded pages only
         {truncated
-          ? " until you Load more or Load all."
+          ? hitPageCap
+            ? " — page cap reached; more may exist."
+            : " until you Load more or Load all."
           : "."}
       </p>
       <ul
@@ -135,9 +140,7 @@ export function DcAwardRadarLeadStatsBar({
         >
           {market ? `Filtered to ${market}` : "All markets on loaded pages"}
           {contactFiltersActive ? " · contact filters on" : ""}
-          {statsFromLoadedPagesOnly && truncated
-            ? " · stats from loaded pages only; load more to include more"
-            : ""}
+          {loadedStatsNote ? ` · stats ${loadedStatsNote}` : ""}
           {" · "}
           {listStatus}
         </p>

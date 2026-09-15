@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useAction, useConvex, useQuery } from "convex/react";
 import { ChevronDown, ChevronRight, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -65,7 +72,11 @@ import { summarizeDcAwardRadarLeads } from "@/lib/dcAwardRadarStats";
 import {
   DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
   DC_AWARD_RADAR_PAGE_SIZE,
+  dcAwardRadarEmptyButMoreAvailable,
+  dcAwardRadarGhlRequiresLoadAllFirst,
   dcAwardRadarLoadAllCanContinue,
+  formatDcAwardRadarEmptyButMoreCopy,
+  formatDcAwardRadarGhlTruncatedCaveat,
   formatDcAwardRadarListStatus,
   mergeDcAwardRadarSignalPages,
 } from "@/lib/dcAwardRadarPagination";
@@ -508,6 +519,11 @@ function RadarTable() {
     | { kind: "all"; loadedCount: number }
   >({ kind: "idle" });
   const [pageError, setPageError] = useState<string | null>(null);
+  /**
+   * Generation token: filter / firstPage resets bump this so in-flight
+   * Load more / Load all ignore stale results and do not corrupt busy state.
+   */
+  const loadGenerationRef = useRef(0);
 
   useEffect(() => {
     setGroupExpansion(readDcAwardRadarGroupExpansion());
@@ -541,7 +557,10 @@ function RadarTable() {
 
   // When filters change, `firstPage` goes undefined then refreshes — drop
   // appended pages so GA/NC loads are not mixed with a stale first page.
+  // Bump generation so mid-flight Load more / Load all cannot append or
+  // clear busy after this reset.
   useEffect(() => {
+    loadGenerationRef.current += 1;
     setAppendedSignals([]);
     setHitPageCap(false);
     setPageBusy({ kind: "idle" });
@@ -617,6 +636,20 @@ function RadarTable() {
       truncated: listTruncated,
       continueCursor,
     });
+  const emptyButMore = dcAwardRadarEmptyButMoreAvailable({
+    loadedCount: signals?.length ?? 0,
+    truncated: listTruncated,
+    continueCursor,
+  });
+  const emptyButMoreCopy = formatDcAwardRadarEmptyButMoreCopy();
+  const showPaginationControls =
+    emptyButMore ||
+    listTruncated ||
+    hitPageCap ||
+    pageBusy.kind !== "idle" ||
+    pageError !== null ||
+    pagesLoaded > 1 ||
+    (signals !== undefined && signals.length > 0);
 
   function applyMarketFilter() {
     setMarket(marketDraft.trim());
@@ -647,10 +680,12 @@ function RadarTable() {
 
   async function handleLoadMore() {
     if (!canLoadMore || !continueCursor) return;
+    const generation = loadGenerationRef.current;
     setPageBusy({ kind: "more" });
     setPageError(null);
     try {
       const page = await fetchNextPage(continueCursor);
+      if (generation !== loadGenerationRef.current) return;
       setAppendedSignals((current) =>
         mergeDcAwardRadarSignalPages(
           current,
@@ -668,18 +703,22 @@ function RadarTable() {
         setHitPageCap(true);
       }
     } catch (error) {
+      if (generation !== loadGenerationRef.current) return;
       setPageError(
         error instanceof Error
           ? error.message
           : "Failed to load the next page of signals.",
       );
     } finally {
-      setPageBusy({ kind: "idle" });
+      if (generation === loadGenerationRef.current) {
+        setPageBusy({ kind: "idle" });
+      }
     }
   }
 
   async function handleLoadAll() {
     if (!listTruncated || !continueCursor || pageBusy.kind !== "idle") return;
+    const generation = loadGenerationRef.current;
     setPageBusy({ kind: "all", loadedCount: signals?.length ?? 0 });
     setPageError(null);
     let cursor: string | null = continueCursor;
@@ -689,6 +728,7 @@ function RadarTable() {
     let loadedCount = signals?.length ?? 0;
     try {
       while (
+        generation === loadGenerationRef.current &&
         dcAwardRadarLoadAllCanContinue({
           pagesLoaded: pages,
           maxPages: DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES,
@@ -697,6 +737,7 @@ function RadarTable() {
         })
       ) {
         const page = await fetchNextPage(cursor!);
+        if (generation !== loadGenerationRef.current) return;
         appended = mergeDcAwardRadarSignalPages(
           appended,
           page.signals as DcAwardRadarListSignal[],
@@ -714,17 +755,21 @@ function RadarTable() {
         setListTruncated(truncated);
         setPageBusy({ kind: "all", loadedCount });
       }
+      if (generation !== loadGenerationRef.current) return;
       if (truncated && pages >= DC_AWARD_RADAR_MAX_LOAD_ALL_PAGES) {
         setHitPageCap(true);
       }
     } catch (error) {
+      if (generation !== loadGenerationRef.current) return;
       setPageError(
         error instanceof Error
           ? error.message
           : "Failed while loading all award-radar pages.",
       );
     } finally {
-      setPageBusy({ kind: "idle" });
+      if (generation === loadGenerationRef.current) {
+        setPageBusy({ kind: "idle" });
+      }
     }
   }
 
@@ -770,7 +815,23 @@ function RadarTable() {
       });
       return;
     }
+    if (
+      dcAwardRadarGhlRequiresLoadAllFirst({
+        truncated: listTruncated,
+        hitPageCap,
+      })
+    ) {
+      setContactActionStatus({
+        kind: "error",
+        message:
+          "List is still truncated. Use Load all (or Load more until exhausted) before sending to HighLevel — send uses loaded pages only.",
+      });
+      return;
+    }
     const sendCopy = describeDcAwardGhlSendBatch(ghlSendBatch);
+    const truncatedCaveat = listTruncated
+      ? formatDcAwardRadarGhlTruncatedCaveat({ hitPageCap })
+      : null;
     const confirmed = confirmApi
       ? await confirmApi.confirm({
           title: "Send filtered contacts to HighLevel",
@@ -815,6 +876,14 @@ function RadarTable() {
                   },
                 ]
               : []),
+            ...(truncatedCaveat
+              ? [
+                  {
+                    text: truncatedCaveat,
+                    tone: "attention" as const,
+                  },
+                ]
+              : []),
             {
               text: "If HighLevel credentials are unset on Convex, a tag-only CSV downloads for the same full eligible send set (not a truncated subset).",
               tone: "attention",
@@ -825,7 +894,11 @@ function RadarTable() {
           variant: "transfer",
           testId: "dc-award-ghl-confirm",
         })
-      : window.confirm(sendCopy.confirmPrompt);
+      : window.confirm(
+          truncatedCaveat
+            ? `${sendCopy.confirmPrompt}\n\n${truncatedCaveat}`
+            : sendCopy.confirmPrompt,
+        );
     if (!confirmed) return;
 
     setContactActionStatus({ kind: "busy", label: "Send to GHL" });
@@ -1083,7 +1156,7 @@ function RadarTable() {
         listStatus={listStatus}
         market={market}
         contactFiltersActive={contactFiltersActive}
-        statsFromLoadedPagesOnly={listTruncated || pagesLoaded > 1}
+        hitPageCap={hitPageCap}
       />
       <p className="text-xs text-muted-foreground">
         Market filter is exact free-text (indexed), not a hard-coded three-market
@@ -1099,13 +1172,20 @@ function RadarTable() {
         the raw permit list. Contact chips dedupe campus children by company +
         name. Contact filters and CSV / GHL actions use those unique contacts.
         List pages are {DC_AWARD_RADAR_PAGE_SIZE} rows each — use Load more /
-        Load all to reach later markets.
+        Load all to reach later markets. HighLevel send requires Load all
+        (or exhausted pages) first so the send is not a silent truncated subset.
       </p>
 
       {signals.length === 0 ? (
         <OperationalEmptyState
-          title="No award signals"
-          description="Nothing matches these filters. Import a nationwide Hermes CSV or run the one-shot Phase 2 seed if the table is empty."
+          title={
+            emptyButMore ? emptyButMoreCopy.title : "No award signals"
+          }
+          description={
+            emptyButMore
+              ? emptyButMoreCopy.description
+              : "Nothing matches these filters. Import a nationwide Hermes CSV or run the one-shot Phase 2 seed if the table is empty."
+          }
         />
       ) : filteredSignals.length === 0 ? (
         <OperationalEmptyState
@@ -1113,130 +1193,130 @@ function RadarTable() {
           description="Contact-channel filters hid every row. Clear Has phone / Has email / Has LinkedIn / Has cell / Missing phone / Missing email to see the list again."
         />
       ) : (
-        <div className="space-y-3">
-          <div className="overflow-x-auto max-md:touch-pan-x">
-            {viewMode === "grouped" ? (
-              <table
-                className={dataTableClassNames(
-                  settings.tableDensity,
-                  "w-full min-w-[64rem] text-left",
-                )}
-              >
-                <thead>
-                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Market</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">
-                      Campus / company
-                    </th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">
-                      Owner / principal
-                    </th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Signals</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groups.map((group) => (
-                    <GroupedCampusRow
-                      key={group.groupKey}
-                      group={group}
-                      expanded={isDcAwardCampusGroupExpanded(
-                        group.groupKey,
-                        groupExpansion,
-                      )}
-                      onToggle={() => toggleGroup(group.groupKey)}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <table
-                className={dataTableClassNames(
-                  settings.tableDensity,
-                  "w-full min-w-[80rem] text-left",
-                )}
-              >
-                <thead>
-                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Market</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Project</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Stage</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Company</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">
-                      Owner / principal
-                    </th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">
-                      Why it matters
-                    </th>
-                    <th className="sticky top-0 bg-card px-2 py-2 font-medium">Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredSignals.map((row) => (
-                    <FlatSignalRow
-                      key={row._id}
-                      row={row}
-                      expanded={expandedIds.has(row._id)}
-                      onToggle={() => toggleExpanded(row._id)}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-          <div
-            className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
-            data-testid="dc-award-list-pagination"
-          >
-            <p
-              className="text-xs text-muted-foreground"
-              data-testid="dc-award-list-status"
-              role="status"
+        <div className="overflow-x-auto max-md:touch-pan-x">
+          {viewMode === "grouped" ? (
+            <table
+              className={dataTableClassNames(
+                settings.tableDensity,
+                "w-full min-w-[64rem] text-left",
+              )}
             >
-              {pageBusy.kind === "all"
-                ? `Loading… ${pageBusy.loadedCount}`
-                : listStatus}
-              {pagesLoaded > 0
-                ? ` · ${pagesLoaded} page${pagesLoaded === 1 ? "" : "s"}`
-                : ""}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={!canLoadMore}
-                onClick={() => void handleLoadMore()}
-                data-testid="dc-award-load-more"
-              >
-                {pageBusy.kind === "more" ? "Loading…" : "Load more"}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={!canLoadMore}
-                onClick={() => void handleLoadAll()}
-                data-testid="dc-award-load-all"
-              >
-                {pageBusy.kind === "all" ? "Loading all…" : "Load all"}
-              </Button>
-            </div>
-            {pageError ? (
-              <p
-                className="text-xs text-destructive"
-                role="alert"
-                data-testid="dc-award-pagination-error"
-              >
-                {pageError}
-              </p>
-            ) : null}
-          </div>
+              <thead>
+                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Market</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">
+                    Campus / company
+                  </th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">
+                    Owner / principal
+                  </th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Signals</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((group) => (
+                  <GroupedCampusRow
+                    key={group.groupKey}
+                    group={group}
+                    expanded={isDcAwardCampusGroupExpanded(
+                      group.groupKey,
+                      groupExpansion,
+                    )}
+                    onToggle={() => toggleGroup(group.groupKey)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <table
+              className={dataTableClassNames(
+                settings.tableDensity,
+                "w-full min-w-[80rem] text-left",
+              )}
+            >
+              <thead>
+                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Market</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Project</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Stage</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Company</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">
+                    Owner / principal
+                  </th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Conf.</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Date</th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">
+                    Why it matters
+                  </th>
+                  <th className="sticky top-0 bg-card px-2 py-2 font-medium">Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSignals.map((row) => (
+                  <FlatSignalRow
+                    key={row._id}
+                    row={row}
+                    expanded={expandedIds.has(row._id)}
+                    onToggle={() => toggleExpanded(row._id)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
+      {showPaginationControls ? (
+        <div
+          className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
+          data-testid="dc-award-list-pagination"
+        >
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="dc-award-list-status"
+            role="status"
+          >
+            {pageBusy.kind === "all"
+              ? `Loading… ${pageBusy.loadedCount}`
+              : listStatus}
+            {pagesLoaded > 0
+              ? ` · ${pagesLoaded} page${pagesLoaded === 1 ? "" : "s"}`
+              : ""}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canLoadMore}
+              onClick={() => void handleLoadMore()}
+              data-testid="dc-award-load-more"
+            >
+              {pageBusy.kind === "more" ? "Loading…" : "Load more"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canLoadMore}
+              onClick={() => void handleLoadAll()}
+              data-testid="dc-award-load-all"
+            >
+              {pageBusy.kind === "all" ? "Loading all…" : "Load all"}
+            </Button>
+          </div>
+          {pageError ? (
+            <p
+              className="text-xs text-destructive"
+              role="alert"
+              data-testid="dc-award-pagination-error"
+            >
+              {pageError}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

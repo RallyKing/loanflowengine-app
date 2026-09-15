@@ -98,8 +98,13 @@ import {
   DC_AWARD_RADAR_PAGE_SIZE_MAX,
   DC_AWARD_RADAR_PAGE_SIZE_MIN,
   clampDcAwardRadarPageSize,
+  dcAwardRadarEmptyButMoreAvailable,
+  dcAwardRadarGhlRequiresLoadAllFirst,
   dcAwardRadarLoadAllCanContinue,
+  formatDcAwardRadarEmptyButMoreCopy,
+  formatDcAwardRadarGhlTruncatedCaveat,
   formatDcAwardRadarListStatus,
+  formatDcAwardRadarLoadedStatsNote,
   mergeDcAwardRadarSignalPages,
 } from "../lib/dcAwardRadarPagination";
 import {
@@ -2328,6 +2333,83 @@ console.log("dc award radar client pagination fail-closed helpers");
       hitPageCap: true,
     }),
     /page cap 100/,
+  );
+
+  assert.equal(
+    dcAwardRadarEmptyButMoreAvailable({
+      loadedCount: 0,
+      truncated: true,
+      continueCursor: "cursor-1",
+    }),
+    true,
+  );
+  assert.equal(
+    dcAwardRadarEmptyButMoreAvailable({
+      loadedCount: 0,
+      truncated: false,
+      continueCursor: "cursor-1",
+    }),
+    false,
+  );
+  assert.equal(
+    dcAwardRadarEmptyButMoreAvailable({
+      loadedCount: 12,
+      truncated: true,
+      continueCursor: "cursor-1",
+    }),
+    false,
+  );
+  assert.equal(
+    dcAwardRadarEmptyButMoreAvailable({
+      loadedCount: 0,
+      truncated: true,
+      continueCursor: null,
+    }),
+    false,
+  );
+  const emptyMoreCopy = formatDcAwardRadarEmptyButMoreCopy();
+  assert.match(emptyMoreCopy.title, /loaded pages/i);
+  assert.match(emptyMoreCopy.description, /Load more|Load all/);
+
+  assert.equal(
+    formatDcAwardRadarLoadedStatsNote({ truncated: true }),
+    "from loaded pages only — load more to include more",
+  );
+  assert.equal(
+    formatDcAwardRadarLoadedStatsNote({ truncated: false }),
+    null,
+  );
+  assert.match(
+    formatDcAwardRadarLoadedStatsNote({
+      truncated: true,
+      hitPageCap: true,
+    }) ?? "",
+    /page cap/,
+  );
+  assert.equal(
+    dcAwardRadarGhlRequiresLoadAllFirst({
+      truncated: true,
+      hitPageCap: false,
+    }),
+    true,
+  );
+  assert.equal(
+    dcAwardRadarGhlRequiresLoadAllFirst({
+      truncated: false,
+      hitPageCap: false,
+    }),
+    false,
+  );
+  assert.equal(
+    dcAwardRadarGhlRequiresLoadAllFirst({
+      truncated: true,
+      hitPageCap: true,
+    }),
+    false,
+  );
+  assert.match(
+    formatDcAwardRadarGhlTruncatedCaveat({ hitPageCap: true }),
+    /loaded pages only/,
   );
 }
 passed += 1;
