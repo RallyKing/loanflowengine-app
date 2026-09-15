@@ -146,6 +146,11 @@ const nextConfig = {
         destination: "/lenders?tab=scenario",
         permanent: true,
       },
+      {
+        source: "/operations/dc-award-radar",
+        destination: "/operations/award-radar",
+        permanent: true,
+      },
     ];
   },
 };

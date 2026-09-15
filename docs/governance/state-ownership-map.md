@@ -15,7 +15,7 @@
 | File shared fields | `fileSharedState` | Blocks, summaries |
 | Drawer layout | `fileDrawerLayout` / globals | `PipelineDrawer` |
 | User/org prefs | preferences / org tables | Settings, shell |
-| DC award radar | `dcAwardSignals` `list` + operator one-shot upserts (`operatorImportPhase2`, `operatorUpsertRows`, `operatorUpsertContacts`, `operatorBackfillCampusGroups`) + client-called `pushFilteredContactsToGhl` (tag-only) | `/operations/dc-award-radar` (nationwide + contacts + campus grouping; GHL tag/create only) |
+| Award Radar | `dcAwardSignals` `list` + operator one-shot upserts (`operatorImportPhase2`, `operatorUpsertRows`, `operatorUpsertContacts`, `operatorBackfillCampusGroups`) + client-called `pushFilteredContactsToGhl` (tag-only) | `/operations/award-radar` (nationwide + contacts + campus grouping; GHL tag/create only — `award-radar` + category) |
 
 ---
 
