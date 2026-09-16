@@ -89,6 +89,7 @@ import {
   resolveOrgPipelineFileAccessLevel,
   sessionKeyIsGlobalAdmin,
 } from "./organizationAccess";
+import { normalizePipelineFileId } from "./pipelineFileRouteResolve";
 import {
   pipelineHierarchyFkArgs,
   resolvePipelineHierarchyForCreate,
@@ -210,11 +211,17 @@ const orgListScopeArgs = {
 /**
  * For drawer UIs: pipeline row + resolved `lenders` records (order follows
  * `pipeline.lenders`; missing ids are skipped).
+ *
+ * `id` is a string (not `v.id("pipeline")`) so a contacts/clients id in the
+ * `/pipeline/[id]` path returns null instead of ArgumentValidationError /
+ * Convex "Server Error". Callers should use `resolveFileRouteTarget` to redirect.
  */
 export const getDetail = query({
-  args: { id: v.id("pipeline"), ...memberUserKeyArg },
+  args: { id: v.string(), ...memberUserKeyArg },
   handler: async (ctx, { id, memberUserKey }) => {
-    const p = await ctx.db.get(id);
+    const pipelineId = normalizePipelineFileId(ctx, id);
+    if (!pipelineId) return null;
+    const p = await ctx.db.get(pipelineId);
     if (!p) return null;
     await assertCanReadPipelineRow(ctx, p, memberUserKey);
     const board = resolvePipelineLenderBoard(p);
@@ -232,7 +239,8 @@ export const getDetail = query({
       const d = await ctx.db.get(lid);
       if (d) consideringLenders.push(d);
     }
-    for (const lid of p.lenders) {
+    const lenderIds = p.lenders ?? [];
+    for (const lid of lenderIds) {
       const d = await ctx.db.get(lid);
       if (d) resolved.push(d);
     }

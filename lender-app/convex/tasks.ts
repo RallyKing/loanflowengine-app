@@ -20,6 +20,7 @@ import {
   assertCanReadTaskRow,
   assertCanReadPipelineRow,
 } from "./organizationAccess";
+import { normalizePipelineFileId } from "./pipelineFileRouteResolve";
 import {
   assertCanMutatePipelineRow,
   ownerUserIdFieldsForInsert,
@@ -2019,9 +2020,15 @@ export const remove = mutation({
  * Tasks linked to a given pipeline file (for the drawer's task list section).
  */
 export const byRelatedFile = query({
-  args: { fileId: v.id("pipeline"), ...orgScopeArgs },
-  handler: async (ctx, { fileId, organizationId, memberUserKey }) => {
+  args: {
+    /** String so wrong-table path ids soft-fail instead of ArgumentValidationError. */
+    fileId: v.string(),
+    ...orgScopeArgs,
+  },
+  handler: async (ctx, { fileId: rawFileId, organizationId, memberUserKey }) => {
     await requireTaskOrg(ctx, organizationId, memberUserKey);
+    const fileId = normalizePipelineFileId(ctx, rawFileId);
+    if (!fileId) return [];
     const file = await ctx.db.get(fileId);
     if (!file || file.organizationId !== organizationId) return [];
     await assertCanReadPipelineRow(ctx, file, memberUserKey);

@@ -75,13 +75,13 @@ export function usePipelineFileWorkspaceData(args: {
   );
 
   const qArgs = useMemo(():
-    | { id: Id<"pipeline">; memberUserKey?: string }
+    | { id: string; memberUserKey?: string }
     | "skip" => {
     if (!fileQueryEnabled || !fileId) return "skip";
     if (convexMemberKey) {
-      return { id: fileId, memberUserKey: convexMemberKey };
+      return { id: String(fileId), memberUserKey: convexMemberKey };
     }
-    return { id: fileId };
+    return { id: String(fileId) };
   }, [fileId, fileQueryEnabled, convexMemberKey]);
 
   useConvexSubQueryArgsTrace("usePipelineFileWorkspaceData:getDetail", qArgs, {
@@ -141,14 +141,14 @@ export function usePipelineFileWorkspaceData(args: {
 
   const linkedTasksArgs = useMemo(():
     | {
-        fileId: Id<"pipeline">;
+        fileId: string;
         organizationId: Id<"organizations">;
         memberUserKey: string;
       }
     | "skip" => {
     if (!fileQueryEnabled || !fileId || !orgConvexArgs) return "skip";
     return {
-      fileId,
+      fileId: String(fileId),
       organizationId: orgConvexArgs.organizationId,
       memberUserKey: orgConvexArgs.memberUserKey,
     };
@@ -162,12 +162,12 @@ export function usePipelineFileWorkspaceData(args: {
   );
 
   const listByFileArgs = useMemo(():
-    | { fileId: Id<"pipeline">; memberUserKey?: string }
+    | { fileId: string; memberUserKey?: string }
     | "skip" => {
     if (!fileQueryEnabled || !fileId) return "skip";
     return convexMemberKey
-      ? { fileId, memberUserKey: convexMemberKey }
-      : { fileId };
+      ? { fileId: String(fileId), memberUserKey: convexMemberKey }
+      : { fileId: String(fileId) };
   }, [fileId, fileQueryEnabled, convexMemberKey]);
 
   const listByFileRaw = useQuery(

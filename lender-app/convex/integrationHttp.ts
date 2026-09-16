@@ -371,7 +371,7 @@ export async function integrationDispatch(
         );
       }
       const detail = await ctx.runQuery(api.pipeline.getDetail, {
-        id: idRaw.trim() as Id<"pipeline">,
+        id: idRaw.trim(),
         memberUserKey: actorUserKey,
       });
       if (!detail) {
