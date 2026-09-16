@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useMutation } from "convex/react";
 import { Bug, Camera, Loader2, X } from "lucide-react";
@@ -57,6 +57,8 @@ function ReportBugFabAndDialog() {
   const [submitting, setSubmitting] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  /** Bumps on close / new capture so late screenshot results are ignored. */
+  const captureGenerationRef = useRef(0);
 
   const visible =
     Boolean(isSignedIn) &&
@@ -88,48 +90,49 @@ function ReportBugFabAndDialog() {
   }, [revokePreview]);
 
   const close = useCallback(() => {
+    captureGenerationRef.current += 1;
     setOpen(false);
     resetForm();
   }, [resetForm]);
 
-  const openDialog = useCallback(async () => {
+  const runCapture = useCallback(async () => {
+    const generation = ++captureGenerationRef.current;
     setCapturing(true);
     setCaptureError(null);
     try {
-      // Capture first (modal closed) so the report dialog is not in the shot.
+      // DOM filter excludes FAB/overlay/dialog — safe while sheet is open.
       const shot = await captureViewportScreenshot();
+      if (generation !== captureGenerationRef.current) return;
       revokePreview();
       setScreenshotFile(shot.file);
       setPreviewUrl(shot.objectUrl);
       setViewport({ w: shot.width, h: shot.height });
-      setOpen(true);
     } catch (err) {
+      if (generation !== captureGenerationRef.current) return;
       const message =
         err instanceof Error ? err.message : "Screenshot capture failed.";
       setCaptureError(message);
-      setOpen(true);
     } finally {
-      setCapturing(false);
+      if (generation === captureGenerationRef.current) {
+        setCapturing(false);
+      }
     }
   }, [revokePreview]);
 
-  const runCapture = useCallback(async () => {
-    setCapturing(true);
+  /**
+   * Open the sheet immediately; screenshot fills in async (shows “Capturing…”).
+   * Previously we awaited capture before setOpen — FAB spun for seconds on heavy pages.
+   */
+  const openDialog = useCallback(() => {
+    setOpen(true);
     setCaptureError(null);
-    try {
-      const shot = await captureViewportScreenshot();
-      revokePreview();
-      setScreenshotFile(shot.file);
-      setPreviewUrl(shot.objectUrl);
-      setViewport({ w: shot.width, h: shot.height });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Screenshot capture failed.";
-      setCaptureError(message);
-    } finally {
-      setCapturing(false);
-    }
-  }, [revokePreview]);
+    setFormError(null);
+    revokePreview();
+    setScreenshotFile(null);
+    setPreviewUrl(null);
+    setViewport(null);
+    void runCapture();
+  }, [revokePreview, runCapture]);
 
   const onSubmit = useCallback(async () => {
     if (!viewer?.organizationId || !viewer.userKey) return;
@@ -225,7 +228,7 @@ function ReportBugFabAndDialog() {
         type="button"
         data-bug-report-fab="true"
         data-testid="report-bug-fab"
-        onClick={() => void openDialog()}
+        onClick={() => openDialog()}
         disabled={capturing && !open}
         className={cn(
           "fixed bottom-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.75rem))] right-3 md:bottom-6 md:right-6",
@@ -237,11 +240,7 @@ function ReportBugFabAndDialog() {
         title="Report a bug"
         aria-label="Report a bug"
       >
-        {capturing && !open ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
-        ) : (
-          <Bug className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-        )}
+        <Bug className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="hidden sm:inline">Report a bug</span>
       </button>
 
