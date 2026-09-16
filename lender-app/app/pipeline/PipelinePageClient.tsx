@@ -187,6 +187,8 @@ import {
 } from "@/lib/offline/OfflineSyncContext";
 import { patchPreviewRowInList } from "@/lib/offline/previewRowPatch";
 import { isPatchDealConflictResult } from "@/lib/pipeline/patchDealResult";
+import { runPipelinePatchWithConflictRetry } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
+import type { PatchPipelineResult } from "@/lib/pipeline/patchPipelineResult";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
 import { useActorUserKey } from "@/lib/useActorUserKey";
@@ -608,7 +610,14 @@ export function PipelinePageClient() {
           : {}),
       } as Parameters<typeof patchPipelineMut>[0];
       if (canUseHub) {
-        return patchPipelineMut(payload);
+        return runPipelinePatchWithConflictRetry(
+          (p) => patchPipelineMut(p) as Promise<PatchPipelineResult>,
+          payload,
+          () =>
+            offline.surfaceSyncConflict(
+              "File changed elsewhere. Refreshing latest version.",
+            ),
+        );
       }
       await offline.enqueue({
         kind: "pipeline.patch",

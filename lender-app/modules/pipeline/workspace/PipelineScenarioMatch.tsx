@@ -38,6 +38,8 @@ import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { useLiveConnection } from "@/lib/useLiveConnection";
 import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 import { useOfflineSync } from "@/lib/offline/OfflineSyncContext";
+import { runPipelinePatchWithConflictRetry } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
+import type { PatchPipelineResult } from "@/lib/pipeline/patchPipelineResult";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Input, Label, Select, Textarea } from "@/components/ui/Input";
@@ -292,7 +294,10 @@ export function PipelineScenarioMatch({
       void (async () => {
         try {
           if (canUseHub) {
-            await patchPipelineMut(payload);
+            await runPipelinePatchWithConflictRetry(
+              (p) => patchPipelineMut(p) as Promise<PatchPipelineResult>,
+              payload,
+            );
           } else {
             await offline.enqueue({
               kind: "pipeline.patch",

@@ -111,6 +111,7 @@ import {
   batchProjectLinkedClientsForProjects,
   buildLoanLinkedClientSummaries,
   ensurePrimaryLoanClientLink,
+  linkedClientDisplayNamesForPipeline,
 } from "./pipelineMultiClientLinks";
 import {
   batchCapitalRollupsForProjects,
@@ -121,6 +122,12 @@ import {
   type PipelineRowGraphLinks,
 } from "./pipelineGraphPreviewLinks";
 import type { HierarchyDocCaches } from "./pipelineHierarchyCompat";
+import { buildPipelineGlobalSearchText } from "../lib/globalSearchText";
+import {
+  clampPipelineScenarioText,
+  isPipelinePatchQuietNotifyOnly,
+  PATCH_PIPELINE_CONFLICT_CODE,
+} from "../lib/pipeline/patchPipelineResult";
 
 /** Org-scoped files must record the authenticated creator as canonical owner. */
 function ownerFieldsForOrgCreate(
@@ -2424,7 +2431,13 @@ export const patch = mutation({
       expectedUpdatedAt !== undefined &&
       existing.updatedAt !== expectedUpdatedAt
     ) {
-      throw new Error("CONFLICT_DATA_CHANGED");
+      // Soft conflict (same shape as patchDeal) — throwing surfaced as a Convex
+      // server error on inline Scenario saves racing deal/criteria autosave.
+      return {
+        ok: false as const,
+        code: PATCH_PIPELINE_CONFLICT_CODE,
+        serverUpdatedAt: existing.updatedAt,
+      };
     }
     await assertCanMutatePipelineRow(ctx, existing, preferencesAccountId);
     const now = Date.now();
@@ -2667,8 +2680,9 @@ export const patch = mutation({
         : 0;
     }
     if (rest.scenario !== undefined) {
-      const v2 = rest.scenario === null ? undefined : rest.scenario.trim();
-      patchObj.scenario = v2 || undefined;
+      patchObj.scenario = clampPipelineScenarioText(
+        rest.scenario === null ? null : rest.scenario,
+      );
     }
     if (rest.scenarioCriteria !== undefined) {
       patchObj.scenarioCriteria =
@@ -2749,6 +2763,36 @@ export const patch = mutation({
     const undoPre = allowUndo
       ? snapshotPipelineFields(existing, undoKeys)
       : null;
+
+    const searchAffectingInPatch =
+      rest.scenario !== undefined ||
+      rest.scenarioCriteria !== undefined ||
+      rest.notes !== undefined ||
+      rest.propertyAddress !== undefined ||
+      rest.term !== undefined ||
+      rest.fileName !== undefined ||
+      rest.status !== undefined ||
+      rest.assigneeId !== undefined ||
+      rest.loNmls !== undefined ||
+      rest.brokerNmls !== undefined ||
+      nextStatusForLedger !== null;
+
+    if (searchAffectingInPatch) {
+      // Fold search text into the primary write — avoids a second get/patch and
+      // linked-client re-read after the mutation's main work.
+      const linkedNames = await linkedClientDisplayNamesForPipeline(
+        ctx,
+        existing,
+      );
+      const mergedForSearch = {
+        ...existing,
+        ...patchObj,
+      } as Doc<"pipeline">;
+      patchObj.globalSearchText = buildPipelineGlobalSearchText(
+        mergedForSearch,
+        linkedNames,
+      );
+    }
 
     await ctx.db.patch(id, patchObj);
 
@@ -2844,7 +2888,9 @@ export const patch = mutation({
       });
     }
 
-    if (auditKeys.length > 0) {
+    // Scratch fields (scenario / criteria / term options) change often — skip
+    // watcher fan-out so Scenario saves stay fast and quiet.
+    if (auditKeys.length > 0 && !isPipelinePatchQuietNotifyOnly(auditKeys)) {
       const fresh = await ctx.db.get(id);
       if (fresh) {
         const watchers = collectPipelineWatcherUserKeys(
@@ -2880,7 +2926,6 @@ export const patch = mutation({
       }
     }
 
-    await refreshPipelineGlobalSearchText(ctx, id);
     if (loanChanged && existing.projectId) {
       await syncCapitalSourcesFromProjectLoans(ctx, existing.projectId);
     }
@@ -2893,7 +2938,7 @@ export const patch = mutation({
         { changedKeys: auditKeys },
       );
     }
-    return { id, ledgerId };
+    return { ok: true as const, id, ledgerId };
   },
 });
 
