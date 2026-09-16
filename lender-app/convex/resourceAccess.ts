@@ -12,6 +12,10 @@ import {
 } from "./auth/globalAdmin";
 import { callerHasUnrestrictedOrgDataAccess } from "./viewerOrgAccess";
 import { rowBelongsToOrganizationScope } from "./orgScopeMatching";
+import {
+  PIPELINE_HUB_ACL_OWNER_SCAN_CAP,
+  PIPELINE_HUB_ACL_SHARE_SCAN_CAP,
+} from "../lib/pipeline/tablePreviewReadBounds";
 
 export type ResourceType =
   | "client"
@@ -82,7 +86,7 @@ async function buildShareIndexForUser(
         .eq("sharedUserId", sharedUserId)
         .eq("resourceType", resourceType),
     )
-    .collect();
+    .take(PIPELINE_HUB_ACL_SHARE_SCAN_CAP);
   const viewIds = new Set<string>();
   const editIds = new Set<string>();
   for (const row of rows) {
@@ -105,7 +109,7 @@ async function mergeLegacyPipelineShares(
   const legacy = await ctx.db
     .query("pipelineFileShares")
     .withIndex("by_userKey", (q) => q.eq("userKey", key))
-    .collect();
+    .take(PIPELINE_HUB_ACL_SHARE_SCAN_CAP);
   const now = Date.now();
   for (const s of legacy) {
     const id = String(s.fileId);
@@ -227,7 +231,8 @@ export async function resolveProjectAccessLevel(
   return resolveClientAccessLevel(ctx, client, key);
 }
 
-type HierarchyVisibilityIndex = {
+/** Prebuilt owner/share maps for client→project→file inheritance (hub ACL). */
+export type HierarchyVisibilityIndex = {
   ownedClientIds: Set<string>;
   ownedProjectIds: Set<string>;
   clientViewIds: Set<string>;
@@ -237,49 +242,66 @@ type HierarchyVisibilityIndex = {
   projectToClientId: Map<string, string>;
 };
 
+/** Public shapes for hub one-shot ACL tests. */
+export type HubShareIndex = ShareIndex;
+export type HubHierarchyVisibilityIndex = HierarchyVisibilityIndex;
+
 async function buildHierarchyVisibilityIndex(
   ctx: QueryCtx,
   memberUserKey: string,
   organizationId: Id<"organizations">,
+  candidateRows: Doc<"pipeline">[] = [],
 ): Promise<HierarchyVisibilityIndex> {
-  const clients = await ctx.db
-    .query("clients")
-    .withIndex("by_organization", (q) =>
-      q.eq("organizationId", organizationId),
-    )
-    .collect();
-  const projects = await ctx.db
-    .query("projects")
-    .withIndex("by_organization", (q) =>
-      q.eq("organizationId", organizationId),
-    )
-    .collect();
-  const clientShares = await buildShareIndexForUser(
-    ctx,
-    memberUserKey,
-    organizationId,
-    "client",
-  );
-  const projectShares = await buildShareIndexForUser(
-    ctx,
-    memberUserKey,
-    organizationId,
-    "project",
-  );
+  const [ownedClients, ownedProjects, clientShares, projectShares] =
+    await Promise.all([
+      ctx.db
+        .query("clients")
+        .withIndex("by_org_owner", (q) =>
+          q.eq("organizationId", organizationId).eq("ownerUserId", memberUserKey),
+        )
+        .take(PIPELINE_HUB_ACL_OWNER_SCAN_CAP),
+      ctx.db
+        .query("projects")
+        .withIndex("by_org_owner", (q) =>
+          q.eq("organizationId", organizationId).eq("ownerUserId", memberUserKey),
+        )
+        .take(PIPELINE_HUB_ACL_OWNER_SCAN_CAP),
+      buildShareIndexForUser(ctx, memberUserKey, organizationId, "client"),
+      buildShareIndexForUser(ctx, memberUserKey, organizationId, "project"),
+    ]);
+
   const ownedClientIds = new Set<string>();
   const ownedProjectIds = new Set<string>();
   const projectToClientId = new Map<string, string>();
-  for (const c of clients) {
-    if (resolveRowOwnerUserId(c) === memberUserKey) {
-      ownedClientIds.add(String(c._id));
-    }
+
+  for (const c of ownedClients) {
+    ownedClientIds.add(String(c._id));
   }
-  for (const p of projects) {
+  for (const p of ownedProjects) {
+    ownedProjectIds.add(String(p._id));
     projectToClientId.set(String(p._id), String(p.clientId));
-    if (resolveRowOwnerUserId(p) === memberUserKey) {
-      ownedProjectIds.add(String(p._id));
-    }
   }
+
+  // Parent-client map: only `db.get` projectIds from candidate pipeline rows
+  // (not org-wide project scans / share-id fan-out).
+  const candidateProjectIds = new Set<Id<"projects">>();
+  for (const row of candidateRows) {
+    if (row.projectId) candidateProjectIds.add(row.projectId);
+  }
+  await Promise.all(
+    [...candidateProjectIds].map(async (projectId) => {
+      const id = String(projectId);
+      if (projectToClientId.has(id)) return;
+      const project = await ctx.db.get(projectId);
+      if (
+        project &&
+        String(project.organizationId) === String(organizationId)
+      ) {
+        projectToClientId.set(id, String(project.clientId));
+      }
+    }),
+  );
+
   return {
     ownedClientIds,
     ownedProjectIds,
@@ -298,23 +320,26 @@ function pipelineVisibleViaHierarchy(
   return pipelineAccessViaHierarchy(row, index) !== "none";
 }
 
-function pipelineAccessViaHierarchy(
+/**
+ * Canonical inherit for hub one-shot ACL — matches
+ * `resolveInheritedPipelineAccessLevel` / `resolveProjectAccessLevel`:
+ * return the first non-`none` project-chain level; do not take max across
+ * project + parent-client + file-client.
+ */
+export function pipelineAccessViaHierarchy(
   row: Doc<"pipeline">,
   index: HierarchyVisibilityIndex,
 ): ResourceAccessLevel {
   if (!row.clientId && !row.projectId) return "none";
   const pid = row.projectId ? String(row.projectId) : null;
   const cid = row.clientId ? String(row.clientId) : null;
-  let best: ResourceAccessLevel = "none";
-  const raise = (level: ResourceAccessLevel) => {
-    if (level === "edit") best = "edit";
-    else if (level === "view" && best === "none") best = "view";
-  };
+
   if (pid) {
     if (index.ownedProjectIds.has(pid) || index.projectEditIds.has(pid)) {
-      raise("edit");
-    } else if (index.projectViewIds.has(pid)) {
-      raise("view");
+      return "edit";
+    }
+    if (index.projectViewIds.has(pid)) {
+      return "view";
     }
     const parentClient = index.projectToClientId.get(pid);
     if (parentClient) {
@@ -322,20 +347,51 @@ function pipelineAccessViaHierarchy(
         index.ownedClientIds.has(parentClient) ||
         index.clientEditIds.has(parentClient)
       ) {
-        raise("edit");
-      } else if (index.clientViewIds.has(parentClient)) {
-        raise("view");
+        return "edit";
+      }
+      if (index.clientViewIds.has(parentClient)) {
+        return "view";
       }
     }
   }
+
   if (cid) {
     if (index.ownedClientIds.has(cid) || index.clientEditIds.has(cid)) {
-      raise("edit");
-    } else if (index.clientViewIds.has(cid)) {
-      raise("view");
+      return "edit";
+    }
+    if (index.clientViewIds.has(cid)) {
+      return "view";
     }
   }
-  return best;
+  return "none";
+}
+
+/**
+ * Pure hub access level from prebuilt indexes (≡ `resolvePipelineAccessLevel`
+ * without impersonation / legacy-unstamped org rows).
+ */
+export function hubPipelineAccessFromIndexes(
+  row: Doc<"pipeline">,
+  viewerKey: string,
+  shares: ShareIndex,
+  hierarchy: HierarchyVisibilityIndex,
+): ResourceAccessLevel {
+  const owner = resolveRowOwnerUserId(row);
+  if (!owner) return "none";
+  if (owner === viewerKey) return "edit";
+  const id = String(row._id);
+  if (shares.editIds.has(id)) return "edit";
+  if (shares.viewIds.has(id)) return "view";
+  return pipelineAccessViaHierarchy(row, hierarchy);
+}
+
+function recordDirectSharePermission(
+  directSharePermission: Map<string, "view" | "edit">,
+  id: string,
+  shares: ShareIndex,
+): void {
+  if (shares.editIds.has(id)) directSharePermission.set(id, "edit");
+  else if (shares.viewIds.has(id)) directSharePermission.set(id, "view");
 }
 
 /**
@@ -361,15 +417,12 @@ export async function filterPipelineRowsForMemberWithAccessLevels(
   const accessByFileId = new Map<string, ResourceAccessLevel>();
   const directSharePermission = new Map<string, "view" | "edit">();
 
-  const unrestricted =
-    (await callerHasUnrestrictedOrgDataAccess(ctx, viewerKey)) ||
-    (await impersonationGrantsOrgResourceVisibility(
-      ctx,
-      viewerKey,
-      organizationId,
-    ));
-
-  if (unrestricted) {
+  const impersonating = await impersonationGrantsOrgResourceVisibility(
+    ctx,
+    viewerKey,
+    organizationId,
+  );
+  if (impersonating) {
     for (const row of scoped) {
       accessByFileId.set(String(row._id), "edit");
     }
@@ -382,6 +435,11 @@ export async function filterPipelineRowsForMemberWithAccessLevels(
     };
   }
 
+  const elevatedVisibility = await callerHasUnrestrictedOrgDataAccess(
+    ctx,
+    viewerKey,
+  );
+
   const shares = await buildShareIndexForUser(
     ctx,
     viewerKey,
@@ -393,33 +451,42 @@ export async function filterPipelineRowsForMemberWithAccessLevels(
     ctx,
     viewerKey,
     organizationId,
+    scoped,
   );
+
+  if (elevatedVisibility) {
+    for (const row of scoped) {
+      const id = String(row._id);
+      const level = hubPipelineAccessFromIndexes(
+        row,
+        viewerKey,
+        shares,
+        hierarchy,
+      );
+      accessByFileId.set(id, level);
+      recordDirectSharePermission(directSharePermission, id, shares);
+    }
+    return {
+      rows: scoped,
+      viewerKey,
+      accessByFileId,
+      directSharePermission,
+      unrestricted: true,
+    };
+  }
 
   const visible: Doc<"pipeline">[] = [];
   for (const row of scoped) {
-    const owner = resolveRowOwnerUserId(row);
-    if (!owner) continue;
     const id = String(row._id);
-    if (owner === viewerKey) {
-      accessByFileId.set(id, "edit");
-      visible.push(row);
-      continue;
-    }
-    if (shares.editIds.has(id)) {
-      accessByFileId.set(id, "edit");
-      directSharePermission.set(id, "edit");
-      visible.push(row);
-      continue;
-    }
-    if (shares.viewIds.has(id)) {
-      accessByFileId.set(id, "view");
-      directSharePermission.set(id, "view");
-      visible.push(row);
-      continue;
-    }
-    const inherited = pipelineAccessViaHierarchy(row, hierarchy);
-    if (inherited === "none") continue;
-    accessByFileId.set(id, inherited);
+    const level = hubPipelineAccessFromIndexes(
+      row,
+      viewerKey,
+      shares,
+      hierarchy,
+    );
+    if (level === "none") continue;
+    accessByFileId.set(id, level);
+    recordDirectSharePermission(directSharePermission, id, shares);
     visible.push(row);
   }
 
@@ -575,6 +642,7 @@ export async function filterPipelineRowsForMember(
     ctx,
     key,
     organizationId,
+    scoped,
   );
   return scoped.filter((r) => {
     const owner = resolveRowOwnerUserId(r);

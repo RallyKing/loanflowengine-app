@@ -9,6 +9,7 @@ import {
   type ClientRelationshipType,
   type LinkedClientSummary,
 } from "../lib/pipelineClientRelationships";
+import { PIPELINE_PROJECT_CLIENT_LINKS_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
 import { syncPrimaryFileClientEdge } from "./indexedGraphEdgeSync";
 
 const PRIMARY_SORT = 0;
@@ -50,7 +51,7 @@ export async function listProjectClientLinks(
   return await ctx.db
     .query("projectClients")
     .withIndex("by_project", (q) => q.eq("projectId", projectId))
-    .collect();
+    .take(PIPELINE_PROJECT_CLIENT_LINKS_SCAN_CAP + 1);
 }
 
 export async function listLoanClientLinks(

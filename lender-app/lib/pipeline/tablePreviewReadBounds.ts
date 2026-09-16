@@ -58,6 +58,29 @@ export const PIPELINE_FILE_NOTE_SCAN_CAP = 500;
 export const CONTACTS_LIST_ABSOLUTE_CAP = 5_000;
 
 /**
+ * Cap for hub ACL owned-client / owned-project reads via `by_org_owner`.
+ * Replaces org-wide `clients`/`projects` `by_organization` collects.
+ */
+export const PIPELINE_HUB_ACL_OWNER_SCAN_CAP = 2_000;
+
+/**
+ * Cap for hub ACL share-index reads (`resourceShares` / legacy `pipelineFileShares`).
+ */
+export const PIPELINE_HUB_ACL_SHARE_SCAN_CAP = 5_000;
+
+/**
+ * Per-project cap for `projectClients.by_project` on the hub path
+ * (`resolveProjectLinkedClients` → `listProjectClientLinks`).
+ */
+export const PIPELINE_PROJECT_CLIENT_LINKS_SCAN_CAP = 200;
+
+/**
+ * Per-project cap for capital-stack `by_project` reads on the hub path
+ * (requirements + sources used by `batchCapitalRollupsForProjects`).
+ */
+export const PIPELINE_PROJECT_CAPITAL_SCAN_CAP = 200;
+
+/**
  * @deprecated Triage no longer org-scans tasks. Visible hub files are loaded via
  * `PIPELINE_TABLE_PREVIEW_MAX_ROWS`, then tasks via `by_relatedFile` per file
  * (capped by `PIPELINE_FILE_RELATED_TASK_SCAN_CAP`).

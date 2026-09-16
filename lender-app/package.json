@@ -52,6 +52,7 @@
     "test:regression:e2e": "npm run build && playwright test tests/regression/regression-protection.spec.ts tests/auth/auth-stress.spec.ts tests/regression/multi-session-isolation.spec.ts --project chromium",
     "test:perf": "tsx scripts/perf-scale-check.ts",
     "test:hub-read-bounds": "tsx scripts/pipeline-hub-read-bounds-tests.ts",
+    "test:hub-acl": "tsx scripts/pipeline-hub-acl-equivalence-tests.ts",
     "test:triage-read-bounds": "tsx scripts/pipeline-hub-read-bounds-tests.ts",
     "verify:all": "npm run verify && npm run verify:env && npm run test:core && npm run test:e2e",
     "test:e2e": "npm run build && playwright test",

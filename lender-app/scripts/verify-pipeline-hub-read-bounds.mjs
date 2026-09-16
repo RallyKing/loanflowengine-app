@@ -39,6 +39,42 @@ const HOT_PATH_FUNCTIONS = [
     file: "convex/pipelineFileNotes.ts",
     symbol: "export async function batchPipelineFileNoteCounts",
   },
+  {
+    file: "convex/resourceAccess.ts",
+    symbol: "async function buildShareIndexForUser",
+  },
+  {
+    file: "convex/resourceAccess.ts",
+    symbol: "async function mergeLegacyPipelineShares",
+  },
+  {
+    file: "convex/resourceAccess.ts",
+    symbol: "async function buildHierarchyVisibilityIndex",
+  },
+  {
+    file: "convex/resourceAccess.ts",
+    symbol: "export async function filterPipelineRowsForMemberWithAccessLevels",
+  },
+  {
+    file: "convex/resourceAccess.ts",
+    symbol: "export async function filterPipelineRowsForMember",
+  },
+  {
+    file: "convex/pipelineMultiClientLinks.ts",
+    symbol: "export async function listProjectClientLinks",
+  },
+  {
+    file: "convex/projectCapitalStack.ts",
+    symbol: "export async function listRequirementsForProject",
+  },
+  {
+    file: "convex/projectCapitalStack.ts",
+    symbol: "export async function listSourcesForProject",
+  },
+  {
+    file: "convex/projectCapitalStack.ts",
+    symbol: "export async function batchCapitalRollupsForProjects",
+  },
 ];
 
 /** Extra static bans for hub junction readers — docs must track visible files. */
@@ -58,6 +94,16 @@ const TRIAGE_BANS = [
     test: /withIndex\(\s*["']by_organization["']/,
     message:
       "buildHubTriageHighlightMap must not org-scan tasks — use by_relatedFile on hub-visible files.",
+  },
+];
+
+/** Extra static bans for hub ACL hierarchy builder. */
+const HUB_ACL_BANS = [
+  {
+    id: "org-client-project-scan",
+    test: /withIndex\(\s*["']by_organization["']/,
+    message:
+      "Hub ACL hierarchy must use by_org_owner (owned) + candidate project gets — not org-wide clients/projects collect.",
   },
 ];
 const ALLOW_MARKER = "hub-read-bounds-allow:";
@@ -185,6 +231,20 @@ function main() {
         const code = codeLines[i];
         if (!code || !code.trim()) continue;
         for (const rule of TRIAGE_BANS) {
+          if (rule.test.test(code)) {
+            problems.push(`${file}:${i + 1} [${rule.id}] ${rule.message}`);
+          }
+        }
+      }
+    }
+    if (symbol.includes("buildHierarchyVisibilityIndex")) {
+      for (let i = from; i < to; i++) {
+        const code = codeLines[i];
+        if (!code || !code.trim()) continue;
+        if ((rawLines[i - 1] ?? "").includes(ALLOW_MARKER) || rawLines[i].includes(ALLOW_MARKER)) {
+          continue;
+        }
+        for (const rule of HUB_ACL_BANS) {
           if (rule.test.test(code)) {
             problems.push(`${file}:${i + 1} [${rule.id}] ${rule.message}`);
           }
