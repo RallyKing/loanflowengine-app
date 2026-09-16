@@ -350,9 +350,6 @@ function ReportBugFabAndDialog() {
               {captureError && previewUrl ? (
                 <p className="mt-1 text-xs text-destructive">{captureError}</p>
               ) : null}
-              {captureError && !previewUrl && !capturing ? (
-                <p className="mt-1 text-xs text-muted-foreground">{captureError}</p>
-              ) : null}
             </div>
 
             <label className="block">
