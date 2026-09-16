@@ -102,7 +102,14 @@ function ReportBugFabAndDialog() {
     try {
       // DOM filter excludes FAB/overlay/dialog — safe while sheet is open.
       const shot = await captureViewportScreenshot();
-      if (generation !== captureGenerationRef.current) return;
+      if (generation !== captureGenerationRef.current) {
+        try {
+          URL.revokeObjectURL(shot.objectUrl);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       revokePreview();
       setScreenshotFile(shot.file);
       setPreviewUrl(shot.objectUrl);
