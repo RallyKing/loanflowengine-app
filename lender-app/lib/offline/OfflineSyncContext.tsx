@@ -24,6 +24,7 @@ import { convexPublicHostnameForSnapshotKey } from "@/lib/convexPublicUrl";
 import { idbGet, idbSet, OFFLINE_QUEUE_KEY } from "@/lib/offline/idb";
 import { isOfflineConflictError } from "@/lib/offline/conflict";
 import { isPatchDealConflictResult } from "@/lib/pipeline/patchDealResult";
+import { isPatchPipelineConflictResult } from "@/lib/pipeline/patchPipelineResult";
 
 export type OfflineQueuedMutation =
   | {
@@ -218,7 +219,19 @@ export function OfflineSyncProvider({ children }: { children: ReactNode }) {
         const head = q[0];
         try {
           if (head.kind === "pipeline.patch") {
-            await convex.mutation(api.pipeline.patch, head.args as never);
+            const res = await convex.mutation(
+              api.pipeline.patch,
+              head.args as never,
+            );
+            if (isPatchPipelineConflictResult(res)) {
+              q = q.filter((x) => x.queueKey !== head.queueKey);
+              await saveQueueFile(q);
+              setItems(q);
+              setConflictNotice(
+                "Something changed on the server while you were offline. One pending file edit was dropped so you see the newest version.",
+              );
+              continue;
+            }
           } else if (head.kind === "pipeline.patchDeal") {
             const res = await convex.mutation(
               api.pipeline.patchDeal,

@@ -9,7 +9,7 @@ import {
   type ClientRelationshipType,
   type LinkedClientSummary,
 } from "../lib/pipelineClientRelationships";
-import { PIPELINE_PROJECT_CLIENT_LINKS_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
+import { PIPELINE_FILE_EDGE_SCAN_CAP, PIPELINE_PROJECT_CLIENT_LINKS_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
 import { syncPrimaryFileClientEdge } from "./indexedGraphEdgeSync";
 
 const PRIMARY_SORT = 0;
@@ -61,7 +61,7 @@ export async function listLoanClientLinks(
   return await ctx.db
     .query("loanClients")
     .withIndex("by_pipeline", (q) => q.eq("pipelineId", pipelineId))
-    .collect();
+    .take(PIPELINE_FILE_EDGE_SCAN_CAP + 1);
 }
 
 async function clientSummary(
@@ -145,7 +145,7 @@ export async function resolveLoanLinkedClients(
   const fileEdges = await ctx.db
     .query("fileClients")
     .withIndex("by_file", (q) => q.eq("fileId", row._id))
-    .collect();
+    .take(PIPELINE_FILE_EDGE_SCAN_CAP + 1);
 
   return await buildLoanLinkedClientSummaries(ctx, row, fileEdges, links);
 }

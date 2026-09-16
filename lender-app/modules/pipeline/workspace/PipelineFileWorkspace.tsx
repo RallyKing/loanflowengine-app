@@ -54,6 +54,8 @@ import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useOfflineSync } from "@/lib/offline/OfflineSyncContext";
 import { isPatchDealConflictResult } from "@/lib/pipeline/patchDealResult";
+import { runPipelinePatchHandlingConflict } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
+import type { PatchPipelineResult } from "@/lib/pipeline/patchPipelineResult";
 import {
   collapseBehaviorFromDeviceFileSectionMode,
   drawerExpandedMapForCollapseBehavior,
@@ -980,7 +982,14 @@ function PipelineFileWorkspaceLoaded({
       } as Parameters<typeof patchPipeline>[0];
       if (canUseHub) {
         traceConvexMutation("PipelineFileWorkspace", "pipeline.patch");
-        return patchPipeline(payload);
+        return runPipelinePatchHandlingConflict(
+          (p) => patchPipeline(p) as Promise<PatchPipelineResult>,
+          payload,
+          () =>
+            offline.surfaceSyncConflict(
+              "File changed elsewhere. Refreshing latest version.",
+            ),
+        );
       }
       await offline.enqueue({
         kind: "pipeline.patch",
