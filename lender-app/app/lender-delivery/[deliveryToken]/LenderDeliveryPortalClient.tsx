@@ -18,6 +18,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { LenderDeliveryBlockPanel } from "@/components/library/LenderDeliveryBlockPanel";
+import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
 import { cn } from "@/lib/cn";
 import {
   buildFolderTree,
@@ -474,17 +475,33 @@ function LenderDeliveryDocumentRow({
   onPreview?: () => void;
 }) {
   const title = doc.title;
-  const fileName = doc.fileName;
+  const fileName = doc.fileName ?? doc.title;
   const contentType = doc.contentType;
   const url = doc.url;
-  const isPdf = (contentType ?? "").includes("pdf") || fileName?.endsWith(".pdf");
-  const isImage = (contentType ?? "").startsWith("image/");
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const handlePreview = () => {
     onPreview?.();
     setPreviewOpen(true);
   };
+
+  const previewPane =
+    url && (previewOpen || !canDownload) ? (
+      <div
+        className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
+        onContextMenu={(e) => e.preventDefault()}
+        onMouseEnter={!canDownload ? () => onPreview?.() : undefined}
+        data-testid="lender-doc-preview-pane"
+      >
+        <RichFilePreview
+          url={url}
+          fileName={fileName}
+          contentType={contentType}
+          protectMedia={!canDownload}
+          viewportClassName="min-h-[min(70vh,32rem)] max-h-[min(70vh,32rem)]"
+        />
+      </div>
+    ) : null;
 
   return (
     <li
@@ -498,8 +515,8 @@ function LenderDeliveryDocumentRow({
           <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{title}</p>
-            {fileName ? (
-              <p className="truncate text-xs text-muted-foreground">{fileName}</p>
+            {doc.fileName ? (
+              <p className="truncate text-xs text-muted-foreground">{doc.fileName}</p>
             ) : null}
           </div>
         </div>
@@ -531,64 +548,7 @@ function LenderDeliveryDocumentRow({
         )}
       </div>
 
-      {!canDownload && url ? (
-        <div
-          className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
-          onContextMenu={(e) => e.preventDefault()}
-          onMouseEnter={() => onPreview?.()}
-        >
-          {isPdf ? (
-            <iframe
-              title={title}
-              src={`${url}#toolbar=0&navpanes=0`}
-              className="h-[min(70vh,32rem)] w-full pointer-events-auto"
-              sandbox="allow-scripts allow-same-origin"
-            />
-          ) : isImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={title}
-              className="max-h-[min(70vh,32rem)] w-full object-contain pointer-events-none"
-              draggable={false}
-              onContextMenu={(e) => e.preventDefault()}
-            />
-          ) : (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              Inline preview not available for this file type.
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      {canDownload && previewOpen && url ? (
-        <div
-          className="mt-3 overflow-hidden rounded-dlc-md border border-border/60 bg-muted/20 select-none"
-          onContextMenu={(e) => e.preventDefault()}
-        >
-          {isPdf ? (
-            <iframe
-              title={title}
-              src={`${url}#toolbar=0&navpanes=0`}
-              className="h-[min(70vh,32rem)] w-full pointer-events-auto"
-              sandbox="allow-scripts allow-same-origin"
-            />
-          ) : isImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={title}
-              className="max-h-[min(70vh,32rem)] w-full object-contain pointer-events-none"
-              draggable={false}
-              onContextMenu={(e) => e.preventDefault()}
-            />
-          ) : (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              Inline preview not available for this file type.
-            </p>
-          )}
-        </div>
-      ) : null}
+      {previewPane}
     </li>
   );
 }
