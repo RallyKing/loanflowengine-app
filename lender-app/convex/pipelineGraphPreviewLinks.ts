@@ -11,14 +11,13 @@ import {
   loadFileProjectEdgesForFiles,
   loadFileTaskEdgesForFiles,
   loadFileTeamMemberEdgesForFiles,
-  loadRelatedTasksForFiles,
+  loadRelatedTasksForVisibleFilesOrgBatched,
 } from "./pipelineHubBoundedReads";
 import {
   DEFAULT_CONTACT_ROLE_IDS,
   canonicalContactRoleIdsFromDoc,
   contactQualifiesForReferralHub,
   isReferralPartnerFileAssociation,
-  isReferralPartnerRoleId,
 } from "../lib/contact/contactRoles";
 
 export type PipelineGraphEntityLink = {
@@ -115,6 +114,13 @@ export async function batchGraphLinksForPipelineFiles(
     clientDisplayName: string;
     projectDisplayTitle: string;
   }>,
+  options?: {
+    /** Preloaded `fileLenders` for these files — skips a second org edge read. */
+    fileLenderEdges?: Doc<"fileLenders">[];
+    lenderLabelById?: Map<string, string>;
+    clientLabelById?: Map<string, string>;
+    projectTitleById?: Map<string, string>;
+  },
 ): Promise<Map<string, PipelineRowGraphLinks>> {
   const fileIdSet = new Set(files.map((f) => String(f._id)));
   const hierarchyByFile = new Map(
@@ -122,22 +128,22 @@ export async function batchGraphLinksForPipelineFiles(
   );
 
   /**
-   * Junction reads are scoped to the visible file ids via each table's
-   * `by_file` index. These were full-table `.collect()` scans, which made one
-   * hub subscription read every edge row in the deployment before discarding
-   * all but the visible slice.
+   * Junction reads are org-scoped via `by_organization` (one take per table,
+   * filtered to visible ids). `contactFileLinks` still uses per-file `by_file`
+   * because that table has no org key.
    */
   const fileIds = files.map((f) => f._id);
-  const [fcRead, fpRead, flRead, ftRead, ftaskRead] = await Promise.all([
+  const [fcRead, fpRead, ftRead, ftaskRead] = await Promise.all([
     loadFileClientEdgesForFiles(ctx, fileIds, organizationId),
     loadFileProjectEdgesForFiles(ctx, fileIds, organizationId),
-    loadFileLenderEdgesForFiles(ctx, fileIds, organizationId),
     loadFileTeamMemberEdgesForFiles(ctx, fileIds, organizationId),
     loadFileTaskEdgesForFiles(ctx, fileIds, organizationId),
   ]);
+  const flAll =
+    options?.fileLenderEdges ??
+    (await loadFileLenderEdgesForFiles(ctx, fileIds, organizationId)).rows;
   const fcAll = fcRead.rows;
   const fpAll = fpRead.rows;
-  const flAll = flRead.rows;
   /** Phase 25.6 — referrals are CFL-only; junction table disabled for hub graph. */
   const frAll: Array<{
     fileId: Id<"pipeline">;
@@ -175,8 +181,8 @@ export async function batchGraphLinksForPipelineFiles(
     contactIds.add(String(link.contactId));
   }
 
-  /** `tasks.by_relatedFile` per visible file — was an org-wide task scan. */
-  const { rows: relatedTasks } = await loadRelatedTasksForFiles(
+  /** One org-scoped task take filtered to visible files — not per-file fan-out. */
+  const { rows: relatedTasks } = await loadRelatedTasksForVisibleFilesOrgBatched(
     ctx,
     fileIds,
     organizationId,
@@ -185,25 +191,28 @@ export async function batchGraphLinksForPipelineFiles(
     taskIds.add(String(task._id));
   }
 
-  const clientNames = new Map<string, string>();
+  const clientNames = new Map<string, string>(options?.clientLabelById ?? []);
+  const missingClients = [...clientIds].filter((id) => !clientNames.has(id));
   await Promise.all(
-    [...clientIds].map(async (id) => {
+    missingClients.map(async (id) => {
       const doc = await ctx.db.get(id as Id<"clients">);
       if (doc) clientNames.set(id, doc.displayName?.trim() || "Client");
     }),
   );
 
-  const projectNames = new Map<string, string>();
+  const projectNames = new Map<string, string>(options?.projectTitleById ?? []);
+  const missingProjects = [...projectIds].filter((id) => !projectNames.has(id));
   await Promise.all(
-    [...projectIds].map(async (id) => {
+    missingProjects.map(async (id) => {
       const doc = await ctx.db.get(id as Id<"projects">);
       if (doc) projectNames.set(id, doc.title?.trim() || "Project");
     }),
   );
 
-  const lenderNames = new Map<string, string>();
+  const lenderNames = new Map<string, string>(options?.lenderLabelById ?? []);
+  const missingLenders = [...lenderIds].filter((id) => !lenderNames.has(id));
   await Promise.all(
-    [...lenderIds].map(async (id) => {
+    missingLenders.map(async (id) => {
       const doc = await ctx.db.get(id as Id<"lenders">);
       if (doc) {
         lenderNames.set(
@@ -230,8 +239,13 @@ export async function batchGraphLinksForPipelineFiles(
 
   const taskTitles = new Map<string, string>();
   const taskStatuses = new Map<string, string>();
+  for (const task of relatedTasks) {
+    taskTitles.set(String(task._id), task.title?.trim() || "Task");
+    taskStatuses.set(String(task._id), task.status);
+  }
+  const missingTaskIds = [...taskIds].filter((id) => !taskTitles.has(id));
   await Promise.all(
-    [...taskIds].map(async (id) => {
+    missingTaskIds.map(async (id) => {
       const doc = await ctx.db.get(id as Id<"tasks">);
       if (doc) {
         taskTitles.set(id, doc.title?.trim() || "Task");

@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { useTriageClockTime } from "@/components/providers/TriageClockProvider";
 import {
   EMPTY_HUB_TRIAGE_HIGHLIGHT_MAP,
   normalizeHubTriageHighlightMap,
@@ -20,12 +19,17 @@ function triageHighlightContextKey(
   return `${organizationId}:${key}`;
 }
 
-/** Reactive triage bubbles for hub / board / file workspace (Phase 24.2A). */
+/**
+ * Reactive triage bubbles for hub / board / file workspace (Phase 24.2A).
+ *
+ * Query args are stable (no minute `nowBucket`) so Convex does not force a full
+ * uncached re-read every 60s. Schedule/overdue evaluation refreshes when task
+ * or pipeline data invalidates the subscription.
+ */
 export function useHubTriageHighlightMap(
   organizationId: Id<"organizations"> | null | undefined,
   memberUserKey: string | undefined,
 ): HubTriageHighlightMapView {
-  const nowBucket = useTriageClockTime();
   const contextKey = triageHighlightContextKey(organizationId, memberUserKey);
 
   const queryArgs = useMemo(() => {
@@ -34,9 +38,8 @@ export function useHubTriageHighlightMap(
     return {
       organizationId: organizationId!,
       memberUserKey: key,
-      nowBucket,
     };
-  }, [contextKey, organizationId, memberUserKey, nowBucket]);
+  }, [contextKey, organizationId, memberUserKey]);
 
   const raw = useQuery(api.taskHighlights.getHubTriageHighlightMap, queryArgs);
 

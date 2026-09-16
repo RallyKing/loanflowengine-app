@@ -918,6 +918,12 @@ export const listTablePreview = query({
             h.project.kind === "record" ? h.project.title : h.project.title,
         };
       }),
+      {
+        fileLenderEdges: allFileLenders,
+        lenderLabelById,
+        clientLabelById,
+        projectTitleById,
+      },
     );
     return visible.map((p, i) => {
       const h = hierarchyRows[i]!;

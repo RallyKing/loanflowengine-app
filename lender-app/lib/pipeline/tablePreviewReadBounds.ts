@@ -1,5 +1,6 @@
 /**
- * Read bounds for the pipeline hub table subscription (`pipeline:listTablePreview`).
+ * Read bounds for the pipeline hub table subscription (`pipeline:listTablePreview`)
+ * and hub triage (`taskHighlights:getHubTriageHighlightMap`).
  *
  * The hub is a single long-lived Convex subscription that re-runs on every write
  * touching any joined table. Every read it performs must be index-scoped and
@@ -22,22 +23,46 @@
 export const PIPELINE_TABLE_PREVIEW_MAX_ROWS = 2_000;
 
 /**
- * Per-file cap for junction/edge reads (`fileLenders`, `fileClients`,
- * `fileProjects`, `fileTeamMembers`, `fileTasks`, `contactFileLinks`).
+ * Org-scoped ceiling for junction/edge tables on the hub path
+ * (`fileLenders`, `fileClients`, `fileProjects`, `fileTeamMembers`, `fileTasks`).
+ *
+ * One indexed `by_organization` take replaces the PR #38 per-file fan-out
+ * (`takeAcrossFiles`), which multiplied query count and docs for orgs that are
+ * most of the deployment. Filter to the visible file id set in memory.
+ */
+export const PIPELINE_ORG_EDGE_SCAN_CAP = 20_000;
+
+/**
+ * Per-file cap for junction/edge reads that lack an org index
+ * (`contactFileLinks`) or for single-file workspace helpers.
  * A loan file with more than this many edges of one kind is pathological.
  */
 export const PIPELINE_FILE_EDGE_SCAN_CAP = 200;
 
-/** Per-file cap for `tasks.by_relatedFile` reads on the hub graph-link path. */
+/**
+ * Org-scoped ceiling for `tasks.by_organization` when loading related tasks for
+ * the hub graph (filter to visible `relatedFileId`s in memory). Replaces
+ * per-file `by_relatedFile` fan-out on `listTablePreview`.
+ */
+export const PIPELINE_ORG_RELATED_TASK_SCAN_CAP = 5_000;
+
+/** Per-file cap for `tasks.by_relatedFile` (triage + single-file helpers). */
 export const PIPELINE_FILE_RELATED_TASK_SCAN_CAP = 200;
 
-/** Per-file cap for `pipelineFileNotes` reads backing the row note badge. */
+/**
+ * @deprecated Hub note badges read denormalized `pipeline.hubNotesCount`.
+ * Retained for any non-hub callers that still probe note rows.
+ */
 export const PIPELINE_FILE_NOTE_SCAN_CAP = 500;
 
 /** Absolute ceiling for `contacts:list` when the caller passes no explicit limit. */
 export const CONTACTS_LIST_ABSOLUTE_CAP = 5_000;
 
-/** Absolute ceiling for the org task scan behind `taskHighlights:getHubTriageHighlightMap`. */
+/**
+ * @deprecated Triage no longer org-scans tasks. Visible hub files are loaded via
+ * `PIPELINE_TABLE_PREVIEW_MAX_ROWS`, then tasks via `by_relatedFile` per file
+ * (capped by `PIPELINE_FILE_RELATED_TASK_SCAN_CAP`).
+ */
 export const HUB_TRIAGE_TASK_SCAN_CAP = 5_000;
 
 /**

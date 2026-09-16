@@ -3,6 +3,8 @@ import { query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   assertOrgMember,
+  filterPipelineByOrgScope,
+  filterPipelineRowsForMember,
   resolveMemberUserKey,
 } from "./organizationAccess";
 import { pipelineFileReadable } from "./resourceAccess";
@@ -10,15 +12,23 @@ import { readTaskColorPresetsForOrg } from "./organizationSettings";
 import { loadTriageLabelsForOrg } from "./organizationTriageLabels";
 import { safeResolveFileHierarchy } from "./pipelineHierarchyCompat";
 import {
+  loadOrgScopedPipelineRowsBounded,
+  loadRelatedTasksForFiles,
+} from "./pipelineHubBoundedReads";
+import { PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID } from "./auth/platformGodMode";
+import { PIPELINE_TABLE_PREVIEW_MAX_ROWS } from "../lib/pipeline/tablePreviewReadBounds";
+import {
   hubClientKeyFromHierarchy,
+  hubClientKeyFromRowFields,
   hubProjectKeyFromHierarchy,
+  hubProjectKeyFromRowFields,
 } from "../lib/pipeline/hubHierarchyKeys";
 import { lookupTaskColorPreset } from "../lib/taskColorPresets";
 import { normalizeTriageLabelHex, resolveTriageLabelHex } from "../lib/triageLabelColor";
 import { taskParticipatesInTriageBubble } from "../lib/pipeline/triageHighlightParticipation";
 import { resolveTriageLabelSeverityWeight } from "../lib/pipeline/triageSeverityWeight";
 import { resolveTriageEvaluationTime } from "../lib/triageClock";
-import { HUB_TRIAGE_TASK_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
+import { isCurrentlySnoozed as pipelineIsCurrentlySnoozed } from "../lib/pipelineSnooze";
 
 const orgArgs = {
   organizationId: v.id("organizations"),
@@ -26,7 +36,11 @@ const orgArgs = {
 };
 
 const triageTimeArgs = {
-  /** Minute bucket from `TriageClockProvider` (preferred). */
+  /**
+   * Optional minute bucket. Prefer omitting so the hub subscription stays stable;
+   * the server falls back to evaluation time without forcing a per-minute
+   * resubscribe. Kept for backwards-compatible callers.
+   */
   nowBucket: v.optional(v.number()),
   /** @deprecated Alias for `nowBucket`. */
   currentTriageTime: v.optional(v.number()),
@@ -116,52 +130,74 @@ function buildEntry(
 }
 
 /**
+ * Hub-visible pipeline files for triage — same row set / ACL as listTablePreview
+ * (archive/snooze excluded by default).
+ */
+async function loadHubVisiblePipelineFilesForTriage(
+  ctx: Parameters<typeof assertOrgMember>[0],
+  organizationId: Id<"organizations">,
+  memberUserKey: string,
+): Promise<Doc<"pipeline">[]> {
+  const { rows } = await loadOrgScopedPipelineRowsBounded(
+    ctx,
+    organizationId,
+    PIPELINE_TABLE_PREVIEW_MAX_ROWS,
+    organizationId === PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID,
+  );
+  const now = Date.now();
+  const filtered = rows.filter((r) => {
+    if (r.archivedAt != null) return false;
+    if (pipelineIsCurrentlySnoozed(r.snoozedUntil, now)) return false;
+    return true;
+  });
+  const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
+  return await filterPipelineRowsForMember(
+    ctx,
+    orgScoped,
+    organizationId,
+    memberUserKey,
+  );
+}
+
+/**
  * Phase 24.2A — reactive triage bubbling (no colors stored on files/projects/clients).
  *
- * Task → file (max severityWeight among labeled open tasks on file)
- * File → project (max among file winners in project)
- * Project → client (max among project winners under client)
+ * Scoped to hub-visible files, then `tasks.by_relatedFile` per file — never an
+ * org-wide task collect + per-task ACL/hierarchy N+1.
  */
 async function buildHubTriageHighlightMap(
   ctx: Parameters<typeof assertOrgMember>[0],
   organizationId: Id<"organizations">,
   memberUserKey: string,
   nowBucket: number,
+  scopeFileIds?: ReadonlyArray<Id<"pipeline">>,
 ): Promise<HubTriageHighlightMapResult> {
   const presets = await readTaskColorPresetsForOrg(ctx, organizationId);
   const triageLabels = await loadTriageLabelsForOrg(ctx, organizationId);
   const now = resolveTriageEvaluationTime(nowBucket);
 
-  /**
-   * Fail-closed bound on the org task scan. `tasks` has no
-   * `(organizationId, relatedFileId)` index, so this query still walks the org
-   * range; the cap keeps one hub subscription from scaling without limit.
-   *
-   * Newest-first so that an org large enough to hit the cap keeps the tasks
-   * most likely to be open and labeled, rather than its oldest.
-   */
-  const tasks = await ctx.db
-    .query("tasks")
-    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .order("desc")
-    .take(HUB_TRIAGE_TASK_SCAN_CAP);
+  const visibleFiles = scopeFileIds?.length
+    ? (
+        await Promise.all(scopeFileIds.map((id) => ctx.db.get(id)))
+      ).filter((f): f is Doc<"pipeline"> => {
+        if (!f) return false;
+        if (f.organizationId && f.organizationId !== organizationId) return false;
+        return true;
+      })
+    : await loadHubVisiblePipelineFilesForTriage(
+        ctx,
+        organizationId,
+        memberUserKey,
+      );
 
-  /** Phase 24.5 — triage bubbles use pipeline file read ACL, not task ownership. */
-  const fileReadableCache = new Map<string, boolean>();
-  async function viewerCanReadTaskFile(fileId: Id<"pipeline">): Promise<boolean> {
-    const cacheKey = String(fileId);
-    if (fileReadableCache.has(cacheKey)) {
-      return fileReadableCache.get(cacheKey)!;
-    }
-    const file = await ctx.db.get(fileId);
-    if (!file || file.organizationId !== organizationId) {
-      fileReadableCache.set(cacheKey, false);
-      return false;
-    }
-    const ok = await pipelineFileReadable(ctx, file, memberUserKey);
-    fileReadableCache.set(cacheKey, ok);
-    return ok;
-  }
+  if (visibleFiles.length === 0) return emptyMap();
+
+  const visibleById = new Map(visibleFiles.map((f) => [String(f._id), f]));
+  const { rows: tasks } = await loadRelatedTasksForFiles(
+    ctx,
+    visibleFiles.map((f) => f._id),
+    organizationId,
+  );
 
   const files: Record<string, TriageHighlightEntry> = {};
   const fileCounts: Record<string, TaskRollupCounts> = {};
@@ -172,8 +208,25 @@ async function buildHubTriageHighlightMap(
 
   async function ensureFileMeta(fileId: Id<"pipeline">): Promise<void> {
     if (fileMeta.has(fileId)) return;
-    const file = await ctx.db.get(fileId);
+    const file = visibleById.get(String(fileId));
     if (!file) return;
+
+    if (file.clientId || file.projectId) {
+      fileMeta.set(fileId, {
+        projectKey: hubProjectKeyFromRowFields({
+          clientId: file.clientId ? String(file.clientId) : null,
+          projectId: file.projectId ? String(file.projectId) : null,
+          clientDisplayName: null,
+          projectDisplayTitle: null,
+        }),
+        clientKey: hubClientKeyFromRowFields({
+          clientId: file.clientId ? String(file.clientId) : null,
+          clientDisplayName: null,
+        }),
+      });
+      return;
+    }
+
     try {
       const hierarchy = await safeResolveFileHierarchy(ctx, file);
       fileMeta.set(fileId, {
@@ -187,6 +240,7 @@ async function buildHubTriageHighlightMap(
 
   for (const task of tasks) {
     if (!task.relatedFileId) continue;
+    if (!visibleById.has(String(task.relatedFileId))) continue;
 
     const isOpen = task.status === "todo" || task.status === "in_progress";
     const isSnoozedNow =
@@ -196,7 +250,6 @@ async function buildHubTriageHighlightMap(
       taskParticipatesInTriageBubble(task, now) && Boolean(task.triageLabelId);
 
     if (!countsOpen && !isLabeledBubble) continue;
-    if (!(await viewerCanReadTaskFile(task.relatedFileId))) continue;
 
     const fileId = task.relatedFileId;
     const fileKey = String(fileId);
@@ -274,6 +327,11 @@ export const getHubTriageHighlightMap = query({
       const key = await resolveMemberUserKey(ctx, args.memberUserKey);
       if (!key) return empty;
       await assertOrgMember(ctx, args.organizationId, key);
+      /**
+       * Prefer a client-supplied bucket when present (legacy). When omitted the
+       * subscription args stay stable across minute ticks; evaluation uses
+       * server time and refreshes on task/pipeline writes instead.
+       */
       const bucket = args.nowBucket ?? args.currentTriageTime ?? Date.now();
       return await buildHubTriageHighlightMap(
         ctx,
@@ -291,7 +349,7 @@ export const getHubTriageHighlightMap = query({
   },
 });
 
-/** File-level highlight (workspace + loan stack). */
+/** File-level highlight (workspace + loan stack) — scoped to one file, not the full hub map. */
 export const getFileTriageHighlight = query({
   args: {
     ...orgArgs,
@@ -302,12 +360,16 @@ export const getFileTriageHighlight = query({
     const key = await resolveMemberUserKey(ctx, args.memberUserKey);
     if (!key) return null;
     await assertOrgMember(ctx, args.organizationId, key);
+    const file = await ctx.db.get(args.pipelineFileId);
+    if (!file || file.organizationId !== args.organizationId) return null;
+    if (!(await pipelineFileReadable(ctx, file, key))) return null;
     const bucket = args.nowBucket ?? args.currentTriageTime ?? Date.now();
     const map = await buildHubTriageHighlightMap(
       ctx,
       args.organizationId,
       key,
       bucket,
+      [args.pipelineFileId],
     );
     return map.files[String(args.pipelineFileId)] ?? null;
   },

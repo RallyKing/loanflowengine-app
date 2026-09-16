@@ -24,6 +24,7 @@ const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const HOT_PATH_FILES = [
   "convex/pipelineHubBoundedReads.ts",
   "convex/pipelineGraphPreviewLinks.ts",
+  "convex/pipelineHubNotesCount.ts",
 ];
 
 /**
@@ -41,6 +42,15 @@ const HOT_PATH_FUNCTIONS = [
   },
 ];
 
+/** Extra static bans for the triage builder specifically. */
+const TRIAGE_BANS = [
+  {
+    id: "org-task-scan",
+    test: /withIndex\(\s*["']by_organization["']/,
+    message:
+      "buildHubTriageHighlightMap must not org-scan tasks — use by_relatedFile on hub-visible files.",
+  },
+];
 const ALLOW_MARKER = "hub-read-bounds-allow:";
 
 const RULES = [
@@ -149,6 +159,17 @@ function main() {
     const [from, to] = range;
     checkRegion(file, rawLines, codeLines, from, to, problems);
     checkIndexedReads(file, rawLines, codeLines, from, to, problems);
+    if (symbol.includes("buildHubTriageHighlightMap")) {
+      for (let i = from; i < to; i++) {
+        const code = codeLines[i];
+        if (!code || !code.trim()) continue;
+        for (const rule of TRIAGE_BANS) {
+          if (rule.test.test(code)) {
+            problems.push(`${file}:${i + 1} [${rule.id}] ${rule.message}`);
+          }
+        }
+      }
+    }
   }
 
   if (problems.length) {

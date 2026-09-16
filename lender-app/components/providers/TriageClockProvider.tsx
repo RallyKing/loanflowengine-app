@@ -58,8 +58,9 @@ function useTriageClockSync(): number {
 }
 
 /**
- * Passive minute-bucket clock for triage highlight queries.
- * Changing `currentTriageTime` re-runs Convex highlight subscriptions without polling the database.
+ * Passive minute-bucket clock for local triage UI (labels, countdown chrome).
+ * Hub highlight Convex subscriptions no longer take `nowBucket` — they stay
+ * stable across ticks and refresh on task/pipeline writes instead.
  */
 export function TriageClockProvider({ children }: { children: ReactNode }) {
   const currentTriageTime = useTriageClockSync();
@@ -70,7 +71,7 @@ export function TriageClockProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** Minute-rounded Unix ms — pass to `getHubTriageHighlightMap` as `currentTriageTime`. */
+/** Minute-rounded Unix ms — local triage UI only (not hub Convex args). */
 export function useTriageClockTime(): number {
   return useContext(TriageClockContext);
 }
