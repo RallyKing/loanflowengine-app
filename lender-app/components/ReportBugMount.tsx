@@ -60,6 +60,12 @@ function ReportBugFabAndDialog() {
   /** Bumps on close / new capture so late screenshot results are ignored. */
   const captureGenerationRef = useRef(0);
   const captureAbortRef = useRef<AbortController | null>(null);
+  /** Pending openDialog paint-yield schedule (rAF → rAF → timeout). */
+  const openCaptureScheduleRef = useRef<{
+    raf1: number;
+    raf2: number | null;
+    timeout: ReturnType<typeof setTimeout> | null;
+  } | null>(null);
 
   const visible =
     Boolean(isSignedIn) &&
@@ -77,6 +83,15 @@ function ReportBugFabAndDialog() {
     }
   }, [previewUrl]);
 
+  const cancelOpenCaptureSchedule = useCallback(() => {
+    const pending = openCaptureScheduleRef.current;
+    if (!pending) return;
+    window.cancelAnimationFrame(pending.raf1);
+    if (pending.raf2 != null) window.cancelAnimationFrame(pending.raf2);
+    if (pending.timeout != null) window.clearTimeout(pending.timeout);
+    openCaptureScheduleRef.current = null;
+  }, []);
+
   const resetForm = useCallback(() => {
     revokePreview();
     setDescription("");
@@ -92,11 +107,12 @@ function ReportBugFabAndDialog() {
 
   const close = useCallback(() => {
     captureGenerationRef.current += 1;
+    cancelOpenCaptureSchedule();
     captureAbortRef.current?.abort();
     captureAbortRef.current = null;
     setOpen(false);
     resetForm();
-  }, [resetForm]);
+  }, [cancelOpenCaptureSchedule, resetForm]);
 
   const runCapture = useCallback(async () => {
     const generation = ++captureGenerationRef.current;
@@ -106,6 +122,11 @@ function ReportBugFabAndDialog() {
 
     setCapturing(true);
     setCaptureError(null);
+    // Drop any prior shot so Submit during re-capture cannot attach a stale frame.
+    revokePreview();
+    setScreenshotFile(null);
+    setPreviewUrl(null);
+    setViewport(null);
     try {
       // DOM filter excludes FAB/overlay/dialog — safe while sheet is open.
       const shot = await captureViewportScreenshot({ signal: abort.signal });
@@ -121,14 +142,11 @@ function ReportBugFabAndDialog() {
       }
       if (!shot) {
         // Soft degrade: form stays usable; submit works without a screenshot.
-        setScreenshotFile(null);
-        setPreviewUrl(null);
         setCaptureError(
           "Screenshot skipped (page too heavy). You can still submit, or try Re-capture.",
         );
         return;
       }
-      revokePreview();
       setScreenshotFile(shot.file);
       setPreviewUrl(shot.objectUrl);
       setViewport({ w: shot.width, h: shot.height });
@@ -148,8 +166,15 @@ function ReportBugFabAndDialog() {
    * Open the sheet immediately; screenshot fills in async (shows “Capturing…”).
    * Previously we awaited capture before setOpen — FAB spun / froze on heavy pages.
    * Double-rAF + setTimeout lets the sheet paint before main-thread clone work.
+   * Schedule is cancelled on close so dismiss cannot restart capture.
    */
   const openDialog = useCallback(() => {
+    cancelOpenCaptureSchedule();
+    captureAbortRef.current?.abort();
+    captureAbortRef.current = null;
+    // Invalidate any in-flight / deferred work from a prior open.
+    const scheduledGeneration = ++captureGenerationRef.current;
+
     setOpen(true);
     setCaptureError(null);
     setFormError(null);
@@ -157,14 +182,25 @@ function ReportBugFabAndDialog() {
     setScreenshotFile(null);
     setPreviewUrl(null);
     setViewport(null);
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        window.setTimeout(() => {
+
+    const schedule: {
+      raf1: number;
+      raf2: number | null;
+      timeout: ReturnType<typeof setTimeout> | null;
+    } = { raf1: 0, raf2: null, timeout: null };
+    openCaptureScheduleRef.current = schedule;
+
+    schedule.raf1 = window.requestAnimationFrame(() => {
+      schedule.raf2 = window.requestAnimationFrame(() => {
+        schedule.timeout = window.setTimeout(() => {
+          openCaptureScheduleRef.current = null;
+          // close() bumps generation; do not start capture after dismiss.
+          if (scheduledGeneration !== captureGenerationRef.current) return;
           void runCapture();
         }, 0);
       });
     });
-  }, [revokePreview, runCapture]);
+  }, [cancelOpenCaptureSchedule, revokePreview, runCapture]);
 
   const onSubmit = useCallback(async () => {
     if (!viewer?.organizationId || !viewer.userKey) return;
