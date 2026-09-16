@@ -100,6 +100,7 @@ const nextConfig = {
           "font-src 'self' data:",
           [
             "connect-src 'self'",
+            "blob:",
             "https://*.convex.cloud https://*.convex.site",
             "wss://*.convex.cloud wss://*.convex.site",
             "http://127.0.0.1:3210 ws://127.0.0.1:3210",

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { guessAttachmentKind } from "../lib/uploadToConvexStorage";
 import {
   isLegacyBinaryOfficeName,
+  previewSourceKey,
 } from "../lib/library/richFilePreviewLoaders";
 
 function test(name: string, fn: () => void) {
@@ -59,6 +60,17 @@ test("legacy binary office names", () => {
   assert.equal(isLegacyBinaryOfficeName("a.xls"), true);
   assert.equal(isLegacyBinaryOfficeName("a.docx"), false);
   assert.equal(isLegacyBinaryOfficeName("a.xlsx"), false);
+});
+
+test("previewSourceKey strips signed query but keeps path", () => {
+  assert.equal(
+    previewSourceKey("https://x.convex.cloud/api/storage/abc?token=rotates"),
+    "https://x.convex.cloud/api/storage/abc",
+  );
+  assert.equal(
+    previewSourceKey("https://x.convex.cloud/api/storage/abc"),
+    "https://x.convex.cloud/api/storage/abc",
+  );
 });
 
 console.log("All rich-file-preview tests passed.");

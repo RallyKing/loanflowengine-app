@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Regression: PDF / file previews use `<iframe src={convex storage URL}>`.
- * Production CSP must allow `https://*.convex.cloud` in `frame-src`, otherwise
- * browsers show blocked-frame / empty preview (see `AttachmentPreviewDialog`).
+ * Regression: lender/vault PDF previews historically used framed Convex/blob URLs.
+ * Production CSP must allow Convex hosts + blob in frame-src, and blob in
+ * connect-src (pdf.js worker + any residual blob fetches).
  */
 test.describe("CSP convex frame hosts", () => {
   test("next.config production CSP allows Convex storage iframes and blob", () => {
@@ -14,5 +14,6 @@ test.describe("CSP convex frame hosts", () => {
     expect(raw).toMatch(/frame-src/i);
     expect(raw).toMatch(/convex\.cloud/);
     expect(raw).toMatch(/blob:/);
+    expect(raw).toMatch(/connect-src[\s\S]*blob:/);
   });
 });
