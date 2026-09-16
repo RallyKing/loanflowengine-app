@@ -17,7 +17,8 @@ export type PipelineScenarioCriteriaForRow = {
 };
 
 /**
- * Row from `api.pipeline.listTablePreview` — extends `listLight` with joined
+ * Row from `api.pipeline.listTablePreview` (+ optional merge from
+ * `listTablePreviewEnrichment`) — extends `listLight` with joined
  * display strings for the pipeline **table**, **board** cards, and CSV/TSV/JSON
  * exports. Each query reads fresh `pipeline` rows plus the live file deal payload
  * (`pipeline.dealData` when embedded, else linked `intakeSheets`). Any
@@ -42,6 +43,9 @@ export type PipelineScenarioCriteriaForRow = {
  * `dealData` is not embedded yet — use `isDealBackedPipelineRow` and
  * **`patchDeal`** for file name, subject address, funding amount, and funding type so the
  * linked intake (and materialized `dealData`) stay in sync with the table.
+ *
+ * First paint omits `graphLinks` / `projectCapitalRollup` / note counts /
+ * `projectLinkedClients` until `listTablePreviewEnrichment` merges in.
  */
 export type PipelineTablePreviewRow = Omit<PipelineListRow, "fundingAmount"> & {
   /**
@@ -58,8 +62,8 @@ export type PipelineTablePreviewRow = Omit<PipelineListRow, "fundingAmount"> & {
   targetCloseDate?: number;
   sourceLabel: string;
   /**
-   * Deal root `sourceType` for inline table edit. Always set by `listTablePreview`;
-   * marked optional so client types stay compatible with Convex inference.
+   * Deal root `sourceType` for inline table edit. Optional — classic table only;
+   * hub first paint does not ship it.
    */
   dealSourceType?: string;
   subjectAddressDisplay: string;
@@ -73,8 +77,11 @@ export type PipelineTablePreviewRow = Omit<PipelineListRow, "fundingAmount"> & {
   netToUserDisplay: string;
   /** Legacy `pipeline.notes` string (export/search only — UI uses `fileNotesCount`). */
   notesDisplay: string;
-  /** Phase 19.5 — relational audit log entry count (`pipelineFileNotes`). */
-  fileNotesCount: number;
+  /**
+   * Phase 19.5 — relational audit log entry count (`pipelineFileNotes`).
+   * `undefined` until `listTablePreviewEnrichment` merges — never treat as 0.
+   */
+  fileNotesCount?: number;
   searchText: string;
   /** True when the current member may edit org-scoped file fields (not view-only). */
   canEditFile: boolean;

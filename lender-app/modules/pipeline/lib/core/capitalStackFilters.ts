@@ -78,11 +78,14 @@ export function rowMatchesCapitalStackFilter(
     if (!rollup || rollup.gapHealth !== "complete") return false;
   }
   if (filters.fundingHealth === "underfunded") {
-    if (!rollup) return true;
+    // Unknown / missing rollup is not a match (never match-all before enrichment).
+    if (!rollup) return false;
     if (rollup.gapHealth === "complete") return false;
   }
   if (filters.gapThreshold > 0) {
-    const gap = rollup?.remainingGap ?? 0;
+    // Unknown rollup → gap unknown → not a match.
+    if (rollup == null) return false;
+    const gap = rollup.remainingGap ?? 0;
     if (gap < filters.gapThreshold) return false;
   }
   if (filters.sourceType !== "any") {

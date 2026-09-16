@@ -107,15 +107,16 @@ import {
   resolveTableRowProjectDisplayTitle,
 } from "../lib/pipeline/resolveTableRowHierarchyDisplay";
 import {
+  batchProjectLinkedClientsForProjects,
   buildLoanLinkedClientSummaries,
   ensurePrimaryLoanClientLink,
-  resolveProjectLinkedClients,
 } from "./pipelineMultiClientLinks";
 import {
   batchCapitalRollupsForProjects,
   syncCapitalSourcesFromProjectLoans,
 } from "./projectCapitalStack";
 import { batchGraphLinksForPipelineFiles } from "./pipelineGraphPreviewLinks";
+import type { HierarchyDocCaches } from "./pipelineHierarchyCompat";
 
 /** Org-scoped files must record the authenticated creator as canonical owner. */
 function ownerFieldsForOrgCreate(
@@ -745,7 +746,7 @@ function buildTablePreviewRow(
     /** Always the live file-derived amount (not `pipeline.fundingAmount` alone). */
     fundingAmount: fileFundingAmount,
     intakeSheetId: p.intakeSheetId,
-    scenarioCriteria: p.scenarioCriteria,
+    // Hub first paint: criteria already folded into searchText / purchaseRefiDisplay.
     selectedLenderId: p.selectedLenderId,
     selectedLenderSentAt: p.selectedLenderSentAt,
     targetCloseDate: p.targetCloseDate,
@@ -769,6 +770,11 @@ function buildTablePreviewRow(
  * Pipeline list + joined intake + selected lender labels for the table/board.
  * Prefer this over `listLight` on the pipeline page so columns stay in sync
  * with intake; other callers keep using `listLight` for a slimmer payload.
+ *
+ * First-paint path: ACL, ownership, hierarchy labels, linked clients, primary
+ * lender, deal displays. Heavy enrichment (graphLinks, capital rollups, note
+ * counts, projectLinkedClients) lives in `listTablePreviewEnrichment` so the
+ * hub can paint before those docs land.
  */
 export const listTablePreview = query({
   args: {
@@ -812,26 +818,13 @@ export const listTablePreview = query({
     const visibleIds = visible.map((r) => r._id);
 
     /**
-     * Visible-scoped junction reads once (docs ∝ visible files). Reused for
-     * primary lender, hierarchy linked clients, and graph badges — no second
-     * org-wide take-then-filter pass.
+     * First paint only needs lender + client junctions for primary lender and
+     * linkedClients. Team/task/related/project graph edges defer to enrichment.
      */
-    const [
-      fileLenderRead,
-      fileClientRead,
-      fileProjectRead,
-      fileTeamRead,
-      fileTaskRead,
-      loanClientRead,
-      relatedTaskRead,
-    ] = await Promise.all([
+    const [fileLenderRead, fileClientRead, loanClientRead] = await Promise.all([
       loadFileLenderEdgesForFiles(ctx, visibleIds, organizationId),
       loadFileClientEdgesForFiles(ctx, visibleIds, organizationId),
-      loadFileProjectEdgesForFiles(ctx, visibleIds, organizationId),
-      loadFileTeamMemberEdgesForFiles(ctx, visibleIds, organizationId),
-      loadFileTaskEdgesForFiles(ctx, visibleIds, organizationId),
       loadLoanClientLinksForFiles(ctx, visibleIds, organizationId),
-      loadRelatedTasksForFiles(ctx, visibleIds, organizationId),
     ]);
 
     const allFileLenders = fileLenderRead.rows;
@@ -860,26 +853,33 @@ export const listTablePreview = query({
     const intakeIds = new Set<Id<"intakeSheets">>();
     const lenderIds = new Set<Id<"lenders">>();
     const linkedClientIds = new Set<Id<"clients">>();
+    const projectIds = new Set<Id<"projects">>();
+    const clientFkIds = new Set<Id<"clients">>();
     for (const r of visible) {
       if (r.intakeSheetId) intakeIds.add(r.intakeSheetId);
       if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
       for (const lid of r.lenders ?? []) lenderIds.add(lid);
-      if (r.clientId) linkedClientIds.add(r.clientId);
+      if (r.clientId) {
+        linkedClientIds.add(r.clientId);
+        clientFkIds.add(r.clientId);
+      }
+      if (r.projectId) projectIds.add(r.projectId);
     }
     for (const edge of allFileLenders) lenderIds.add(edge.lenderId);
     for (const edge of fileClientRead.rows) linkedClientIds.add(edge.clientId);
     for (const link of loanClientRead.rows) linkedClientIds.add(link.clientId);
 
-    const intakeDocs = await Promise.all(
-      [...intakeIds].map((id) => ctx.db.get(id)),
-    );
+    const [intakeDocs, lenderDocs, linkedClientDocs, projectDocs] =
+      await Promise.all([
+        Promise.all([...intakeIds].map((id) => ctx.db.get(id))),
+        Promise.all([...lenderIds].map((id) => ctx.db.get(id))),
+        Promise.all([...linkedClientIds].map((id) => ctx.db.get(id))),
+        Promise.all([...projectIds].map((id) => ctx.db.get(id))),
+      ]);
     const intakeById = new Map(
       intakeDocs
         .filter((d): d is Doc<"intakeSheets"> => d != null)
         .map((d) => [d._id, d]),
-    );
-    const lenderDocs = await Promise.all(
-      [...lenderIds].map((id) => ctx.db.get(id)),
     );
     const lenderById = new Map(
       lenderDocs
@@ -894,13 +894,38 @@ export const listTablePreview = query({
       );
     }
 
-    const linkedClientDocs = await Promise.all(
-      [...linkedClientIds].map((id) => ctx.db.get(id)),
-    );
     const linkedClientDocById = new Map<string, Doc<"clients">>();
     for (const doc of linkedClientDocs) {
       if (doc) linkedClientDocById.set(String(doc._id), doc);
     }
+    const projectById = new Map<string, Doc<"projects">>();
+    const projectTitleById = new Map<string, string>();
+    for (const doc of projectDocs) {
+      if (!doc) continue;
+      projectById.set(String(doc._id), doc);
+      const title = doc.title?.trim();
+      if (title) projectTitleById.set(String(doc._id), title);
+      // Project primary client may not be in linkedClientIds yet.
+      if (!linkedClientDocById.has(String(doc.clientId))) {
+        clientFkIds.add(doc.clientId);
+      }
+    }
+    const missingProjectClientIds = [...clientFkIds].filter(
+      (id) => !linkedClientDocById.has(String(id)),
+    );
+    if (missingProjectClientIds.length > 0) {
+      const extraClients = await Promise.all(
+        missingProjectClientIds.map((id) => ctx.db.get(id)),
+      );
+      for (const doc of extraClients) {
+        if (doc) linkedClientDocById.set(String(doc._id), doc);
+      }
+    }
+
+    const hierarchyCaches: HierarchyDocCaches = {
+      projectById,
+      clientById: linkedClientDocById,
+    };
 
     const ownershipRows = await buildHubTableOwnershipPresentations(
       ctx,
@@ -936,99 +961,29 @@ export const listTablePreview = query({
           ctx,
           p,
           linkedClientsByFile.get(String(p._id)) ?? [],
+          hierarchyCaches,
         ),
       ),
     );
-    const projectIds = [
-      ...new Set(
-        visible
-          .map((p) => p.projectId)
-          .filter((id): id is Id<"projects"> => id != null),
-      ),
-    ];
-    const clientIds = [
-      ...new Set(
-        visible
-          .map((p) => p.clientId)
-          .filter((id): id is Id<"clients"> => id != null),
-      ),
-    ];
-    const projectTitleById = new Map<string, string>();
-    const projectLinkedById = new Map<
-      string,
-      Awaited<ReturnType<typeof resolveProjectLinkedClients>>
-    >();
-    await Promise.all(
-      projectIds.map(async (pid) => {
-        const project = await ctx.db.get(pid);
-        if (!project) return;
-        const title = project.title?.trim();
-        if (title) projectTitleById.set(String(pid), title);
-        projectLinkedById.set(
-          String(pid),
-          await resolveProjectLinkedClients(ctx, project),
-        );
-      }),
-    );
+
     const clientLabelById = new Map<string, string>();
-    for (const cid of clientIds) {
-      const client = linkedClientDocById.get(String(cid));
-      if (!client) continue;
+    for (const [cid, client] of linkedClientDocById) {
       const label =
         client.displayName?.trim() ||
         client.companyName?.trim() ||
         client.primaryContactName?.trim() ||
         client.normalizedName?.trim() ||
         "";
-      if (label) clientLabelById.set(String(cid), label);
+      if (label) clientLabelById.set(cid, label);
     }
-    const capitalRollupByProject = await batchCapitalRollupsForProjects(
-      ctx,
-      projectIds,
-    );
-    const fileNoteCounts = await batchPipelineFileNoteCounts(ctx, visible);
-    const graphLinksByFile = await batchGraphLinksForPipelineFiles(
-      ctx,
-      visible,
-      organizationId,
-      visible.map((p, i) => {
-        const h = hierarchyRows[i]!;
-        return {
-          fileId: p._id,
-          linkedFromHierarchy: h.linkedClients.map((c) => ({
-            clientId: String(c.clientId),
-            displayName: c.displayName,
-            relationshipType: c.relationshipType,
-          })),
-          clientDisplayName:
-            h.client.kind === "record"
-              ? h.client.displayName
-              : h.client.displayName,
-          projectDisplayTitle:
-            h.project.kind === "record" ? h.project.title : h.project.title,
-        };
-      }),
-      {
-        fileLenderEdges: allFileLenders,
-        fileClientEdges: fileClientRead.rows,
-        fileProjectEdges: fileProjectRead.rows,
-        fileTeamMemberEdges: fileTeamRead.rows,
-        fileTaskEdges: fileTaskRead.rows,
-        relatedTasks: relatedTaskRead.rows,
-        lenderLabelById,
-        clientLabelById,
-        projectTitleById,
-      },
-    );
+
     return visible.map((p, i) => {
       const h = hierarchyRows[i]!;
       const intake = resolveDealPayloadForPreview(p, intakeById);
-      const graphLinks = graphLinksByFile.get(String(p._id));
       const clientDisplayName = resolveTableRowClientDisplayName({
         hierarchy: h,
         intake,
         pipeline: p,
-        graphLinks,
         clientRecordLabel: p.clientId
           ? clientLabelById.get(String(p.clientId))
           : undefined,
@@ -1037,7 +992,6 @@ export const listTablePreview = query({
         hierarchy: h,
         intake,
         pipeline: p,
-        graphLinks,
         projectRecordTitle: p.projectId
           ? projectTitleById.get(String(p.projectId))
           : undefined,
@@ -1073,14 +1027,235 @@ export const listTablePreview = query({
         clientDisplayName,
         projectDisplayTitle,
         linkedClients: h.linkedClients,
-        projectLinkedClients: p.projectId
-          ? (projectLinkedById.get(String(p.projectId)) ?? [])
-          : [],
+        // Deferred — filled by listTablePreviewEnrichment.
+        // Leave unknown (undefined), never coerce to [] / 0 — consumers must
+        // not treat missing enrichment as authoritative empty.
+        projectLinkedClients: undefined,
+        projectCapitalRollup: undefined,
+        graphLinks: undefined,
+        fileNotesCount: undefined,
+      };
+    });
+  },
+});
+
+/**
+ * Deferred hub enrichment for `listTablePreview`: graph badges, capital
+ * rollups, note counts, and project linked clients. Same ACL visible set as
+ * the first-paint query; merge client-side by file id.
+ */
+export const listTablePreviewEnrichment = query({
+  args: {
+    includeArchived: v.optional(v.boolean()),
+    includeSnoozed: v.optional(v.boolean()),
+    ...orgListScopeArgs,
+  },
+  handler: async (ctx, { includeArchived, includeSnoozed, organizationId, memberUserKey }) => {
+    await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
+    const now = Date.now();
+    const { rows } = await loadOrgScopedPipelineRowsBounded(
+      ctx,
+      organizationId,
+      PIPELINE_TABLE_PREVIEW_MAX_ROWS,
+      organizationId === PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID,
+    );
+    const filtered = rows.filter((r) => {
+      if (!includeArchived && r.archivedAt != null) return false;
+      if (!includeSnoozed && pipelineIsCurrentlySnoozed(r.snoozedUntil, now)) {
+        return false;
+      }
+      return true;
+    });
+    const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
+    const { rows: visible } = await filterPipelineRowsForMemberWithAccessLevels(
+      ctx,
+      orgScoped,
+      organizationId,
+      memberUserKey,
+    );
+    const visibleIds = visible.map((r) => r._id);
+
+    const [
+      fileLenderRead,
+      fileClientRead,
+      fileProjectRead,
+      fileTeamRead,
+      fileTaskRead,
+      loanClientRead,
+      relatedTaskRead,
+    ] = await Promise.all([
+      loadFileLenderEdgesForFiles(ctx, visibleIds, organizationId),
+      loadFileClientEdgesForFiles(ctx, visibleIds, organizationId),
+      loadFileProjectEdgesForFiles(ctx, visibleIds, organizationId),
+      loadFileTeamMemberEdgesForFiles(ctx, visibleIds, organizationId),
+      loadFileTaskEdgesForFiles(ctx, visibleIds, organizationId),
+      loadLoanClientLinksForFiles(ctx, visibleIds, organizationId),
+      loadRelatedTasksForFiles(ctx, visibleIds, organizationId),
+    ]);
+
+    const lenderIds = new Set<Id<"lenders">>();
+    const linkedClientIds = new Set<Id<"clients">>();
+    const projectIds = [
+      ...new Set(
+        visible
+          .map((p) => p.projectId)
+          .filter((id): id is Id<"projects"> => id != null),
+      ),
+    ];
+    for (const r of visible) {
+      if (r.clientId) linkedClientIds.add(r.clientId);
+      if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
+      for (const lid of r.lenders ?? []) lenderIds.add(lid);
+    }
+    for (const edge of fileLenderRead.rows) lenderIds.add(edge.lenderId);
+    for (const edge of fileClientRead.rows) linkedClientIds.add(edge.clientId);
+    for (const link of loanClientRead.rows) linkedClientIds.add(link.clientId);
+
+    const [lenderDocs, linkedClientDocs, projectDocs] = await Promise.all([
+      Promise.all([...lenderIds].map((id) => ctx.db.get(id))),
+      Promise.all([...linkedClientIds].map((id) => ctx.db.get(id))),
+      Promise.all(projectIds.map((id) => ctx.db.get(id))),
+    ]);
+
+    const lenderLabelById = new Map<string, string>();
+    for (const doc of lenderDocs) {
+      if (!doc) continue;
+      lenderLabelById.set(
+        String(doc._id),
+        doc.company?.trim() || doc.contactName?.trim() || "Lender",
+      );
+    }
+    const linkedClientDocById = new Map<string, Doc<"clients">>();
+    const clientLabelById = new Map<string, string>();
+    for (const doc of linkedClientDocs) {
+      if (!doc) continue;
+      linkedClientDocById.set(String(doc._id), doc);
+      const label =
+        doc.displayName?.trim() ||
+        doc.companyName?.trim() ||
+        doc.primaryContactName?.trim() ||
+        doc.normalizedName?.trim() ||
+        "";
+      if (label) clientLabelById.set(String(doc._id), label);
+    }
+    const projectById = new Map<string, Doc<"projects">>();
+    const projectTitleById = new Map<string, string>();
+    const projects: Doc<"projects">[] = [];
+    for (const doc of projectDocs) {
+      if (!doc) continue;
+      projects.push(doc);
+      projectById.set(String(doc._id), doc);
+      const title = doc.title?.trim();
+      if (title) projectTitleById.set(String(doc._id), title);
+    }
+
+    const fileClientsByFile = new Map<string, Doc<"fileClients">[]>();
+    for (const edge of fileClientRead.rows) {
+      const key = String(edge.fileId);
+      const bucket = fileClientsByFile.get(key) ?? [];
+      bucket.push(edge);
+      fileClientsByFile.set(key, bucket);
+    }
+    const loanClientsByFile = new Map<string, Doc<"loanClients">[]>();
+    for (const link of loanClientRead.rows) {
+      const key = String(link.pipelineId);
+      const bucket = loanClientsByFile.get(key) ?? [];
+      bucket.push(link);
+      loanClientsByFile.set(key, bucket);
+    }
+
+    const hierarchyCaches: HierarchyDocCaches = {
+      projectById,
+      clientById: linkedClientDocById,
+    };
+
+    const linkedClientsByFile = new Map<
+      string,
+      Awaited<ReturnType<typeof buildLoanLinkedClientSummaries>>
+    >();
+    await Promise.all(
+      visible.map(async (p) => {
+        const key = String(p._id);
+        linkedClientsByFile.set(
+          key,
+          await buildLoanLinkedClientSummaries(
+            ctx,
+            p,
+            fileClientsByFile.get(key) ?? [],
+            loanClientsByFile.get(key) ?? [],
+            linkedClientDocById,
+          ),
+        );
+      }),
+    );
+
+    const hierarchyRows = await Promise.all(
+      visible.map((p) =>
+        safeResolveFileHierarchy(
+          ctx,
+          p,
+          linkedClientsByFile.get(String(p._id)) ?? [],
+          hierarchyCaches,
+        ),
+      ),
+    );
+
+    const [capitalRollupByProject, fileNoteCounts, projectLinkedById, graphLinksByFile] =
+      await Promise.all([
+        batchCapitalRollupsForProjects(ctx, projectIds),
+        batchPipelineFileNoteCounts(ctx, visible),
+        batchProjectLinkedClientsForProjects(
+          ctx,
+          projects,
+          linkedClientDocById,
+        ),
+        batchGraphLinksForPipelineFiles(
+          ctx,
+          visible,
+          organizationId,
+          visible.map((p, i) => {
+            const h = hierarchyRows[i]!;
+            return {
+              fileId: p._id,
+              linkedFromHierarchy: h.linkedClients.map((c) => ({
+                clientId: String(c.clientId),
+                displayName: c.displayName,
+                relationshipType: c.relationshipType,
+              })),
+              clientDisplayName:
+                h.client.kind === "record"
+                  ? h.client.displayName
+                  : h.client.displayName,
+              projectDisplayTitle:
+                h.project.kind === "record" ? h.project.title : h.project.title,
+            };
+          }),
+          {
+            fileLenderEdges: fileLenderRead.rows,
+            fileClientEdges: fileClientRead.rows,
+            fileProjectEdges: fileProjectRead.rows,
+            fileTeamMemberEdges: fileTeamRead.rows,
+            fileTaskEdges: fileTaskRead.rows,
+            relatedTasks: relatedTaskRead.rows,
+            lenderLabelById,
+            clientLabelById,
+            projectTitleById,
+          },
+        ),
+      ]);
+
+    return visible.map((p) => {
+      const graphLinks = graphLinksByFile.get(String(p._id))!;
+      return {
+        fileId: p._id,
+        graphLinks,
+        fileNotesCount: fileNoteCounts.get(String(p._id)) ?? 0,
         projectCapitalRollup: p.projectId
           ? capitalRollupByProject.get(String(p.projectId))
           : undefined,
-        graphLinks,
-        fileNotesCount: fileNoteCounts.get(String(p._id)) ?? 0,
+        projectLinkedClients: p.projectId
+          ? (projectLinkedById.get(String(p.projectId)) ?? [])
+          : [],
       };
     });
   },

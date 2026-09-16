@@ -18,7 +18,8 @@ export type PipelineTableNotesCellProps = {
   organizationId: Id<"organizations">;
   memberUserKey?: string;
   fileName: string;
-  noteCount: number;
+  /** `undefined` = enrichment pending — do not treat as zero / "Add note". */
+  noteCount: number | undefined;
   canEdit: boolean;
   onOpenNotes: () => void;
 };
@@ -38,11 +39,13 @@ export function PipelineTableNotesCell({
   const [quickError, setQuickError] = useState<string | null>(null);
 
   const label =
-    noteCount === 0
-      ? "Add note"
-      : noteCount === 1
-        ? "1 note"
-        : `${noteCount} notes`;
+    noteCount == null
+      ? "Notes"
+      : noteCount === 0
+        ? "Add note"
+        : noteCount === 1
+          ? "1 note"
+          : `${noteCount} notes`;
 
   const submitQuickNote = useCallback(async () => {
     const text = quickDraft.trim();

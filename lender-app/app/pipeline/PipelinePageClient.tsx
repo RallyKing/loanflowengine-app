@@ -16,6 +16,11 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
 import {
+  isTablePreviewEnrichmentAligned,
+  isTablePreviewRowsFullyEnriched,
+  mergeTablePreviewEnrichment,
+} from "@/lib/pipeline/mergeTablePreviewEnrichment";
+import {
   NewPipelineHierarchyCreateDialog,
   type HierarchyCreateContext,
   type HierarchyCreateMode,
@@ -469,7 +474,23 @@ export function PipelinePageClient() {
     activeOrganizationId,
     memberUserKey,
   ]);
-  const rows = useQuery(api.pipeline.listTablePreview, listPreviewArgs);
+  const rowsCore = useQuery(api.pipeline.listTablePreview, listPreviewArgs);
+  const rowsEnrichment = useQuery(
+    api.pipeline.listTablePreviewEnrichment,
+    listPreviewArgs,
+  );
+  /** Enrichment must cover the *current* core id set (not a sticky prior tick). */
+  const enrichmentAligned =
+    rowsCore !== undefined &&
+    isTablePreviewEnrichmentAligned(rowsCore, rowsEnrichment);
+  const rows = useMemo(() => {
+    if (rowsCore === undefined) return undefined;
+    // Skip partial/stale merge until enrichment aligns with current core ids.
+    return enrichmentAligned
+      ? mergeTablePreviewEnrichment(rowsCore, rowsEnrichment)
+      : rowsCore;
+  }, [rowsCore, rowsEnrichment, enrichmentAligned]);
+
   const referralPartnerListArgs = useMemo(() => {
     if (!orgQueryReady || !activeOrganizationId || !memberUserKey) return "skip" as const;
     return {
@@ -480,7 +501,7 @@ export function PipelinePageClient() {
     };
   }, [orgQueryReady, activeOrganizationId, memberUserKey]);
   const referralPartnerContacts = useQuery(
-    api.contacts.list,
+    api.contacts.listIdNameForRole,
     referralPartnerListArgs,
   );
   const { canUseHub } = useLiveConnection();
@@ -517,10 +538,12 @@ export function PipelinePageClient() {
   }, [canUseHub]);
 
   useEffect(() => {
-    if (canUseHub && rows !== undefined) {
+    // Only persist fully enriched snapshots — incomplete rows must not be
+    // treated as enrichment-ready when loaded offline.
+    if (canUseHub && enrichmentAligned && rows !== undefined) {
       void persistQuerySnapshot(snapshotKey, rows);
     }
-  }, [canUseHub, rows, snapshotKey]);
+  }, [canUseHub, enrichmentAligned, rows, snapshotKey]);
 
   useEffect(() => {
     if (canUseHub) {
@@ -667,7 +690,19 @@ export function PipelinePageClient() {
     [router, hubReturnParams],
   );
 
-  const listLoading = canUseHub ? rows === undefined : !cacheReady;
+  const listLoading = canUseHub ? rowsCore === undefined : !cacheReady;
+  /**
+   * Capital / client-involvement filters and note-count UI need enrichment.
+   * Live: enrichment must cover every current core file id (not sticky prior).
+   * Offline: ready only when the cached/optimistic snapshot carries deferred
+   * sentinels on every row (incomplete pre-enrichment snapshots stay gated).
+   */
+  const enrichmentReady = canUseHub
+    ? enrichmentAligned
+    : cacheReady &&
+      isTablePreviewRowsFullyEnriched(
+        optimisticRows ?? cachedRows ?? EMPTY_PIPELINE,
+      );
 
   usePipelineHubLayoutShiftTracker(
     hubListRef,
@@ -726,15 +761,18 @@ export function PipelinePageClient() {
     if (filterProjectKey) {
       out = out.filter((r) => hubRowProjectKey(r) === filterProjectKey);
     }
-    if (clientInvolvementFilters.clientId) {
+    // Defer capital + client-involvement filters until enrichment has merged
+    // (or offline cache). Applying early match-alls / false empties.
+    if (enrichmentReady && clientInvolvementFilters.clientId) {
       out = out.filter((r) =>
         rowMatchesClientInvolvementFilter(r, clientInvolvementFilters),
       );
     }
     if (
-      capitalStackFilters.fundingHealth !== "any" ||
-      capitalStackFilters.gapThreshold > 0 ||
-      capitalStackFilters.sourceType !== "any"
+      enrichmentReady &&
+      (capitalStackFilters.fundingHealth !== "any" ||
+        capitalStackFilters.gapThreshold > 0 ||
+        capitalStackFilters.sourceType !== "any")
     ) {
       out = out.filter((r) => rowMatchesCapitalStackFilter(r, capitalStackFilters));
     }
@@ -808,6 +846,7 @@ export function PipelinePageClient() {
     filterProjectKey,
     clientInvolvementFilters,
     capitalStackFilters,
+    enrichmentReady,
   ]);
 
   const graphIndex = useMemo(
@@ -1806,6 +1845,12 @@ export function PipelinePageClient() {
                           }))
                         }
                         aria-label="Client involvement filter"
+                        disabled={!enrichmentReady}
+                        title={
+                          enrichmentReady
+                            ? undefined
+                            : "Waiting for enrichment before applying client involvement filters"
+                        }
                       >
                         <option value="">Any client involvement</option>
                         {hierarchyFilterOptions.clients.map((c) => (
@@ -1826,6 +1871,12 @@ export function PipelinePageClient() {
                           }))
                         }
                         aria-label="Relationship type filter"
+                        disabled={!enrichmentReady}
+                        title={
+                          enrichmentReady
+                            ? undefined
+                            : "Waiting for enrichment before applying client involvement filters"
+                        }
                       >
                         <option value="any">Any relationship</option>
                         {(Object.keys(
@@ -1847,6 +1898,7 @@ export function PipelinePageClient() {
                               primaryOnly: e.target.checked,
                             }))
                           }
+                          disabled={!enrichmentReady}
                         />
                         Primary only
                       </label>
@@ -1860,6 +1912,12 @@ export function PipelinePageClient() {
                           }))
                         }
                         aria-label="Funding source type filter"
+                        disabled={!enrichmentReady}
+                        title={
+                          enrichmentReady
+                            ? undefined
+                            : "Waiting for enrichment before applying capital filters"
+                        }
                       >
                         <option value="any">Any source type</option>
                         {CAPITAL_SOURCE_TYPES.map((t) => (
@@ -1878,6 +1936,12 @@ export function PipelinePageClient() {
                           }))
                         }
                         aria-label="Capital funding health filter"
+                        disabled={!enrichmentReady}
+                        title={
+                          enrichmentReady
+                            ? undefined
+                            : "Waiting for enrichment before applying capital filters"
+                        }
                       >
                         <option value="any">Any funding health</option>
                         <option value="underfunded">Underfunded projects</option>
@@ -1893,12 +1957,27 @@ export function PipelinePageClient() {
                           }))
                         }
                         aria-label="Minimum funding gap filter"
+                        disabled={!enrichmentReady}
+                        title={
+                          enrichmentReady
+                            ? undefined
+                            : "Waiting for enrichment before applying capital filters"
+                        }
                       >
                         <option value={0}>Any gap size</option>
                         <option value={50000}>Gap ≥ $50K</option>
                         <option value={250000}>Gap ≥ $250K</option>
                         <option value={1000000}>Gap ≥ $1M</option>
                       </select>
+                      {!enrichmentReady ? (
+                        <span
+                          className="text-[10px] text-muted-foreground"
+                          role="status"
+                          data-testid="hub-enrichment-pending"
+                        >
+                          Capital &amp; client filters apply after enrichment…
+                        </span>
+                      ) : null}
                       {projectionMode === "referral" ? (
                         <select
                           className="h-8 min-w-[10rem] max-w-full flex-1 basis-[10rem] rounded-md border border-border bg-background px-2 text-xs sm:flex-none"

@@ -4,7 +4,8 @@ import { MessageSquare } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export type PipelineHubNotesIndicatorChipProps = {
-  noteCount: number;
+  /** `undefined` = enrichment pending — do not treat as zero. */
+  noteCount: number | undefined;
   fileName: string;
   onOpenNotes: () => void;
   className?: string;
@@ -12,7 +13,8 @@ export type PipelineHubNotesIndicatorChipProps = {
 
 /**
  * Hub hierarchy / file row — surfaces relational note count (Phase 19.6).
- * Shown only when `noteCount > 0`; opens file workspace at `?block=fileNotes`.
+ * Shown only when count is known and `> 0`; opens file workspace at `?block=fileNotes`.
+ * Unknown (enrichment pending) and zero both hide the chip — never claim "0 notes".
  */
 export function PipelineHubNotesIndicatorChip({
   noteCount,
@@ -20,7 +22,7 @@ export function PipelineHubNotesIndicatorChip({
   onOpenNotes,
   className,
 }: PipelineHubNotesIndicatorChipProps) {
-  if (noteCount <= 0) return null;
+  if (noteCount == null || noteCount <= 0) return null;
 
   return (
     <button
