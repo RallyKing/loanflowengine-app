@@ -2961,6 +2961,23 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_org", ["organizationId"]),
 
+  /**
+   * Per-user favorites for Apply Template → Individual Tasks.
+   * Scoped to org + member. One row per favorited template.
+   */
+  documentTaskTemplateFavorites: defineTable({
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    templateId: v.id("documentTaskTemplates"),
+    favoritedAt: v.number(),
+  })
+    .index("by_org_user", ["organizationId", "memberUserKey"])
+    .index("by_org_user_template", [
+      "organizationId",
+      "memberUserKey",
+      "templateId",
+    ]),
+
   portalEmailTemplates: defineTable({
     organizationId: v.optional(v.id("organizations")),
     kind: v.union(
@@ -5021,4 +5038,50 @@ export default defineSchema({
     .index("by_category", ["category"])
     .index("by_market_and_category", ["market", "category"])
     .index("by_campusKey", ["campusKey"]),
+
+  /**
+   * In-app bug reports (screenshot + metadata) for Cursor Cloud Minion / GrokBot.
+   * Source of truth; optional GitHub issue created via one-shot action when token set.
+   */
+  bugReports: defineTable({
+    organizationId: v.id("organizations"),
+    createdByUserKey: v.string(),
+    createdByEmail: v.optional(v.string()),
+    description: v.string(),
+    severity: v.union(
+      v.literal("low"),
+      v.literal("medium"),
+      v.literal("high"),
+    ),
+    status: v.union(
+      v.literal("new"),
+      v.literal("acknowledged"),
+      v.literal("resolved"),
+      v.literal("wontfix"),
+    ),
+    pageUrl: v.string(),
+    pagePath: v.string(),
+    pipelineFileId: v.optional(v.id("pipeline")),
+    viewportWidth: v.number(),
+    viewportHeight: v.number(),
+    userAgent: v.string(),
+    screenshotStorageId: v.optional(v.id("_storage")),
+    screenshotBytes: v.optional(v.number()),
+    screenshotMimeType: v.optional(v.string()),
+    githubIssueUrl: v.optional(v.string()),
+    githubIssueNumber: v.optional(v.number()),
+    githubIssueError: v.optional(v.string()),
+    /** Set when GrokBot / Cursor Cloud Minion intake webhook accepts the POST. */
+    webhookDeliveredAt: v.optional(v.number()),
+    /** Skip or failure reason for webhook delivery (never includes secrets). */
+    webhookError: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_org_createdAt", ["organizationId", "createdAt"])
+    .index("by_org_status_createdAt", [
+      "organizationId",
+      "status",
+      "createdAt",
+    ])
+    .index("by_creator_createdAt", ["createdByUserKey", "createdAt"]),
 });
