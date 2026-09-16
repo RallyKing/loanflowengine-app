@@ -11,8 +11,8 @@ import {
   PATCH_PIPELINE_CONFLICT_CODE,
   stripOccForOnlineQuietPipelinePatch,
 } from "../modules/pipeline/lib/core/patchPipelineResult";
-import { runPipelinePatchHandlingConflict } from "../lib/pipeline/runPipelinePatchWithConflictRetry";
-import type { PatchPipelineResult } from "../lib/pipeline/patchPipelineResult";
+import { runPipelinePatchHandlingConflict } from "../modules/pipeline/lib/core/runPipelinePatchWithConflictRetry";
+import type { PatchPipelineResult } from "../modules/pipeline/lib/core/patchPipelineResult";
 
 function testQuietNotify() {
   assert.equal(isPipelinePatchQuietNotifyOnly(["scenario"]), true);
