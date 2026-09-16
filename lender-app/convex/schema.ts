@@ -3048,6 +3048,8 @@ export default defineSchema({
         v.literal("lender_delivery"),
         v.literal("task_upload"),
         v.literal("portal_grant"),
+        /** Selective client portal link scoped to one block_assignment file task. */
+        v.literal("block_fill"),
       ),
     ),
     /** True when the live URL still uses `/lender-delivery/{token}` instead of slug URLs. */
