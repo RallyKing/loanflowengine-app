@@ -64,7 +64,8 @@ function ReportBugFabAndDialog() {
   const openCaptureScheduleRef = useRef<{
     raf1: number;
     raf2: number | null;
-    timeout: ReturnType<typeof window.setTimeout> | null;
+    /** Browser timer id (`window.setTimeout`); use `number`, not NodeJS.Timeout. */
+    timeout: number | null;
   } | null>(null);
 
   const visible =
@@ -186,7 +187,7 @@ function ReportBugFabAndDialog() {
     const schedule: {
       raf1: number;
       raf2: number | null;
-      timeout: ReturnType<typeof window.setTimeout> | null;
+      timeout: number | null;
     } = { raf1: 0, raf2: null, timeout: null };
     openCaptureScheduleRef.current = schedule;
 
