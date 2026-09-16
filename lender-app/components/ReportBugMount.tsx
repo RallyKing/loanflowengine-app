@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useMutation } from "convex/react";
 import { Bug, Camera, Loader2, X } from "lucide-react";
@@ -57,6 +57,15 @@ function ReportBugFabAndDialog() {
   const [submitting, setSubmitting] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  /** Bumps on close / new capture so late screenshot results are ignored. */
+  const captureGenerationRef = useRef(0);
+  const captureAbortRef = useRef<AbortController | null>(null);
+  /** Pending openDialog paint-yield schedule (rAF → rAF → timeout). */
+  const openCaptureScheduleRef = useRef<{
+    raf1: number;
+    raf2: number | null;
+    timeout: ReturnType<typeof setTimeout> | null;
+  } | null>(null);
 
   const visible =
     Boolean(isSignedIn) &&
@@ -74,6 +83,15 @@ function ReportBugFabAndDialog() {
     }
   }, [previewUrl]);
 
+  const cancelOpenCaptureSchedule = useCallback(() => {
+    const pending = openCaptureScheduleRef.current;
+    if (!pending) return;
+    window.cancelAnimationFrame(pending.raf1);
+    if (pending.raf2 != null) window.cancelAnimationFrame(pending.raf2);
+    if (pending.timeout != null) window.clearTimeout(pending.timeout);
+    openCaptureScheduleRef.current = null;
+  }, []);
+
   const resetForm = useCallback(() => {
     revokePreview();
     setDescription("");
@@ -88,48 +106,101 @@ function ReportBugFabAndDialog() {
   }, [revokePreview]);
 
   const close = useCallback(() => {
+    captureGenerationRef.current += 1;
+    cancelOpenCaptureSchedule();
+    captureAbortRef.current?.abort();
+    captureAbortRef.current = null;
     setOpen(false);
     resetForm();
-  }, [resetForm]);
-
-  const openDialog = useCallback(async () => {
-    setCapturing(true);
-    setCaptureError(null);
-    try {
-      // Capture first (modal closed) so the report dialog is not in the shot.
-      const shot = await captureViewportScreenshot();
-      revokePreview();
-      setScreenshotFile(shot.file);
-      setPreviewUrl(shot.objectUrl);
-      setViewport({ w: shot.width, h: shot.height });
-      setOpen(true);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Screenshot capture failed.";
-      setCaptureError(message);
-      setOpen(true);
-    } finally {
-      setCapturing(false);
-    }
-  }, [revokePreview]);
+  }, [cancelOpenCaptureSchedule, resetForm]);
 
   const runCapture = useCallback(async () => {
+    const generation = ++captureGenerationRef.current;
+    captureAbortRef.current?.abort();
+    const abort = new AbortController();
+    captureAbortRef.current = abort;
+
     setCapturing(true);
     setCaptureError(null);
+    // Drop any prior shot so Submit during re-capture cannot attach a stale frame.
+    revokePreview();
+    setScreenshotFile(null);
+    setPreviewUrl(null);
+    setViewport(null);
     try {
-      const shot = await captureViewportScreenshot();
-      revokePreview();
+      // DOM filter excludes FAB/overlay/dialog — safe while sheet is open.
+      const shot = await captureViewportScreenshot({ signal: abort.signal });
+      if (generation !== captureGenerationRef.current) {
+        if (shot) {
+          try {
+            URL.revokeObjectURL(shot.objectUrl);
+          } catch {
+            /* ignore */
+          }
+        }
+        return;
+      }
+      if (!shot) {
+        // Soft degrade: form stays usable; submit works without a screenshot.
+        setCaptureError(
+          "Screenshot skipped (page too heavy). You can still submit, or try Re-capture.",
+        );
+        return;
+      }
       setScreenshotFile(shot.file);
       setPreviewUrl(shot.objectUrl);
       setViewport({ w: shot.width, h: shot.height });
     } catch (err) {
+      if (generation !== captureGenerationRef.current) return;
       const message =
         err instanceof Error ? err.message : "Screenshot capture failed.";
       setCaptureError(message);
     } finally {
-      setCapturing(false);
+      if (generation === captureGenerationRef.current) {
+        setCapturing(false);
+      }
     }
   }, [revokePreview]);
+
+  /**
+   * Open the sheet immediately; screenshot fills in async (shows “Capturing…”).
+   * Previously we awaited capture before setOpen — FAB spun / froze on heavy pages.
+   * Double-rAF + setTimeout lets the sheet paint before main-thread clone work.
+   * Schedule is cancelled on close so dismiss cannot restart capture.
+   */
+  const openDialog = useCallback(() => {
+    cancelOpenCaptureSchedule();
+    captureAbortRef.current?.abort();
+    captureAbortRef.current = null;
+    // Invalidate any in-flight / deferred work from a prior open.
+    const scheduledGeneration = ++captureGenerationRef.current;
+
+    setOpen(true);
+    setCaptureError(null);
+    setFormError(null);
+    revokePreview();
+    setScreenshotFile(null);
+    setPreviewUrl(null);
+    setViewport(null);
+
+    const schedule: {
+      raf1: number;
+      raf2: number | null;
+      timeout: ReturnType<typeof setTimeout> | null;
+    } = { raf1: 0, raf2: null, timeout: null };
+    openCaptureScheduleRef.current = schedule;
+
+    schedule.raf1 = window.requestAnimationFrame(() => {
+      schedule.raf2 = window.requestAnimationFrame(() => {
+        schedule.timeout = window.setTimeout(() => {
+          openCaptureScheduleRef.current = null;
+          // close() bumps generation; do not start capture after dismiss.
+          if (scheduledGeneration !== captureGenerationRef.current) return;
+          void runCapture();
+        }, 0);
+      });
+    });
+  }, [cancelOpenCaptureSchedule, revokePreview, runCapture]);
 
   const onSubmit = useCallback(async () => {
     if (!viewer?.organizationId || !viewer.userKey) return;
@@ -225,7 +296,7 @@ function ReportBugFabAndDialog() {
         type="button"
         data-bug-report-fab="true"
         data-testid="report-bug-fab"
-        onClick={() => void openDialog()}
+        onClick={() => openDialog()}
         disabled={capturing && !open}
         className={cn(
           "fixed bottom-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.75rem))] right-3 md:bottom-6 md:right-6",
@@ -237,11 +308,7 @@ function ReportBugFabAndDialog() {
         title="Report a bug"
         aria-label="Report a bug"
       >
-        {capturing && !open ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
-        ) : (
-          <Bug className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-        )}
+        <Bug className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="hidden sm:inline">Report a bug</span>
       </button>
 
@@ -404,7 +471,7 @@ function ReportBugFabAndDialog() {
               variant="primary"
               size="sm"
               data-testid="report-bug-submit"
-              disabled={submitting || capturing}
+              disabled={submitting}
               onClick={() => void onSubmit()}
             >
               {submitting ? (
