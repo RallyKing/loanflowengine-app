@@ -187,7 +187,7 @@ import {
 } from "@/lib/offline/OfflineSyncContext";
 import { patchPreviewRowInList } from "@/lib/offline/previewRowPatch";
 import { isPatchDealConflictResult } from "@/lib/pipeline/patchDealResult";
-import { runPipelinePatchWithConflictRetry } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
+import { runPipelinePatchHandlingConflict } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
 import type { PatchPipelineResult } from "@/lib/pipeline/patchPipelineResult";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useConvexOrgQueryReady } from "@/lib/useConvexOrgQueryReady";
@@ -610,7 +610,7 @@ export function PipelinePageClient() {
           : {}),
       } as Parameters<typeof patchPipelineMut>[0];
       if (canUseHub) {
-        return runPipelinePatchWithConflictRetry(
+        return runPipelinePatchHandlingConflict(
           (p) => patchPipelineMut(p) as Promise<PatchPipelineResult>,
           payload,
           () =>

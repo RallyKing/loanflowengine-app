@@ -38,7 +38,7 @@ import { useUserPreferences } from "@/lib/userPreferencesContext";
 import { useLiveConnection } from "@/lib/useLiveConnection";
 import { useOrgConvexQueryArgs } from "@/lib/useOrgConvexQueryArgs";
 import { useOfflineSync } from "@/lib/offline/OfflineSyncContext";
-import { runPipelinePatchWithConflictRetry } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
+import { runPipelinePatchHandlingConflict } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
 import type { PatchPipelineResult } from "@/lib/pipeline/patchPipelineResult";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -294,9 +294,13 @@ export function PipelineScenarioMatch({
       void (async () => {
         try {
           if (canUseHub) {
-            await runPipelinePatchWithConflictRetry(
+            await runPipelinePatchHandlingConflict(
               (p) => patchPipelineMut(p) as Promise<PatchPipelineResult>,
               payload,
+              () =>
+                offline.surfaceSyncConflict(
+                  "File changed elsewhere. Refreshing latest version.",
+                ),
             );
           } else {
             await offline.enqueue({
@@ -307,7 +311,7 @@ export function PipelineScenarioMatch({
           }
           lastSavedRef.current = next;
         } catch {
-          /* swallow — explicit edits will surface errors */
+          /* Conflict already surfaced; leave lastSavedRef so debounce retries. */
         }
       })();
     }, 500);

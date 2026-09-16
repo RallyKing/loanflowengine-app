@@ -54,7 +54,7 @@ import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useOfflineSync } from "@/lib/offline/OfflineSyncContext";
 import { isPatchDealConflictResult } from "@/lib/pipeline/patchDealResult";
-import { runPipelinePatchWithConflictRetry } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
+import { runPipelinePatchHandlingConflict } from "@/lib/pipeline/runPipelinePatchWithConflictRetry";
 import type { PatchPipelineResult } from "@/lib/pipeline/patchPipelineResult";
 import {
   collapseBehaviorFromDeviceFileSectionMode,
@@ -982,7 +982,7 @@ function PipelineFileWorkspaceLoaded({
       } as Parameters<typeof patchPipeline>[0];
       if (canUseHub) {
         traceConvexMutation("PipelineFileWorkspace", "pipeline.patch");
-        return runPipelinePatchWithConflictRetry(
+        return runPipelinePatchHandlingConflict(
           (p) => patchPipeline(p) as Promise<PatchPipelineResult>,
           payload,
           () =>

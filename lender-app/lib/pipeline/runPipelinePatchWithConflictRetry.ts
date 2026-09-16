@@ -10,27 +10,30 @@ type PatchArgsWithOcc = {
 };
 
 /**
- * Soft OCC from `pipeline.patch`: retry once with `serverUpdatedAt` so inline
- * Scenario (and other file fields) still save when deal autosave raced the row.
+ * Soft OCC from `pipeline.patch` (same posture as `patchDeal`): never retry the
+ * same field payload with a bumped `expectedUpdatedAt` — that would convert
+ * timestamp races into silent last-writer-wins for those keys (including
+ * concurrent same-field edits). Callers surface the conflict and let the user
+ * (or a later dirty flush with fresh `updatedAt`) save again.
+ *
+ * Scratch-only Scenario / criteria / termOptions patches skip OCC on the server
+ * so they do not fail when deal autosave bumps `pipeline.updatedAt`.
  */
-export async function runPipelinePatchWithConflictRetry<
+export async function runPipelinePatchHandlingConflict<
   TArgs extends PatchArgsWithOcc,
 >(
   patch: (args: TArgs) => Promise<PatchPipelineResult>,
   payload: TArgs,
-  onExhaustedConflict?: (conflict: PatchPipelineConflict) => void,
+  onConflict?: (conflict: PatchPipelineConflict) => void,
 ): Promise<PatchPipelineSuccess> {
-  const first = await patch(payload);
-  if (!isPatchPipelineConflictResult(first)) {
-    return first;
+  const result = await patch(payload);
+  if (!isPatchPipelineConflictResult(result)) {
+    return result;
   }
-  const retry = await patch({
-    ...payload,
-    expectedUpdatedAt: first.serverUpdatedAt,
-  });
-  if (!isPatchPipelineConflictResult(retry)) {
-    return retry;
-  }
-  onExhaustedConflict?.(retry);
+  onConflict?.(result);
   throw new Error("File changed elsewhere — try saving again.");
 }
+
+/** @deprecated Use `runPipelinePatchHandlingConflict` — no payload retry. */
+export const runPipelinePatchWithConflictRetry =
+  runPipelinePatchHandlingConflict;

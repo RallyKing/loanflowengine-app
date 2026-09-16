@@ -2427,12 +2427,22 @@ export const patch = mutation({
     const { id, preferencesAccountId, expectedUpdatedAt, ...rest } = args;
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error("Pipeline not found");
+    const providedPatchKeys = (Object.keys(rest) as (keyof typeof rest)[])
+      .filter((k) => rest[k] !== undefined)
+      .map(String);
+    // Scratch-only writes (Scenario / criteria / term options) intentionally
+    // skip OCC: deal/criteria autosave bumps `updatedAt` on the same row and
+    // would otherwise soft-conflict every Scenario commit. Multi-field / status
+    // / rename patches keep OCC + soft conflict (no blind client retry).
+    const skipOccForQuietScratch =
+      isPipelinePatchQuietNotifyOnly(providedPatchKeys);
     if (
+      !skipOccForQuietScratch &&
       expectedUpdatedAt !== undefined &&
       existing.updatedAt !== expectedUpdatedAt
     ) {
       // Soft conflict (same shape as patchDeal) — throwing surfaced as a Convex
-      // server error on inline Scenario saves racing deal/criteria autosave.
+      // server error on clients that still treated OCC as a thrown failure.
       return {
         ok: false as const,
         code: PATCH_PIPELINE_CONFLICT_CODE,

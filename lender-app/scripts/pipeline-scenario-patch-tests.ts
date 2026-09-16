@@ -10,7 +10,7 @@ import {
   MAX_PIPELINE_SCENARIO_CHARS,
   PATCH_PIPELINE_CONFLICT_CODE,
 } from "../modules/pipeline/lib/core/patchPipelineResult";
-import { runPipelinePatchWithConflictRetry } from "../lib/pipeline/runPipelinePatchWithConflictRetry";
+import { runPipelinePatchHandlingConflict } from "../lib/pipeline/runPipelinePatchWithConflictRetry";
 import type { PatchPipelineResult } from "../lib/pipeline/patchPipelineResult";
 
 function testQuietNotify() {
@@ -48,55 +48,51 @@ function testConflictGuard() {
   );
 }
 
-async function testRetry() {
+async function testSuccessPassthrough() {
   let calls = 0;
   const patch = async (args: {
     id: string;
     expectedUpdatedAt?: number;
   }): Promise<PatchPipelineResult> => {
     calls += 1;
-    if (calls === 1) {
-      assert.equal(args.expectedUpdatedAt, 1);
-      return {
-        ok: false,
-        code: PATCH_PIPELINE_CONFLICT_CODE,
-        serverUpdatedAt: 99,
-      };
-    }
-    assert.equal(args.expectedUpdatedAt, 99);
     return { ok: true, id: args.id };
   };
-  const res = await runPipelinePatchWithConflictRetry(patch, {
+  const res = await runPipelinePatchHandlingConflict(patch, {
     id: "file1",
     expectedUpdatedAt: 1,
   });
   assert.equal(res.ok, true);
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
 }
 
-async function testRetryExhausted() {
-  let exhausted = 0;
-  const patch = async (): Promise<PatchPipelineResult> => ({
-    ok: false,
-    code: PATCH_PIPELINE_CONFLICT_CODE,
-    serverUpdatedAt: 7,
-  });
+async function testConflictNoRetry() {
+  let calls = 0;
+  let notified = 0;
+  const patch = async (): Promise<PatchPipelineResult> => {
+    calls += 1;
+    return {
+      ok: false,
+      code: PATCH_PIPELINE_CONFLICT_CODE,
+      serverUpdatedAt: 7,
+    };
+  };
   await assert.rejects(
     () =>
-      runPipelinePatchWithConflictRetry(patch, { expectedUpdatedAt: 1 }, () => {
-        exhausted += 1;
+      runPipelinePatchHandlingConflict(patch, { expectedUpdatedAt: 1 }, () => {
+        notified += 1;
       }),
     /File changed elsewhere/,
   );
-  assert.equal(exhausted, 1);
+  assert.equal(calls, 1);
+  assert.equal(notified, 1);
 }
 
 async function main() {
   testQuietNotify();
   testClamp();
   testConflictGuard();
-  await testRetry();
-  await testRetryExhausted();
+  await testSuccessPassthrough();
+  await testConflictNoRetry();
   console.log("pipeline-scenario-patch-tests: ok");
 }
 
