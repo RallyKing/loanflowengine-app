@@ -5,12 +5,14 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { guessAttachmentKind, type AttachmentKind } from "@/lib/uploadToConvexStorage";
 import {
-  fetchAsBlobUrl,
+  fetchArrayBuffer,
   loadDocxPreview,
   loadSpreadsheetPreview,
   loadTextPreview,
+  previewSourceKey,
   type SpreadsheetPreviewTable,
 } from "@/lib/library/richFilePreviewLoaders";
+import { PdfInlinePreview } from "@/components/library/preview/PdfInlinePreview";
 
 export type RichFilePreviewProps = {
   url: string;
@@ -131,7 +133,10 @@ function SpreadsheetTable({
 
 /**
  * First-class inline preview for vault + lender delivery.
- * PDFs are re-hosted as same-origin blob URLs so Convex storage framing / attachment headers do not break preview.
+ * PDFs are fetched once and rendered with pdf.js canvases (native PDF iframes
+ * paint blank under production CSP / Chromium). Signed storage URL query
+ * rotation does not re-trigger the load. HTML uses an opaque sandboxed
+ * srcDoc iframe (no scripts / same-origin) — never inject into the app DOM.
  */
 export function RichFilePreview({
   url,
@@ -143,10 +148,11 @@ export function RichFilePreview({
   onError,
 }: RichFilePreviewProps) {
   const kind: AttachmentKind = guessAttachmentKind(contentType, fileName);
+  const sourceKey = previewSourceKey(url);
   const sheetNameRef = useRef<string>("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [textBody, setTextBody] = useState<string | null>(null);
   const [htmlBody, setHtmlBody] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SpreadsheetPreviewTable | null>(null);
@@ -160,9 +166,9 @@ export function RichFilePreview({
 
   useEffect(() => {
     let cancelled = false;
-    let revoke: string | null = null;
+    setBusy(true);
     setErr(null);
-    setBlobUrl(null);
+    setPdfBytes(null);
     setTextBody(null);
     setHtmlBody(null);
     setSheet(null);
@@ -180,20 +186,15 @@ export function RichFilePreview({
     void (async () => {
       try {
         if (kind === "pdf") {
-          setBusy(true);
-          const next = await fetchAsBlobUrl(url, "application/pdf");
-          if (cancelled) {
-            URL.revokeObjectURL(next);
-            return;
-          }
-          revoke = next;
-          setBlobUrl(next);
+          // Fetch bytes once; pdf.js canvases — not native iframe/blob — paint reliably.
+          const buf = await fetchArrayBuffer(url);
+          if (cancelled) return;
+          setPdfBytes(new Uint8Array(buf));
           setBusy(false);
           return;
         }
 
         if (kind === "text") {
-          setBusy(true);
           const t = await loadTextPreview(url);
           if (cancelled) return;
           setTextBody(t);
@@ -202,7 +203,6 @@ export function RichFilePreview({
         }
 
         if (kind === "html") {
-          setBusy(true);
           const t = await loadTextPreview(url);
           if (cancelled) return;
           setHtmlBody(t);
@@ -211,7 +211,6 @@ export function RichFilePreview({
         }
 
         if (kind === "spreadsheet") {
-          setBusy(true);
           const table = await loadSpreadsheetPreview(url, fileName);
           if (cancelled) return;
           setSheet(table);
@@ -227,7 +226,6 @@ export function RichFilePreview({
             );
             return;
           }
-          setBusy(true);
           const doc = await loadDocxPreview(url);
           if (cancelled) return;
           setDocxParas(doc.paragraphs);
@@ -245,11 +243,11 @@ export function RichFilePreview({
 
     return () => {
       cancelled = true;
-      if (revoke) URL.revokeObjectURL(revoke);
     };
-    // Intentionally omit onError — parents often pass inline lambdas.
+    // Use sourceKey (path without signed-query) so Convex URL rotation does not
+    // re-fetch / blank the preview. Intentionally omit onError (inline lambdas).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, fileName, contentType, kind]);
+  }, [sourceKey, fileName, contentType, kind]);
 
   useEffect(() => {
     if (kind !== "spreadsheet" || !activeSheet) return;
@@ -281,7 +279,7 @@ export function RichFilePreview({
     viewportClassName,
   );
 
-  if (busy && !blobUrl && !textBody && !htmlBody && !sheet && !docxParas) {
+  if (busy && !pdfBytes && !textBody && !htmlBody && !sheet && !docxParas) {
     return (
       <div
         className={cn("flex items-center justify-center gap-2 text-sm text-muted-foreground", className, viewport)}
@@ -318,7 +316,7 @@ export function RichFilePreview({
   const allowOpen = !protectMedia;
 
   if (kind === "pdf") {
-    if (err || !blobUrl) {
+    if (err || !pdfBytes) {
       return (
         <div className={cn(className, viewport)} data-testid="rich-file-preview-pdf-error">
           <OpenFallback
@@ -329,20 +327,14 @@ export function RichFilePreview({
         </div>
       );
     }
-    const pdfSrc = protectMedia
-      ? `${blobUrl}#toolbar=0&navpanes=0`
-      : blobUrl;
+    // Canvas path has no native PDF chrome; protectMedia still gates Open + context menu.
     return (
       <div
-        className={cn(className, viewport, "overflow-hidden")}
+        className={cn(className, viewport, "overflow-auto bg-neutral-100")}
         data-testid="rich-file-preview-pdf"
         onContextMenu={protectMedia ? (e) => e.preventDefault() : undefined}
       >
-        <iframe
-          title={fileName}
-          src={pdfSrc}
-          className="absolute inset-0 h-full w-full border-0 bg-white"
-        />
+        <PdfInlinePreview data={pdfBytes} fileName={fileName} />
       </div>
     );
   }

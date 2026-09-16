@@ -42,6 +42,12 @@ export async function fetchArrayBuffer(url: string): Promise<ArrayBuffer> {
   return res.arrayBuffer();
 }
 
+/** Stable identity for Convex signed URLs (token rotates; object path does not). */
+export function previewSourceKey(url: string): string {
+  const q = url.indexOf("?");
+  return q >= 0 ? url.slice(0, q) : url;
+}
+
 /** Fetch remote file bytes and expose as a same-origin blob URL (fixes Convex iframe framing). */
 export async function fetchAsBlobUrl(
   url: string,
