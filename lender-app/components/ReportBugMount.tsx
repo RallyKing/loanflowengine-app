@@ -435,7 +435,7 @@ function ReportBugFabAndDialog() {
               variant="primary"
               size="sm"
               data-testid="report-bug-submit"
-              disabled={submitting || capturing}
+              disabled={submitting}
               onClick={() => void onSubmit()}
             >
               {submitting ? (
