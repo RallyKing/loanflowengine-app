@@ -314,10 +314,28 @@ async function postGrokBotWebhook(
   }
 }
 
+type OutboundDeliveryResult = {
+  github: {
+    ok: boolean;
+    skipped?: boolean;
+    reason?: string;
+    issueUrl?: string;
+  };
+  webhook: {
+    ok: boolean;
+    skipped?: boolean;
+    reason?: string;
+  };
+};
+
 /**
  * One-shot outbound: GitHub (opt-in + private only) then GrokBot webhook (primary).
  * Webhook payload may include screenshot URL (private Convex storage URL) for triage.
  * Does not reschedule itself. Idempotent via claim + prior-success skips.
+ *
+ * Single export only — do not add `export const alias = deliverBugReportOutbound`
+ * (circular TS7022 via `_generated/api` + self-referencing initializer).
+ * Old scheduler name `createGitHubIssueForBugReport` is unused; callers use this name.
  */
 export const deliverBugReportOutbound = internalAction({
   args: { reportId: v.id("bugReports") },
@@ -334,7 +352,7 @@ export const deliverBugReportOutbound = internalAction({
       reason: v.optional(v.string()),
     }),
   }),
-  handler: async (ctx, { reportId }) => {
+  handler: async (ctx, { reportId }): Promise<OutboundDeliveryResult> => {
     const claim = await ctx.runMutation(
       internal.bugReports.internalClaimOutboundDelivery,
       { reportId },
@@ -380,7 +398,7 @@ export const deliverBugReportOutbound = internalAction({
       );
     }
 
-    const github = claim.skipGithub
+    const github: GitHubResult = claim.skipGithub
       ? {
           ok: true,
           skipped: true,
@@ -410,14 +428,15 @@ export const deliverBugReportOutbound = internalAction({
       source: "lfe_in_app_bug_report",
     };
 
-    const webhook = claim.skipWebhook
-      ? { ok: true, skipped: true, reason: "already_delivered" }
-      : await postGrokBotWebhook(
-          ctx,
-          reportId,
-          webhookPayload,
-          report.webhookDeliveredAt,
-        );
+    const webhook: { ok: boolean; skipped?: boolean; reason?: string } =
+      claim.skipWebhook
+        ? { ok: true, skipped: true, reason: "already_delivered" }
+        : await postGrokBotWebhook(
+            ctx,
+            reportId,
+            webhookPayload,
+            report.webhookDeliveredAt,
+          );
 
     return {
       github: {
@@ -434,9 +453,3 @@ export const deliverBugReportOutbound = internalAction({
     };
   },
 });
-
-/**
- * Back-compat alias if anything still schedules the old name.
- * Same one-shot handler — no reschedule.
- */
-export const createGitHubIssueForBugReport = deliverBugReportOutbound;
