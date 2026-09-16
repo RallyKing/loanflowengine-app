@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import { cn } from "@/lib/cn";
 import { configurePdfjsWorker } from "@/lib/library/pdfjsWorker";
 
@@ -46,16 +47,14 @@ export function PdfInlinePreview({
     setPageInfo(null);
 
     void (async () => {
+      let pdf: PDFDocumentProxy | null = null;
       try {
         await configurePdfjsWorker();
         const pdfjs = await import("pdfjs-dist");
         // Copy buffer — pdf.js may transfer/detach the underlying ArrayBuffer.
         const copy = new Uint8Array(data);
-        const pdf = await pdfjs.getDocument({ data: copy }).promise;
-        if (cancelled) {
-          await pdf.destroy();
-          return;
-        }
+        pdf = await pdfjs.getDocument({ data: copy }).promise;
+        if (cancelled) return;
 
         const total = pdf.numPages;
         const shown = Math.min(total, maxPages);
@@ -76,19 +75,23 @@ export function PdfInlinePreview({
           fragment.appendChild(canvas);
         }
 
-        if (cancelled) {
-          await pdf.destroy();
-          return;
-        }
+        if (cancelled) return;
 
         host.replaceChildren(fragment);
         setPageInfo({ total, shown });
         setBusy(false);
-        await pdf.destroy();
       } catch (e) {
         if (cancelled) return;
         setErr(e instanceof Error ? e.message : String(e));
         setBusy(false);
+      } finally {
+        if (pdf) {
+          try {
+            await pdf.destroy();
+          } catch {
+            // Ignore destroy races after cancel/unmount.
+          }
+        }
       }
     })();
 
