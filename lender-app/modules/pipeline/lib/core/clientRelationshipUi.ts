@@ -114,8 +114,14 @@ export function rowMatchesClientInvolvementFilter(
   if (!filters.clientId) return true;
   const target = filters.clientId;
   const loanLinks = row.linkedClients ?? [];
+  // `undefined` means enrichment pending — do not coerce to [] (would miss
+  // project-only involvement). Callers should gate until enrichment is ready;
+  // when still unknown, only loan/FK links can match.
+  const projectLinksKnown = row.projectLinkedClients !== undefined;
   const projectLinks = row.projectLinkedClients ?? [];
-  const allLinks = [...loanLinks, ...projectLinks];
+  const allLinks = projectLinksKnown
+    ? [...loanLinks, ...projectLinks]
+    : loanLinks;
   const primaryOnly =
     filters.primaryOnly || filters.relationshipType === "primary";
 
@@ -125,8 +131,8 @@ export function rowMatchesClientInvolvementFilter(
 
   if (primaryOnly) {
     if (row.clientId != null && String(row.clientId) === target) return true;
-    return linksHavePrimaryMatch(loanLinks, target) ||
-      linksHavePrimaryMatch(projectLinks, target);
+    if (linksHavePrimaryMatch(loanLinks, target)) return true;
+    return projectLinksKnown && linksHavePrimaryMatch(projectLinks, target);
   }
 
   if (filters.relationshipType !== "any") {
@@ -141,7 +147,10 @@ export function rowMatchesClientInvolvementFilter(
     );
   }
 
-  return matchesClient(loanLinks) || matchesClient(projectLinks);
+  return (
+    matchesClient(loanLinks) ||
+    (projectLinksKnown && matchesClient(projectLinks))
+  );
 }
 
 function linksHavePrimaryMatch(

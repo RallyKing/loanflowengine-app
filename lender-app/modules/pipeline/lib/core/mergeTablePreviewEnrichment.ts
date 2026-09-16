@@ -1,6 +1,8 @@
 /**
  * Merge deferred `listTablePreviewEnrichment` into first-paint hub rows.
- * Enrichment is optional — first paint stays correct without graph/capital/notes.
+ * Until enrichment arrives, deferred fields stay unknown (`undefined`) — do not
+ * coerce to empty arrays/zeros. Callers that need capital, project clients,
+ * graph badges, or note counts must wait for enrichment (or skip those filters/UI).
  */
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";

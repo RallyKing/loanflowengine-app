@@ -35,7 +35,7 @@ function stubRow(
     fundingAmountDisplay: "",
     netToUserDisplay: "",
     notesDisplay: "",
-    fileNotesCount: 0,
+    // Deferred field unknown until enrichment
     searchText: "file lead",
     canEditFile: true,
     ownership: null,
@@ -48,7 +48,8 @@ function stubRow(
 
 const core = [stubRow("f1"), stubRow("f2")];
 const mergedEmpty = mergeTablePreviewEnrichment(core, undefined);
-assert.equal(mergedEmpty[0]!.fileNotesCount, 0);
+assert.equal(mergedEmpty[0]!.fileNotesCount, undefined);
+assert.equal(mergedEmpty[0]!.projectLinkedClients, undefined);
 assert.equal(mergedEmpty[0]!.graphLinks, undefined);
 
 const enriched = mergeTablePreviewEnrichment(core, [
@@ -95,7 +96,9 @@ assert.ok(enriched[0]!.graphLinks);
 assert.equal(enriched[0]!.projectCapitalRollup?.remainingGap, 60);
 assert.equal(enriched[0]!.projectLinkedClients?.length, 1);
 assert.match(enriched[0]!.searchText, /capital hay/);
-assert.equal(enriched[1]!.fileNotesCount, 0);
+// Unenriched sibling keeps unknown deferred fields (not coerced to 0/[]).
+assert.equal(enriched[1]!.fileNotesCount, undefined);
 assert.equal(enriched[1]!.graphLinks, undefined);
+assert.equal(enriched[1]!.projectLinkedClients, undefined);
 
 console.log("pipeline-hub-enrichment-merge-tests: OK");

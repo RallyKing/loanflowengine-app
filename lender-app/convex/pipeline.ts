@@ -1028,10 +1028,12 @@ export const listTablePreview = query({
         projectDisplayTitle,
         linkedClients: h.linkedClients,
         // Deferred — filled by listTablePreviewEnrichment.
-        projectLinkedClients: [],
+        // Leave unknown (undefined), never coerce to [] / 0 — consumers must
+        // not treat missing enrichment as authoritative empty.
+        projectLinkedClients: undefined,
         projectCapitalRollup: undefined,
         graphLinks: undefined,
-        fileNotesCount: 0,
+        fileNotesCount: undefined,
       };
     });
   },

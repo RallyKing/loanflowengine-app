@@ -517,7 +517,7 @@ export function PipelineTableRow({
             organizationId={organizationId}
             memberUserKey={memberUserKey}
             fileName={r.fileName}
-            noteCount={r.fileNotesCount ?? 0}
+            noteCount={r.fileNotesCount}
             canEdit={editable && r.canEditFile}
             onOpenNotes={onOpenNotes}
           />
@@ -532,7 +532,7 @@ export function PipelineTableRow({
               onOpenNotes();
             }}
           >
-            {(r.fileNotesCount ?? 0) > 0
+            {r.fileNotesCount != null && r.fileNotesCount > 0
               ? `${r.fileNotesCount} note${r.fileNotesCount === 1 ? "" : "s"}`
               : "Notes"}
           </Button>

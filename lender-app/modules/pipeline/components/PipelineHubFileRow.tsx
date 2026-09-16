@@ -147,7 +147,7 @@ export function PipelineHubFileRow({
             <span>{statusInfo.label}</span>
             <span>{fmtPipelineRelativeUpdated(row.updatedAt)}</span>
             <PipelineHubNotesIndicatorChip
-              noteCount={row.fileNotesCount ?? 0}
+              noteCount={row.fileNotesCount}
               fileName={row.fileName}
               onOpenNotes={onOpenNotes}
             />
@@ -214,7 +214,7 @@ export function PipelineHubFileRow({
               {fmtPipelineRelativeUpdated(row.updatedAt)}
             </span>
             <PipelineHubNotesIndicatorChip
-              noteCount={row.fileNotesCount ?? 0}
+              noteCount={row.fileNotesCount}
               fileName={row.fileName}
               onOpenNotes={onOpenNotes}
               className="ml-0.5"

@@ -237,7 +237,7 @@ function LoanStackRow({
             <span>{statusInfo.label}</span>
             <span>{fmtPipelineRelativeUpdated(row.updatedAt)}</span>
             <PipelineHubNotesIndicatorChip
-              noteCount={row.fileNotesCount ?? 0}
+              noteCount={row.fileNotesCount}
               fileName={row.fileName}
               onOpenNotes={onOpenNotes}
             />
@@ -297,7 +297,7 @@ function LoanStackRow({
             <span>{statusInfo.label}</span>
             <span>{fmtPipelineRelativeUpdated(row.updatedAt)}</span>
             <PipelineHubNotesIndicatorChip
-              noteCount={row.fileNotesCount ?? 0}
+              noteCount={row.fileNotesCount}
               fileName={row.fileName}
               onOpenNotes={onOpenNotes}
             />

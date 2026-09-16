@@ -77,8 +77,11 @@ export type PipelineTablePreviewRow = Omit<PipelineListRow, "fundingAmount"> & {
   netToUserDisplay: string;
   /** Legacy `pipeline.notes` string (export/search only — UI uses `fileNotesCount`). */
   notesDisplay: string;
-  /** Phase 19.5 — relational audit log entry count (`pipelineFileNotes`). */
-  fileNotesCount: number;
+  /**
+   * Phase 19.5 — relational audit log entry count (`pipelineFileNotes`).
+   * `undefined` until `listTablePreviewEnrichment` merges — never treat as 0.
+   */
+  fileNotesCount?: number;
   searchText: string;
   /** True when the current member may edit org-scoped file fields (not view-only). */
   canEditFile: boolean;
