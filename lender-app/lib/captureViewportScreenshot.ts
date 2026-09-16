@@ -5,6 +5,8 @@
  * Performance (heavy DOM / pipeline hub):
  * - Yield to the browser before capture so the Report-a-bug sheet can paint.
  * - Prefer a smaller capture root (`[data-app-main-scroll]`).
+ * - Gate on DOM node count before `toBlob` — soft timeouts cannot fire while
+ *   html-to-image's sync clone/getComputedStyle freezes the main thread.
  * - Avoid `cacheBust` on first pass; skip font embedding; JPEG @ 1× DPR.
  * - Skip video/iframe/canvas nodes; downscale the canvas output.
  * - Race a short timeout and return `null` so the form stays usable when
@@ -36,6 +38,12 @@ export type CaptureViewportScreenshotOptions = {
 const CAPTURE_PIXEL_RATIO = 1;
 /** Soft budget so Capturing… does not hang indefinitely on huge DOMs. */
 const DEFAULT_CAPTURE_TIMEOUT_MS = 8_000;
+/**
+ * Skip html-to-image when the capture root has more nodes than this.
+ * Sync clone + getComputedStyle on ~pipeline-hub trees can freeze Chrome
+ * for ~90s; Promise.race cannot interrupt that. querySelectorAll count is cheap.
+ */
+const MAX_CAPTURE_DOM_NODES = 2500;
 /** Cap output width to limit canvas raster cost. */
 const MAX_CANVAS_WIDTH = 1280;
 const JPEG_QUALITY = 0.72;
@@ -163,6 +171,25 @@ export async function captureViewportScreenshot(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_CAPTURE_TIMEOUT_MS;
   const startedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
+
+  const nodes = root.querySelectorAll("*").length;
+  if (nodes > MAX_CAPTURE_DOM_NODES) {
+    const elapsedMs = Math.round(
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) -
+        startedAt,
+    );
+    console.info("[bug-report] screenshot capture", {
+      outcome: "skipped-dom-too-large",
+      nodes,
+      ms: elapsedMs,
+      root:
+        root.id ||
+        root.getAttribute("data-testid") ||
+        root.tagName.toLowerCase(),
+      viewport: `${width}x${height}`,
+    });
+    return null;
+  }
 
   const work = (async (): Promise<Blob | null> => {
     // Fast path: no cache-bust (avoids re-fetching every <img> on heavy pages).
