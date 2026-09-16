@@ -1540,10 +1540,9 @@ export default defineSchema({
     notes: v.optional(v.string()),
 
     /**
-     * Denormalized count of `pipelineFileNotes` for this file. Maintained on
-     * note create/delete so `listTablePreview` can paint the notes badge
-     * without loading note bodies. Untouched legacy rows read as 0 until the
-     * next note write bumps the counter.
+     * @deprecated Unused on the hub path. Note badges use a bounded
+     * `by_org_file` count (`loadNoteCountsForFiles`). Field retained so existing
+     * documents remain schema-valid; do not treat as authoritative.
      */
     hubNotesCount: v.optional(v.number()),
 

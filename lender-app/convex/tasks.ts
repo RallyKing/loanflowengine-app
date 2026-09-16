@@ -24,7 +24,6 @@ import {
   assertCanMutatePipelineRow,
   ownerUserIdFieldsForInsert,
 } from "./resourceAccess";
-import { bumpPipelineHubNotesCount } from "./pipelineHubNotesCount";
 import { buildTaskOwnershipPresentation } from "./resourceOwnershipPresentation";
 import {
   removeAllFileTaskEdgesForTask,
@@ -1352,7 +1351,6 @@ export const wakeUpTask = mutation({
             linkedTaskId: args.id,
             linkedTaskTitle: taskTitle,
           });
-          await bumpPipelineHubNotesCount(ctx, t.relatedFileId, 1);
         } catch {
           /* file note is best-effort when pipeline mutate ACL fails */
         }
@@ -1485,8 +1483,6 @@ export const recordTaskAttempt = mutation({
       linkedTaskTitle: taskTitle,
       attemptNumber,
     });
-    await bumpPipelineHubNotesCount(ctx, fileId, 1);
-
     await ctx.db.patch(args.id, {
       attemptCount: attemptNumber,
       lastAttemptAt: now,

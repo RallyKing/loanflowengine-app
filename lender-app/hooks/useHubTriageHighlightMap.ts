@@ -4,11 +4,15 @@ import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { useTriageClockTime } from "@/components/providers/TriageClockProvider";
 import {
   EMPTY_HUB_TRIAGE_HIGHLIGHT_MAP,
+  hubTriageMapFromQuery,
   normalizeHubTriageHighlightMap,
   type HubTriageHighlightMapView,
 } from "@/lib/pipeline/hubTriageHighlight";
+import { projectHubTriageHighlightMap } from "@/lib/pipeline/projectHubTriageHighlightMap";
+import { resolveTriageEvaluationTime } from "@/lib/triageClock";
 
 function triageHighlightContextKey(
   organizationId: Id<"organizations"> | null | undefined,
@@ -23,14 +27,15 @@ function triageHighlightContextKey(
  * Reactive triage bubbles for hub / board / file workspace (Phase 24.2A).
  *
  * Query args are stable (no minute `nowBucket`) so Convex does not force a full
- * uncached re-read every 60s. Schedule/overdue evaluation refreshes when task
- * or pipeline data invalidates the subscription.
+ * uncached re-read every 60s. Time-sensitive schedule / snooze / overdue gates
+ * are projected locally from `fileCandidates` using TriageClockProvider.
  */
 export function useHubTriageHighlightMap(
   organizationId: Id<"organizations"> | null | undefined,
   memberUserKey: string | undefined,
 ): HubTriageHighlightMapView {
   const contextKey = triageHighlightContextKey(organizationId, memberUserKey);
+  const nowBucket = useTriageClockTime();
 
   const queryArgs = useMemo(() => {
     if (!contextKey) return "skip" as const;
@@ -50,8 +55,15 @@ export function useHubTriageHighlightMap(
 
   const normalized = useMemo(() => {
     if (raw === undefined) return undefined;
+    const candidates = raw.fileCandidates;
+    if (Array.isArray(candidates)) {
+      const now = resolveTriageEvaluationTime(nowBucket);
+      return hubTriageMapFromQuery(
+        projectHubTriageHighlightMap(candidates, now),
+      );
+    }
     return normalizeHubTriageHighlightMap(raw);
-  }, [raw]);
+  }, [raw, nowBucket]);
 
   useEffect(() => {
     if (!contextKey) {

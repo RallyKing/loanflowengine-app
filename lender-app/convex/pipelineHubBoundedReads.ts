@@ -337,29 +337,9 @@ export async function loadRelatedTasksForFiles(
 }
 
 /**
- * Note badge counts from denormalized `pipeline.hubNotesCount` — zero note-body
- * reads. Files without the field (legacy) contribute 0 until the next note write.
- */
-export function noteCountsFromPipelineDocs(
-  files: ReadonlyArray<{
-    _id: Id<"pipeline">;
-    hubNotesCount?: number;
-  }>,
-): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const file of files) {
-    const n =
-      typeof file.hubNotesCount === "number" && file.hubNotesCount > 0
-        ? Math.floor(file.hubNotesCount)
-        : 0;
-    counts.set(String(file._id), n);
-  }
-  return counts;
-}
-
-/**
- * @deprecated Prefer `noteCountsFromPipelineDocs` on the hub path. Kept for
- * callers that still need an exact live count via `by_org_file`.
+ * Bounded note badge counts via `pipelineFileNotes.by_org_file`.
+ * Takes `cap + 1` and saturates at `cap` so a missing denorm field can never
+ * permanently lie as 0 while notes exist.
  */
 export async function loadNoteCountsForFiles(
   ctx: QueryCtx,
@@ -387,12 +367,15 @@ export async function loadNoteCountsForFiles(
         .withIndex("by_org_file", (q) =>
           q.eq("organizationId", organizationId).eq("pipelineFileId", fileId),
         )
-        .take(PIPELINE_FILE_NOTE_SCAN_CAP),
+        .take(PIPELINE_FILE_NOTE_SCAN_CAP + 1),
     ),
   );
   const counts = new Map<string, number>();
   perFile.forEach((notes, i) => {
-    counts.set(String(targets[i]!.fileId), notes.length);
+    counts.set(
+      String(targets[i]!.fileId),
+      Math.min(notes.length, PIPELINE_FILE_NOTE_SCAN_CAP),
+    );
   });
   return counts;
 }

@@ -25,10 +25,17 @@ import {
 } from "../lib/pipeline/hubHierarchyKeys";
 import { lookupTaskColorPreset } from "../lib/taskColorPresets";
 import { normalizeTriageLabelHex, resolveTriageLabelHex } from "../lib/triageLabelColor";
-import { taskParticipatesInTriageBubble } from "../lib/pipeline/triageHighlightParticipation";
-import { resolveTriageLabelSeverityWeight } from "../lib/pipeline/triageSeverityWeight";
 import { resolveTriageEvaluationTime } from "../lib/triageClock";
 import { isCurrentlySnoozed as pipelineIsCurrentlySnoozed } from "../lib/pipelineSnooze";
+import { resolveTriageLabelSeverityWeight } from "../lib/pipeline/triageSeverityWeight";
+import {
+  emptyProjectedHubTriageHighlightMap,
+  projectHubTriageHighlightMap,
+  type HubTriageFileCandidate,
+  type HubTriageLabelCandidate,
+  type HubTriageOpenCandidate,
+  type ProjectedHubTriageHighlightMap,
+} from "../lib/pipeline/projectHubTriageHighlightMap";
 
 const orgArgs = {
   organizationId: v.id("organizations"),
@@ -37,15 +44,16 @@ const orgArgs = {
 
 const triageTimeArgs = {
   /**
-   * Optional minute bucket. Prefer omitting so the hub subscription stays stable;
-   * the server falls back to evaluation time without forcing a per-minute
-   * resubscribe. Kept for backwards-compatible callers.
+   * Optional minute bucket for one-shot / legacy callers.
+   * Hub subscription omits this so args stay cache-stable; the client projects
+   * `fileCandidates` against TriageClockProvider instead.
    */
   nowBucket: v.optional(v.number()),
   /** @deprecated Alias for `nowBucket`. */
   currentTriageTime: v.optional(v.number()),
 };
 
+/** @deprecated Prefer string-shaped entries from projected maps / candidates. */
 export type TriageHighlightEntry = {
   triageLabelId: Id<"organizationTriageLabels">;
   label: string;
@@ -63,80 +71,60 @@ export type TaskRollupCounts = {
   topStatus: "todo" | "in_progress" | null;
 };
 
-export type HubTriageHighlightMapResult = {
-  files: Record<string, TriageHighlightEntry>;
-  projects: Record<string, TriageHighlightEntry>;
-  clients: Record<string, TriageHighlightEntry>;
-  counts: {
-    files: Record<string, TaskRollupCounts>;
-    projects: Record<string, TaskRollupCounts>;
-    clients: Record<string, TaskRollupCounts>;
-  };
+export type HubTriageHighlightMapResult = ProjectedHubTriageHighlightMap & {
+  /**
+   * Time-stable candidates. Hub UI projects these with a local clock so
+   * schedule / snooze / overdue refresh without minute Convex resubscribes.
+   */
+  fileCandidates: HubTriageFileCandidate[];
 };
 
 const emptyMap = (): HubTriageHighlightMapResult => ({
-  files: {},
-  projects: {},
-  clients: {},
-  counts: { files: {}, projects: {}, clients: {} },
+  ...emptyProjectedHubTriageHighlightMap(),
+  fileCandidates: [],
 });
 
-function mergeRollupCounts(
-  current: TaskRollupCounts | undefined,
-  add: TaskRollupCounts,
-): TaskRollupCounts {
-  if (!current) return { ...add };
-  return {
-    open: current.open + add.open,
-    overdue: current.overdue + add.overdue,
-    topStatus:
-      current.topStatus === "in_progress" || add.topStatus === "in_progress"
-        ? "in_progress"
-        : (current.topStatus ?? add.topStatus),
-  };
-}
-
-function pickStrongerEntry(
-  current: TriageHighlightEntry | undefined,
-  candidate: TriageHighlightEntry,
-): TriageHighlightEntry {
-  if (!current) return candidate;
-  if (candidate.severityWeight > current.severityWeight) return candidate;
-  if (candidate.severityWeight < current.severityWeight) return current;
-  return String(candidate.sourceTaskId) > String(current.sourceTaskId)
-    ? candidate
-    : current;
-}
-
-function buildEntry(
+function buildLabelCandidate(
   task: Doc<"tasks">,
   label: Doc<"organizationTriageLabels">,
   presets: Awaited<ReturnType<typeof readTaskColorPresetsForOrg>>,
-): TriageHighlightEntry | null {
+): HubTriageLabelCandidate | null {
   const colorToken = label.colorId.trim();
   const hexCode = resolveTriageLabelHex(label, presets);
   if (!normalizeTriageLabelHex(hexCode) && !lookupTaskColorPreset(presets, colorToken)) {
     return null;
   }
-  return {
-    triageLabelId: label._id,
+  const candidate: HubTriageLabelCandidate = {
+    triageLabelId: String(label._id),
     label: label.label.trim(),
     colorToken,
     severityWeight: resolveTriageLabelSeverityWeight(label),
-    sourceTaskId: task._id,
+    sourceTaskId: String(task._id),
     sourceTaskTitle: task.title.trim(),
     hexCode,
   };
+  if (typeof task.scheduledTriggerTime === "number") {
+    candidate.scheduledTriggerTime = task.scheduledTriggerTime;
+  }
+  if (typeof task.snoozedUntil === "number") {
+    candidate.snoozedUntil = task.snoozedUntil;
+  }
+  return candidate;
 }
 
 /**
  * Hub-visible pipeline files for triage — same row set / ACL as listTablePreview
  * (archive/snooze excluded by default).
+ *
+ * File-level snooze still uses evaluation time at query run; wake-up of a
+ * snoozed *file* requires a write (or listTablePreview refresh). Task-level
+ * schedule/snooze/overdue are projected on the client from candidates.
  */
 async function loadHubVisiblePipelineFilesForTriage(
   ctx: Parameters<typeof assertOrgMember>[0],
   organizationId: Id<"organizations">,
   memberUserKey: string,
+  now: number,
 ): Promise<Doc<"pipeline">[]> {
   const { rows } = await loadOrgScopedPipelineRowsBounded(
     ctx,
@@ -144,7 +132,6 @@ async function loadHubVisiblePipelineFilesForTriage(
     PIPELINE_TABLE_PREVIEW_MAX_ROWS,
     organizationId === PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID,
   );
-  const now = Date.now();
   const filtered = rows.filter((r) => {
     if (r.archivedAt != null) return false;
     if (pipelineIsCurrentlySnoozed(r.snoozedUntil, now)) return false;
@@ -160,21 +147,20 @@ async function loadHubVisiblePipelineFilesForTriage(
 }
 
 /**
- * Phase 24.2A — reactive triage bubbling (no colors stored on files/projects/clients).
- *
- * Scoped to hub-visible files, then `tasks.by_relatedFile` per file — never an
- * org-wide task collect + per-task ACL/hierarchy N+1.
+ * Collect time-stable per-file candidates (no schedule/snooze/overdue gating).
+ * Scoped to hub-visible files, then `tasks.by_relatedFile` — never org-wide.
  */
-async function buildHubTriageHighlightMap(
+async function collectHubTriageFileCandidates(
   ctx: Parameters<typeof assertOrgMember>[0],
   organizationId: Id<"organizations">,
   memberUserKey: string,
-  nowBucket: number,
   scopeFileIds?: ReadonlyArray<Id<"pipeline">>,
-): Promise<HubTriageHighlightMapResult> {
+): Promise<HubTriageFileCandidate[]> {
   const presets = await readTaskColorPresetsForOrg(ctx, organizationId);
   const triageLabels = await loadTriageLabelsForOrg(ctx, organizationId);
-  const now = resolveTriageEvaluationTime(nowBucket);
+  // File set uses a query-time clock only for pipeline-file snooze alignment with
+  // listTablePreview; task time gates stay on the client.
+  const fileSetNow = Date.now();
 
   const visibleFiles = scopeFileIds?.length
     ? (
@@ -188,9 +174,10 @@ async function buildHubTriageHighlightMap(
         ctx,
         organizationId,
         memberUserKey,
+        fileSetNow,
       );
 
-  if (visibleFiles.length === 0) return emptyMap();
+  if (visibleFiles.length === 0) return [];
 
   const visibleById = new Map(visibleFiles.map((f) => [String(f._id), f]));
   const { rows: tasks } = await loadRelatedTasksForFiles(
@@ -199,43 +186,57 @@ async function buildHubTriageHighlightMap(
     organizationId,
   );
 
-  const files: Record<string, TriageHighlightEntry> = {};
-  const fileCounts: Record<string, TaskRollupCounts> = {};
-  const fileMeta = new Map<
-    Id<"pipeline">,
-    { projectKey: string; clientKey: string }
+  const byFile = new Map<
+    string,
+    {
+      projectKey: string;
+      clientKey: string;
+      labels: HubTriageLabelCandidate[];
+      open: HubTriageOpenCandidate[];
+    }
   >();
 
-  async function ensureFileMeta(fileId: Id<"pipeline">): Promise<void> {
-    if (fileMeta.has(fileId)) return;
-    const file = visibleById.get(String(fileId));
-    if (!file) return;
+  async function ensureFileBucket(fileId: Id<"pipeline">): Promise<
+    | {
+        projectKey: string;
+        clientKey: string;
+        labels: HubTriageLabelCandidate[];
+        open: HubTriageOpenCandidate[];
+      }
+    | undefined
+  > {
+    const key = String(fileId);
+    const existing = byFile.get(key);
+    if (existing) return existing;
+    const file = visibleById.get(key);
+    if (!file) return undefined;
 
+    let projectKey = "";
+    let clientKey = "";
     if (file.clientId || file.projectId) {
-      fileMeta.set(fileId, {
-        projectKey: hubProjectKeyFromRowFields({
-          clientId: file.clientId ? String(file.clientId) : null,
-          projectId: file.projectId ? String(file.projectId) : null,
-          clientDisplayName: null,
-          projectDisplayTitle: null,
-        }),
-        clientKey: hubClientKeyFromRowFields({
-          clientId: file.clientId ? String(file.clientId) : null,
-          clientDisplayName: null,
-        }),
+      projectKey = hubProjectKeyFromRowFields({
+        clientId: file.clientId ? String(file.clientId) : null,
+        projectId: file.projectId ? String(file.projectId) : null,
+        clientDisplayName: null,
+        projectDisplayTitle: null,
       });
-      return;
+      clientKey = hubClientKeyFromRowFields({
+        clientId: file.clientId ? String(file.clientId) : null,
+        clientDisplayName: null,
+      });
+    } else {
+      try {
+        const hierarchy = await safeResolveFileHierarchy(ctx, file);
+        projectKey = hubProjectKeyFromHierarchy(hierarchy);
+        clientKey = hubClientKeyFromHierarchy(hierarchy);
+      } catch {
+        /* hierarchy unresolved — file-level data still returned */
+      }
     }
 
-    try {
-      const hierarchy = await safeResolveFileHierarchy(ctx, file);
-      fileMeta.set(fileId, {
-        projectKey: hubProjectKeyFromHierarchy(hierarchy),
-        clientKey: hubClientKeyFromHierarchy(hierarchy),
-      });
-    } catch {
-      /* hierarchy unresolved — file-level data still returned */
-    }
+    const bucket = { projectKey, clientKey, labels: [], open: [] };
+    byFile.set(key, bucket);
+    return bucket;
   }
 
   for (const task of tasks) {
@@ -243,79 +244,54 @@ async function buildHubTriageHighlightMap(
     if (!visibleById.has(String(task.relatedFileId))) continue;
 
     const isOpen = task.status === "todo" || task.status === "in_progress";
-    const isSnoozedNow =
-      typeof task.snoozedUntil === "number" && task.snoozedUntil > now;
-    const countsOpen = isOpen && !isSnoozedNow;
-    const isLabeledBubble =
-      taskParticipatesInTriageBubble(task, now) && Boolean(task.triageLabelId);
+    if (!isOpen) continue;
 
-    if (!countsOpen && !isLabeledBubble) continue;
+    const bucket = await ensureFileBucket(task.relatedFileId);
+    if (!bucket) continue;
 
-    const fileId = task.relatedFileId;
-    const fileKey = String(fileId);
-
-    if (countsOpen) {
-      const overdue =
-        typeof task.dueDate === "number" && task.dueDate < now ? 1 : 0;
-      fileCounts[fileKey] = mergeRollupCounts(fileCounts[fileKey], {
-        open: 1,
-        overdue,
-        topStatus: task.status === "in_progress" ? "in_progress" : "todo",
-      });
-      await ensureFileMeta(fileId);
+    const openCandidate: HubTriageOpenCandidate = {
+      status: task.status === "in_progress" ? "in_progress" : "todo",
+    };
+    if (typeof task.dueDate === "number") openCandidate.dueDate = task.dueDate;
+    if (typeof task.snoozedUntil === "number") {
+      openCandidate.snoozedUntil = task.snoozedUntil;
     }
+    bucket.open.push(openCandidate);
 
-    if (isLabeledBubble && task.triageLabelId) {
+    if (task.triageLabelId) {
       const label = triageLabels.get(String(task.triageLabelId));
       if (!label) continue;
-      const entry = buildEntry(task, label, presets);
-      if (!entry) continue;
-      files[fileKey] = pickStrongerEntry(files[fileKey], entry);
-      await ensureFileMeta(fileId);
+      const candidate = buildLabelCandidate(task, label, presets);
+      if (!candidate) continue;
+      bucket.labels.push(candidate);
     }
   }
 
-  const projects: Record<string, TriageHighlightEntry> = {};
-  const projectToClient = new Map<string, string>();
+  return [...byFile.entries()].map(([fileId, bucket]) => ({
+    fileId,
+    projectKey: bucket.projectKey,
+    clientKey: bucket.clientKey,
+    labels: bucket.labels,
+    open: bucket.open,
+  }));
+}
 
-  for (const [fileId, entry] of Object.entries(files)) {
-    const meta = fileMeta.get(fileId as Id<"pipeline">);
-    if (!meta) continue;
-    projects[meta.projectKey] = pickStrongerEntry(
-      projects[meta.projectKey],
-      entry,
-    );
-    projectToClient.set(meta.projectKey, meta.clientKey);
-  }
-
-  const clients: Record<string, TriageHighlightEntry> = {};
-  for (const [projectKey, entry] of Object.entries(projects)) {
-    const clientKey = projectToClient.get(projectKey);
-    if (!clientKey) continue;
-    clients[clientKey] = pickStrongerEntry(clients[clientKey], entry);
-  }
-
-  const projectCounts: Record<string, TaskRollupCounts> = {};
-  const clientCounts: Record<string, TaskRollupCounts> = {};
-  for (const [fileId, rollup] of Object.entries(fileCounts)) {
-    const meta = fileMeta.get(fileId as Id<"pipeline">);
-    if (!meta) continue;
-    projectCounts[meta.projectKey] = mergeRollupCounts(
-      projectCounts[meta.projectKey],
-      rollup,
-    );
-    clientCounts[meta.clientKey] = mergeRollupCounts(
-      clientCounts[meta.clientKey],
-      rollup,
-    );
-  }
-
-  return {
-    files,
-    projects,
-    clients,
-    counts: { files: fileCounts, projects: projectCounts, clients: clientCounts },
-  };
+async function buildHubTriageHighlightMap(
+  ctx: Parameters<typeof assertOrgMember>[0],
+  organizationId: Id<"organizations">,
+  memberUserKey: string,
+  nowBucket: number,
+  scopeFileIds?: ReadonlyArray<Id<"pipeline">>,
+): Promise<HubTriageHighlightMapResult> {
+  const fileCandidates = await collectHubTriageFileCandidates(
+    ctx,
+    organizationId,
+    memberUserKey,
+    scopeFileIds,
+  );
+  const now = resolveTriageEvaluationTime(nowBucket);
+  const projected = projectHubTriageHighlightMap(fileCandidates, now);
+  return { ...projected, fileCandidates };
 }
 
 /** Batch map for hub, board, and workspace — one subscription bubbles file → project → client. */
@@ -328,17 +304,25 @@ export const getHubTriageHighlightMap = query({
       if (!key) return empty;
       await assertOrgMember(ctx, args.organizationId, key);
       /**
-       * Prefer a client-supplied bucket when present (legacy). When omitted the
-       * subscription args stay stable across minute ticks; evaluation uses
-       * server time and refreshes on task/pipeline writes instead.
+       * Prefer collecting time-stable candidates. When a legacy `nowBucket` is
+       * supplied, also project server-side for that snapshot; the hub client
+       * re-projects from `fileCandidates` with TriageClockProvider either way.
        */
-      const bucket = args.nowBucket ?? args.currentTriageTime ?? Date.now();
-      return await buildHubTriageHighlightMap(
+      const fileCandidates = await collectHubTriageFileCandidates(
         ctx,
         args.organizationId,
         key,
-        bucket,
       );
+      const bucket = args.nowBucket ?? args.currentTriageTime;
+      if (bucket != null) {
+        const projected = projectHubTriageHighlightMap(
+          fileCandidates,
+          resolveTriageEvaluationTime(bucket),
+        );
+        return { ...projected, fileCandidates };
+      }
+      // Stable-args path: leave projected maps empty; client projects locally.
+      return { ...emptyProjectedHubTriageHighlightMap(), fileCandidates };
     } catch (error) {
       console.error("[getHubTriageHighlightMap] failed", {
         organizationId: args.organizationId,

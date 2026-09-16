@@ -17,32 +17,15 @@ import { resolveDisplayUsernameForUserKey } from "./auth/displayIdentity";
 import { pickCanonicalOrgMember } from "./orgMembership";
 import { SYSTEM_ORG_ROLE_KEYS } from "../lib/orgRbac";
 import { platformUserKeyFallback } from "./viewerIdentity";
-import { loadNoteCountsForFiles, noteCountsFromPipelineDocs } from "./pipelineHubBoundedReads";
-import { bumpPipelineHubNotesCount } from "./pipelineHubNotesCount";
+import { loadNoteCountsForFiles } from "./pipelineHubBoundedReads";
 
 /**
  * Batch note counts for pipeline table rows.
  *
- * Hub path reads denormalized `pipeline.hubNotesCount` — no note-body scans.
+ * Hub path uses a bounded `by_org_file` count (capped / saturated) so badges
+ * cannot permanently undercount when a denormalized field is missing.
  */
 export async function batchPipelineFileNoteCounts(
-  ctx: QueryCtx,
-  files: Array<{
-    _id: Id<"pipeline">;
-    organizationId?: Id<"organizations">;
-    hubNotesCount?: number;
-  }>,
-): Promise<Map<string, number>> {
-  void ctx;
-  return noteCountsFromPipelineDocs(files);
-}
-
-export { bumpPipelineHubNotesCount } from "./pipelineHubNotesCount";
-
-/**
- * @deprecated Exact live probe — prefer denormalized hub counts.
- */
-export async function batchPipelineFileNoteCountsLive(
   ctx: QueryCtx,
   files: Array<{
     _id: Id<"pipeline">;
@@ -483,7 +466,6 @@ export const createNote = mutation({
       content,
       attachments,
     });
-    await bumpPipelineHubNotesCount(ctx, args.pipelineFileId, 1);
 
     for (const link of rawLinks) {
       await insertNoteLinkRow(ctx, {
@@ -805,7 +787,6 @@ export const deleteNote = mutation({
     await deleteNoteStorageAttachments(ctx, note);
     await deleteNoteLinks(ctx, args.noteId);
     await ctx.db.delete(args.noteId);
-    await bumpPipelineHubNotesCount(ctx, note.pipelineFileId, -1);
 
     return { deleted: true as const };
   },

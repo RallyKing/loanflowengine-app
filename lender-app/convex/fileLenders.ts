@@ -14,8 +14,6 @@ import {
   syncFileLenderEdgesFromPipeline,
   upsertFileLenderEdge,
 } from "./indexedGraphEdgeSync";
-import { bumpPipelineHubNotesCount } from "./pipelineHubNotesCount";
-
 const preferencesAccountIdArg = {
   preferencesAccountId: v.optional(v.string()),
 };
@@ -66,7 +64,6 @@ async function insertPipelineFileTimelineNote(
     authorUserKey: args.authorUserKey,
     content: args.content,
   });
-  await bumpPipelineHubNotesCount(ctx, args.file._id, 1);
   return noteId;
 }
 

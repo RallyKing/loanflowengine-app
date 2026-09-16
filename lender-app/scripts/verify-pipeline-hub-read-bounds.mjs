@@ -24,7 +24,6 @@ const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const HOT_PATH_FILES = [
   "convex/pipelineHubBoundedReads.ts",
   "convex/pipelineGraphPreviewLinks.ts",
-  "convex/pipelineHubNotesCount.ts",
 ];
 
 /**

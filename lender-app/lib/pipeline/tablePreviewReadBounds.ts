@@ -50,8 +50,8 @@ export const PIPELINE_ORG_RELATED_TASK_SCAN_CAP = 5_000;
 export const PIPELINE_FILE_RELATED_TASK_SCAN_CAP = 200;
 
 /**
- * @deprecated Hub note badges read denormalized `pipeline.hubNotesCount`.
- * Retained for any non-hub callers that still probe note rows.
+ * Per-file cap for hub note badge counts via `pipelineFileNotes.by_org_file`.
+ * Readers take `cap + 1` and saturate at this value.
  */
 export const PIPELINE_FILE_NOTE_SCAN_CAP = 500;
 

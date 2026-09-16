@@ -22,10 +22,10 @@ import {
   loadOrgScopedPipelineRowsBounded,
   loadRelatedTasksForFiles,
   loadRelatedTasksForVisibleFilesOrgBatched,
-  noteCountsFromPipelineDocs,
 } from "../convex/pipelineHubBoundedReads";
 import {
   PIPELINE_FILE_EDGE_SCAN_CAP,
+  PIPELINE_FILE_NOTE_SCAN_CAP,
   PIPELINE_FILE_RELATED_TASK_SCAN_CAP,
   PIPELINE_ORG_EDGE_SCAN_CAP,
   PIPELINE_ORG_RELATED_TASK_SCAN_CAP,
@@ -219,7 +219,6 @@ function buildDb(): FakeDb {
       _creationTime: 1_000 + i,
       organizationId: OUR_ORG,
       createdAt: 1_000 + i,
-      hubNotesCount: 2,
     });
   }
   for (let i = 0; i < OTHER_FILES; i++) {
@@ -228,7 +227,6 @@ function buildDb(): FakeDb {
       _creationTime: 500_000 + i,
       organizationId: OTHER_ORG,
       createdAt: 500_000 + i,
-      hubNotesCount: 2,
     });
   }
   // Org-unstamped legacy rows; only the platform default org may see these.
@@ -442,20 +440,7 @@ async function main(): Promise<void> {
     "org-batched related tasks must filter to visible files",
   );
 
-  /* 4. Hub note badges use denormalized pipeline.hubNotesCount — zero note reads. */
-  db.reset();
-  const denormCounts = noteCountsFromPipelineDocs(
-    pipelineRead.rows.map((r) => ({
-      _id: r._id as unknown as Id<"pipeline">,
-      hubNotesCount: r.hubNotesCount as number | undefined,
-    })),
-  );
-  assert.equal(denormCounts.size, OUR_FILES);
-  assert.ok([...denormCounts.values()].every((n) => n === 2));
-  assert.equal(db.reads.length, 0, "denormalized note counts must not query notes");
-  assert.equal(db.docReads, 0);
-
-  /* Live probe still uses full by_org_file when explicitly requested. */
+  /* 4. Hub note badges use bounded by_org_file counts (never denorm 0-lie). */
   db.reset();
   const noteCounts = await loadNoteCountsForFiles(
     ctx,
@@ -465,6 +450,7 @@ async function main(): Promise<void> {
     })),
   );
   assert.equal(noteCounts.size, OUR_FILES);
+  assert.ok([...noteCounts.values()].every((n) => n === 2));
   assert.ok(
     db.reads.every(
       (r) =>
@@ -472,7 +458,13 @@ async function main(): Promise<void> {
         r.eq[0]![0] === "organizationId" &&
         r.eq[1]![0] === "pipelineFileId",
     ),
-    "live note reads must supply both halves of by_org_file",
+    "hub note reads must supply both halves of by_org_file",
+  );
+  assert.ok(
+    db.reads.every(
+      (r) => (r.limit ?? Infinity) <= PIPELINE_FILE_NOTE_SCAN_CAP + 1,
+    ),
+    "hub note reads must take cap+1 for saturation",
   );
 
   /* 5. Whole-hub budget: org-batched joins stay far below deployment size. */
@@ -489,13 +481,14 @@ async function main(): Promise<void> {
     loadFileClientEdgesForFiles(ctx, hubIds, OUR_ORG),
     loadContactFileLinksForFiles(ctx, hubIds),
     loadRelatedTasksForVisibleFilesOrgBatched(ctx, hubIds, OUR_ORG),
+    loadNoteCountsForFiles(
+      ctx,
+      hubRows.rows.map((r) => ({
+        _id: r._id as unknown as Id<"pipeline">,
+        organizationId: r.organizationId as Id<"organizations">,
+      })),
+    ),
   ]);
-  noteCountsFromPipelineDocs(
-    hubRows.rows.map((r) => ({
-      _id: r._id as unknown as Id<"pipeline">,
-      hubNotesCount: r.hubNotesCount as number | undefined,
-    })),
-  );
   assert.ok(
     db.docReads < totalDocs / 20,
     `hub join budget read ${db.docReads} of ${totalDocs} docs; expected under ${Math.floor(totalDocs / 20)}`,
