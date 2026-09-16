@@ -14,7 +14,6 @@ import {
   syncFileLenderEdgesFromPipeline,
   upsertFileLenderEdge,
 } from "./indexedGraphEdgeSync";
-
 const preferencesAccountIdArg = {
   preferencesAccountId: v.optional(v.string()),
 };
@@ -59,12 +58,13 @@ async function insertPipelineFileTimelineNote(
   if (!organizationId) {
     throw new Error("File organization required to add a timeline note");
   }
-  return await ctx.db.insert("pipelineFileNotes", {
+  const noteId = await ctx.db.insert("pipelineFileNotes", {
     organizationId,
     pipelineFileId: args.file._id,
     authorUserKey: args.authorUserKey,
     content: args.content,
   });
+  return noteId;
 }
 
 async function insertRejectionNoticeNote(

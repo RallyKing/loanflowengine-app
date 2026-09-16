@@ -1187,7 +1187,8 @@ export default defineSchema({
     .index("by_file", ["fileId"])
     .index("by_entity", ["clientId"])
     .index("by_file_entity", ["fileId", "clientId"])
-    .index("by_org_entity", ["organizationId", "clientId"]),
+    .index("by_org_entity", ["organizationId", "clientId"])
+    .index("by_organization", ["organizationId"]),
 
   fileProjects: defineTable({
     organizationId: v.id("organizations"),
@@ -1207,7 +1208,8 @@ export default defineSchema({
     .index("by_file", ["fileId"])
     .index("by_entity", ["projectId"])
     .index("by_file_entity", ["fileId", "projectId"])
-    .index("by_org_entity", ["organizationId", "projectId"]),
+    .index("by_org_entity", ["organizationId", "projectId"])
+    .index("by_organization", ["organizationId"]),
 
   fileLenders: defineTable({
     organizationId: v.id("organizations"),
@@ -1241,7 +1243,8 @@ export default defineSchema({
     .index("by_file", ["fileId"])
     .index("by_entity", ["lenderId"])
     .index("by_file_entity", ["fileId", "lenderId"])
-    .index("by_org_entity", ["organizationId", "lenderId"]),
+    .index("by_org_entity", ["organizationId", "lenderId"])
+    .index("by_organization", ["organizationId"]),
 
   /**
    * Phase Modular-C — construction budget lines for a pipeline file
@@ -1308,7 +1311,8 @@ export default defineSchema({
     .index("by_file", ["fileId"])
     .index("by_entity", ["userKey"])
     .index("by_file_entity", ["fileId", "userKey"])
-    .index("by_org_entity", ["organizationId", "userKey"]),
+    .index("by_org_entity", ["organizationId", "userKey"])
+    .index("by_organization", ["organizationId"]),
 
   fileTasks: defineTable({
     organizationId: v.id("organizations"),
@@ -1328,7 +1332,8 @@ export default defineSchema({
     .index("by_file", ["fileId"])
     .index("by_entity", ["taskId"])
     .index("by_file_entity", ["fileId", "taskId"])
-    .index("by_org_entity", ["organizationId", "taskId"]),
+    .index("by_org_entity", ["organizationId", "taskId"])
+    .index("by_organization", ["organizationId"]),
 
   /**
    * Phase 15 Step 2 — project-scoped graph edges (additive).
@@ -1533,6 +1538,13 @@ export default defineSchema({
      */
     propertyAddress: v.optional(v.string()),
     notes: v.optional(v.string()),
+
+    /**
+     * @deprecated Unused on the hub path. Note badges use a bounded
+     * `by_org_file` count (`loadNoteCountsForFiles`). Field retained so existing
+     * documents remain schema-valid; do not treat as authoritative.
+     */
+    hubNotesCount: v.optional(v.number()),
 
     /**
      * Operator confidence in how serious / urgent the client is (1 = weak

@@ -1,5 +1,5 @@
 /**
- * Read-bound proofs for the pipeline hub subscription.
+ * Read-bound proofs for the pipeline hub subscription + triage map.
  * Run: `npm run test:hub-read-bounds`
  *
  * These tests drive the real readers from `convex/pipelineHubBoundedReads` against
@@ -21,9 +21,14 @@ import {
   loadNoteCountsForFiles,
   loadOrgScopedPipelineRowsBounded,
   loadRelatedTasksForFiles,
+  loadRelatedTasksForVisibleFilesOrgBatched,
 } from "../convex/pipelineHubBoundedReads";
 import {
   PIPELINE_FILE_EDGE_SCAN_CAP,
+  PIPELINE_FILE_NOTE_SCAN_CAP,
+  PIPELINE_FILE_RELATED_TASK_SCAN_CAP,
+  PIPELINE_ORG_EDGE_SCAN_CAP,
+  PIPELINE_ORG_RELATED_TASK_SCAN_CAP,
   PIPELINE_TABLE_PREVIEW_MAX_ROWS,
 } from "../lib/pipeline/tablePreviewReadBounds";
 
@@ -40,13 +45,31 @@ type ReadRecord = {
 /** Index field order for every table these readers touch. */
 const INDEX_FIELDS: Record<string, Record<string, string[]>> = {
   pipeline: { by_organization_createdAt: ["organizationId", "createdAt"] },
-  fileLenders: { by_file: ["fileId"] },
-  fileClients: { by_file: ["fileId"] },
-  fileProjects: { by_file: ["fileId"] },
-  fileTeamMembers: { by_file: ["fileId"] },
-  fileTasks: { by_file: ["fileId"] },
+  fileLenders: {
+    by_file: ["fileId"],
+    by_organization: ["organizationId"],
+  },
+  fileClients: {
+    by_file: ["fileId"],
+    by_organization: ["organizationId"],
+  },
+  fileProjects: {
+    by_file: ["fileId"],
+    by_organization: ["organizationId"],
+  },
+  fileTeamMembers: {
+    by_file: ["fileId"],
+    by_organization: ["organizationId"],
+  },
+  fileTasks: {
+    by_file: ["fileId"],
+    by_organization: ["organizationId"],
+  },
   contactFileLinks: { by_file: ["fileId", "updatedAt"] },
-  tasks: { by_relatedFile: ["relatedFileId"] },
+  tasks: {
+    by_relatedFile: ["relatedFileId"],
+    by_organization: ["organizationId"],
+  },
   pipelineFileNotes: { by_org_file: ["organizationId", "pipelineFileId"] },
 };
 
@@ -358,7 +381,7 @@ async function main(): Promise<void> {
     "legacy rows must come from the index, not a scan",
   );
 
-  /* 2. fileLenders edges are scoped to the visible ids only. */
+  /* 2. fileLenders edges are org-batched (one read), filtered to visible ids. */
   const visible = pipelineRead.rows.map((r) => r._id as unknown as Id<"pipeline">);
   db.reset();
   const lenderEdges = await loadFileLenderEdgesForFiles(ctx, visible, OUR_ORG);
@@ -371,44 +394,53 @@ async function main(): Promise<void> {
     lenderEdges.rows.every((e) => String(e.organizationId) === String(OUR_ORG)),
     "must not return another org's edges",
   );
-  const lenderFileKeys = new Set(db.reads.map((r) => String(r.eq[0]?.[1])));
-  const visibleKeys = new Set(visible.map(String));
-  assert.equal(db.reads.length, OUR_FILES, "one indexed read per visible file");
-  assert.ok(
-    [...lenderFileKeys].every((k) => visibleKeys.has(k)),
-    "fileLenders must only be read for visible file ids",
+  assert.equal(
+    db.reads.length,
+    1,
+    "org-batched fileLenders must be a single indexed read",
   );
+  assert.equal(db.reads[0]?.index, "by_organization");
+  assert.equal(db.reads[0]?.eq[0]?.[1], OUR_ORG);
+  assert.equal(db.reads[0]?.limit, PIPELINE_ORG_EDGE_SCAN_CAP + 1);
   assert.ok(
-    db.docReads <= OUR_FILES * EDGES_PER_FILE,
-    `fileLenders touched ${db.docReads} docs; table holds ${db.rows("fileLenders").length}`,
+    db.docReads <= OUR_FILES * EDGES_PER_FILE + 1,
+    `fileLenders touched ${db.docReads} docs; expected org slice only`,
   );
 
-  /* Duplicate ids collapse to one read each. */
+  /* Duplicate ids still one org read. */
   db.reset();
   await loadFileLenderEdgesForFiles(ctx, [...visible, ...visible], OUR_ORG);
-  assert.equal(db.reads.length, OUR_FILES, "duplicate file ids must be deduped");
+  assert.equal(db.reads.length, 1, "duplicate file ids must not multiply reads");
 
-  /* Per-file edge reads are capped. */
-  assert.ok(
-    db.reads.every((r) => r.limit === PIPELINE_FILE_EDGE_SCAN_CAP + 1),
-    "per-file edge reads must be capped",
-  );
-
-  /* 3. The remaining hub joins are equally scoped. */
+  /* 3. Remaining hub joins: org-batch + CFL per-file + org-batched related tasks. */
   db.reset();
   await loadFileClientEdgesForFiles(ctx, visible, OUR_ORG);
+  assert.equal(db.reads.length, 1);
+  assert.equal(db.reads[0]?.index, "by_organization");
+
+  db.reset();
   await loadContactFileLinksForFiles(ctx, visible);
-  await loadRelatedTasksForFiles(ctx, visible, OUR_ORG);
+  assert.equal(db.reads.length, OUR_FILES, "CFL still one read per visible file");
   assert.ok(
-    db.reads.every((r) => r.index !== null && r.limit !== null),
-    "every junction read must be indexed and capped",
-  );
-  assert.ok(
-    db.reads.every((r) => visibleKeys.has(String(r.eq[0]?.[1]))),
-    "every junction read must key on a visible file id",
+    db.reads.every((r) => r.index === "by_file" && r.limit === PIPELINE_FILE_EDGE_SCAN_CAP + 1),
   );
 
-  /* 4. Note counts use the full (org, file) key, not the org half. */
+  db.reset();
+  const relatedOrg = await loadRelatedTasksForVisibleFilesOrgBatched(
+    ctx,
+    visible,
+    OUR_ORG,
+  );
+  assert.equal(relatedOrg.rows.length, OUR_FILES);
+  assert.equal(db.reads.length, 1);
+  assert.equal(db.reads[0]?.index, "by_organization");
+  assert.equal(db.reads[0]?.limit, PIPELINE_ORG_RELATED_TASK_SCAN_CAP + 1);
+  assert.ok(
+    relatedOrg.rows.every((t) => visible.map(String).includes(String(t.relatedFileId))),
+    "org-batched related tasks must filter to visible files",
+  );
+
+  /* 4. Hub note badges use bounded by_org_file counts (never denorm 0-lie). */
   db.reset();
   const noteCounts = await loadNoteCountsForFiles(
     ctx,
@@ -418,10 +450,7 @@ async function main(): Promise<void> {
     })),
   );
   assert.equal(noteCounts.size, OUR_FILES);
-  assert.ok(
-    [...noteCounts.values()].every((n) => n === 2),
-    "note counts must be exact",
-  );
+  assert.ok([...noteCounts.values()].every((n) => n === 2));
   assert.ok(
     db.reads.every(
       (r) =>
@@ -429,14 +458,16 @@ async function main(): Promise<void> {
         r.eq[0]![0] === "organizationId" &&
         r.eq[1]![0] === "pipelineFileId",
     ),
-    "note reads must supply both halves of by_org_file (org-only keys scan the org)",
+    "hub note reads must supply both halves of by_org_file",
   );
   assert.ok(
-    db.docReads <= OUR_FILES * 2,
-    `note counts touched ${db.docReads} docs; table holds ${db.rows("pipelineFileNotes").length}`,
+    db.reads.every(
+      (r) => (r.limit ?? Infinity) <= PIPELINE_FILE_NOTE_SCAN_CAP + 1,
+    ),
+    "hub note reads must take cap+1 for saturation",
   );
 
-  /* 5. Whole-hub budget: the join set must stay far below deployment size. */
+  /* 5. Whole-hub budget: org-batched joins stay far below deployment size. */
   db.reset();
   const hubRows = await loadOrgScopedPipelineRowsBounded(
     ctx,
@@ -449,7 +480,7 @@ async function main(): Promise<void> {
     loadFileLenderEdgesForFiles(ctx, hubIds, OUR_ORG),
     loadFileClientEdgesForFiles(ctx, hubIds, OUR_ORG),
     loadContactFileLinksForFiles(ctx, hubIds),
-    loadRelatedTasksForFiles(ctx, hubIds, OUR_ORG),
+    loadRelatedTasksForVisibleFilesOrgBatched(ctx, hubIds, OUR_ORG),
     loadNoteCountsForFiles(
       ctx,
       hubRows.rows.map((r) => ({
@@ -462,8 +493,37 @@ async function main(): Promise<void> {
     db.docReads < totalDocs / 20,
     `hub join budget read ${db.docReads} of ${totalDocs} docs; expected under ${Math.floor(totalDocs / 20)}`,
   );
+  const fileLenderReads = db.reads.filter((r) => r.table === "fileLenders");
+  assert.equal(
+    fileLenderReads.length,
+    1,
+    "hub tick must not double-read fileLenders",
+  );
 
-  /* 6. The harness genuinely rejects a bare table scan. */
+  /* 6. Triage path: by_relatedFile per visible file — never org-wide task collect. */
+  db.reset();
+  const triageTasks = await loadRelatedTasksForFiles(ctx, hubIds, OUR_ORG);
+  assert.equal(triageTasks.rows.length, OUR_FILES);
+  assert.equal(db.reads.length, OUR_FILES);
+  assert.ok(
+    db.reads.every(
+      (r) =>
+        r.table === "tasks" &&
+        r.index === "by_relatedFile" &&
+        r.limit === PIPELINE_FILE_RELATED_TASK_SCAN_CAP + 1,
+    ),
+    "triage must use by_relatedFile only",
+  );
+  assert.ok(
+    db.reads.every((r) => hubIds.map(String).includes(String(r.eq[0]?.[1]))),
+    "triage must not read tasks for non-visible files",
+  );
+  assert.ok(
+    !db.reads.some((r) => r.index === "by_organization"),
+    "triage must not org-scan tasks",
+  );
+
+  /* 7. The harness genuinely rejects a bare table scan. */
   await assert.rejects(
     async () => {
       await (db.query("fileLenders") as unknown as { collect(): Promise<Row[]> }).collect();

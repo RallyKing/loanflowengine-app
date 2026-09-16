@@ -1483,7 +1483,6 @@ export const recordTaskAttempt = mutation({
       linkedTaskTitle: taskTitle,
       attemptNumber,
     });
-
     await ctx.db.patch(args.id, {
       attemptCount: attemptNumber,
       lastAttemptAt: now,

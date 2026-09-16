@@ -57,6 +57,8 @@ export type HubTriageHighlightQueryResult = {
     projects?: Record<string, TaskRollupCountsView>;
     clients?: Record<string, TaskRollupCountsView>;
   };
+  /** Time-stable candidates for client clock projection (optional). */
+  fileCandidates?: unknown;
 };
 
 export type TriageHighlightBucket = "byFileId" | "byProjectId" | "byClientId";

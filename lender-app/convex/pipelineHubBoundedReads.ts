@@ -3,8 +3,13 @@
  *
  * Every helper here replaces a full-table or org-wide `.collect()` that used to
  * run inside `pipeline:listTablePreview`. The rule this module enforces is:
- * a hub read is scoped to the *visible* file ids (or to the active org via an
- * index) and is always bounded by a cap from `lib/pipeline/tablePreviewReadBounds`.
+ * a hub read is scoped to the active org (via an index) and/or the *visible*
+ * file ids, and is always bounded by a cap from `lib/pipeline/tablePreviewReadBounds`.
+ *
+ * Junction tables with `by_organization` are read **once per org** (then filtered
+ * to the visible file set), not once per file. Per-file `by_file` fan-out remains
+ * only for tables that lack an org index (`contactFileLinks`) and for triage's
+ * `tasks.by_relatedFile` path.
  *
  * Nothing in this module schedules work, writes, or reads without an index.
  */
@@ -14,10 +19,12 @@ import {
   PIPELINE_FILE_EDGE_SCAN_CAP,
   PIPELINE_FILE_NOTE_SCAN_CAP,
   PIPELINE_FILE_RELATED_TASK_SCAN_CAP,
+  PIPELINE_ORG_EDGE_SCAN_CAP,
+  PIPELINE_ORG_RELATED_TASK_SCAN_CAP,
   readSaturated,
 } from "../lib/pipeline/tablePreviewReadBounds";
 
-/** Junction tables that carry a `by_file` index keyed on `fileId`. */
+/** Junction tables that carry both `by_file` and `by_organization` indexes. */
 export type PipelineFileEdgeTable =
   | "fileClients"
   | "fileProjects"
@@ -49,6 +56,7 @@ function uniqueFileIds(
  * Run one capped indexed read per file id and flatten the result.
  *
  * `read` must be an indexed, `.take(cap + 1)` query so saturation is detectable.
+ * Prefer org-batched helpers when the table has `by_organization`.
  */
 async function takeAcrossFiles<T>(
   fileIds: readonly Id<"pipeline">[],
@@ -68,6 +76,103 @@ async function takeAcrossFiles<T>(
     }
   }
   return { rows, saturated };
+}
+
+/**
+ * One org-scoped, capped junction read, filtered to the visible file id set.
+ * Replaces per-file `by_file` fan-out for hub joins.
+ *
+ * Implemented per-table (not a generic `query(table)`) so Convex index typing
+ * stays sound after adding `by_organization`.
+ */
+async function loadOrgScopedFileLenders(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  fileIds: readonly Id<"pipeline">[],
+): Promise<BoundedRead<Doc<"fileLenders">>> {
+  const visible = new Set(uniqueFileIds(fileIds).map(String));
+  const rows = await ctx.db
+    .query("fileLenders")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(PIPELINE_ORG_EDGE_SCAN_CAP + 1);
+  const saturated = readSaturated(rows.length, PIPELINE_ORG_EDGE_SCAN_CAP);
+  const clipped = saturated ? rows.slice(0, PIPELINE_ORG_EDGE_SCAN_CAP) : rows;
+  return {
+    rows: clipped.filter((r) => visible.has(String(r.fileId))),
+    saturated,
+  };
+}
+
+async function loadOrgScopedFileClients(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  fileIds: readonly Id<"pipeline">[],
+): Promise<BoundedRead<Doc<"fileClients">>> {
+  const visible = new Set(uniqueFileIds(fileIds).map(String));
+  const rows = await ctx.db
+    .query("fileClients")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(PIPELINE_ORG_EDGE_SCAN_CAP + 1);
+  const saturated = readSaturated(rows.length, PIPELINE_ORG_EDGE_SCAN_CAP);
+  const clipped = saturated ? rows.slice(0, PIPELINE_ORG_EDGE_SCAN_CAP) : rows;
+  return {
+    rows: clipped.filter((r) => visible.has(String(r.fileId))),
+    saturated,
+  };
+}
+
+async function loadOrgScopedFileProjects(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  fileIds: readonly Id<"pipeline">[],
+): Promise<BoundedRead<Doc<"fileProjects">>> {
+  const visible = new Set(uniqueFileIds(fileIds).map(String));
+  const rows = await ctx.db
+    .query("fileProjects")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(PIPELINE_ORG_EDGE_SCAN_CAP + 1);
+  const saturated = readSaturated(rows.length, PIPELINE_ORG_EDGE_SCAN_CAP);
+  const clipped = saturated ? rows.slice(0, PIPELINE_ORG_EDGE_SCAN_CAP) : rows;
+  return {
+    rows: clipped.filter((r) => visible.has(String(r.fileId))),
+    saturated,
+  };
+}
+
+async function loadOrgScopedFileTeamMembers(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  fileIds: readonly Id<"pipeline">[],
+): Promise<BoundedRead<Doc<"fileTeamMembers">>> {
+  const visible = new Set(uniqueFileIds(fileIds).map(String));
+  const rows = await ctx.db
+    .query("fileTeamMembers")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(PIPELINE_ORG_EDGE_SCAN_CAP + 1);
+  const saturated = readSaturated(rows.length, PIPELINE_ORG_EDGE_SCAN_CAP);
+  const clipped = saturated ? rows.slice(0, PIPELINE_ORG_EDGE_SCAN_CAP) : rows;
+  return {
+    rows: clipped.filter((r) => visible.has(String(r.fileId))),
+    saturated,
+  };
+}
+
+async function loadOrgScopedFileTasks(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  fileIds: readonly Id<"pipeline">[],
+): Promise<BoundedRead<Doc<"fileTasks">>> {
+  const visible = new Set(uniqueFileIds(fileIds).map(String));
+  const rows = await ctx.db
+    .query("fileTasks")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(PIPELINE_ORG_EDGE_SCAN_CAP + 1);
+  const saturated = readSaturated(rows.length, PIPELINE_ORG_EDGE_SCAN_CAP);
+  const clipped = saturated ? rows.slice(0, PIPELINE_ORG_EDGE_SCAN_CAP) : rows;
+  return {
+    rows: clipped.filter((r) => visible.has(String(r.fileId))),
+    saturated,
+  };
 }
 
 /**
@@ -115,117 +220,52 @@ export async function loadOrgScopedPipelineRowsBounded(
   return { rows: merged.slice(0, cap), saturated };
 }
 
-/** `fileLenders` edges for the visible files only, via `by_file`. */
+/** `fileLenders` edges for the visible files only, via org-batched `by_organization`. */
 export async function loadFileLenderEdgesForFiles(
   ctx: QueryCtx,
   fileIds: readonly Id<"pipeline">[],
   organizationId: Id<"organizations">,
 ): Promise<BoundedRead<Doc<"fileLenders">>> {
-  const orgStr = String(organizationId);
-  const read = await takeAcrossFiles(
-    fileIds,
-    PIPELINE_FILE_EDGE_SCAN_CAP,
-    (fileId) =>
-      ctx.db
-        .query("fileLenders")
-        .withIndex("by_file", (q) => q.eq("fileId", fileId))
-        .take(PIPELINE_FILE_EDGE_SCAN_CAP + 1),
-  );
-  return {
-    rows: read.rows.filter((r) => String(r.organizationId) === orgStr),
-    saturated: read.saturated,
-  };
+  return await loadOrgScopedFileLenders(ctx, organizationId, fileIds);
 }
 
-/** `fileClients` edges for the visible files only, via `by_file`. */
+/** `fileClients` edges for the visible files only, via org-batched `by_organization`. */
 export async function loadFileClientEdgesForFiles(
   ctx: QueryCtx,
   fileIds: readonly Id<"pipeline">[],
   organizationId: Id<"organizations">,
 ): Promise<BoundedRead<Doc<"fileClients">>> {
-  const orgStr = String(organizationId);
-  const read = await takeAcrossFiles(
-    fileIds,
-    PIPELINE_FILE_EDGE_SCAN_CAP,
-    (fileId) =>
-      ctx.db
-        .query("fileClients")
-        .withIndex("by_file", (q) => q.eq("fileId", fileId))
-        .take(PIPELINE_FILE_EDGE_SCAN_CAP + 1),
-  );
-  return {
-    rows: read.rows.filter((r) => String(r.organizationId) === orgStr),
-    saturated: read.saturated,
-  };
+  return await loadOrgScopedFileClients(ctx, organizationId, fileIds);
 }
 
-/** `fileProjects` edges for the visible files only, via `by_file`. */
+/** `fileProjects` edges for the visible files only, via org-batched `by_organization`. */
 export async function loadFileProjectEdgesForFiles(
   ctx: QueryCtx,
   fileIds: readonly Id<"pipeline">[],
   organizationId: Id<"organizations">,
 ): Promise<BoundedRead<Doc<"fileProjects">>> {
-  const orgStr = String(organizationId);
-  const read = await takeAcrossFiles(
-    fileIds,
-    PIPELINE_FILE_EDGE_SCAN_CAP,
-    (fileId) =>
-      ctx.db
-        .query("fileProjects")
-        .withIndex("by_file", (q) => q.eq("fileId", fileId))
-        .take(PIPELINE_FILE_EDGE_SCAN_CAP + 1),
-  );
-  return {
-    rows: read.rows.filter((r) => String(r.organizationId) === orgStr),
-    saturated: read.saturated,
-  };
+  return await loadOrgScopedFileProjects(ctx, organizationId, fileIds);
 }
 
-/** `fileTeamMembers` edges for the visible files only, via `by_file`. */
+/** `fileTeamMembers` edges for the visible files only, via org-batched `by_organization`. */
 export async function loadFileTeamMemberEdgesForFiles(
   ctx: QueryCtx,
   fileIds: readonly Id<"pipeline">[],
   organizationId: Id<"organizations">,
 ): Promise<BoundedRead<Doc<"fileTeamMembers">>> {
-  const orgStr = String(organizationId);
-  const read = await takeAcrossFiles(
-    fileIds,
-    PIPELINE_FILE_EDGE_SCAN_CAP,
-    (fileId) =>
-      ctx.db
-        .query("fileTeamMembers")
-        .withIndex("by_file", (q) => q.eq("fileId", fileId))
-        .take(PIPELINE_FILE_EDGE_SCAN_CAP + 1),
-  );
-  return {
-    rows: read.rows.filter((r) => String(r.organizationId) === orgStr),
-    saturated: read.saturated,
-  };
+  return await loadOrgScopedFileTeamMembers(ctx, organizationId, fileIds);
 }
 
-/** `fileTasks` edges for the visible files only, via `by_file`. */
+/** `fileTasks` edges for the visible files only, via org-batched `by_organization`. */
 export async function loadFileTaskEdgesForFiles(
   ctx: QueryCtx,
   fileIds: readonly Id<"pipeline">[],
   organizationId: Id<"organizations">,
 ): Promise<BoundedRead<Doc<"fileTasks">>> {
-  const orgStr = String(organizationId);
-  const read = await takeAcrossFiles(
-    fileIds,
-    PIPELINE_FILE_EDGE_SCAN_CAP,
-    (fileId) =>
-      ctx.db
-        .query("fileTasks")
-        .withIndex("by_file", (q) => q.eq("fileId", fileId))
-        .take(PIPELINE_FILE_EDGE_SCAN_CAP + 1),
-  );
-  return {
-    rows: read.rows.filter((r) => String(r.organizationId) === orgStr),
-    saturated: read.saturated,
-  };
+  return await loadOrgScopedFileTasks(ctx, organizationId, fileIds);
 }
 
-/** `contactFileLinks` for the visible files only, via `by_file`. */
+/** `contactFileLinks` for the visible files only, via `by_file` (no org index). */
 export async function loadContactFileLinksForFiles(
   ctx: QueryCtx,
   fileIds: readonly Id<"pipeline">[],
@@ -242,9 +282,38 @@ export async function loadContactFileLinksForFiles(
 }
 
 /**
- * Tasks related to the visible files, via `tasks.by_relatedFile`.
- * Replaces an org-wide `tasks.by_organization` collect that was then discarded
- * down to these same files.
+ * Tasks related to the visible files via one org-scoped `tasks.by_organization`
+ * take, filtered to `relatedFileId ∈ visible`. Used by hub graph links so the
+ * join stays O(1) queries instead of O(files).
+ */
+export async function loadRelatedTasksForVisibleFilesOrgBatched(
+  ctx: QueryCtx,
+  fileIds: readonly Id<"pipeline">[],
+  organizationId: Id<"organizations">,
+): Promise<BoundedRead<Doc<"tasks">>> {
+  const visible = new Set(uniqueFileIds(fileIds).map(String));
+  const rows = await ctx.db
+    .query("tasks")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .order("desc")
+    .take(PIPELINE_ORG_RELATED_TASK_SCAN_CAP + 1);
+  const saturated = readSaturated(rows.length, PIPELINE_ORG_RELATED_TASK_SCAN_CAP);
+  const clipped = saturated
+    ? rows.slice(0, PIPELINE_ORG_RELATED_TASK_SCAN_CAP)
+    : rows;
+  return {
+    rows: clipped.filter(
+      (t) =>
+        t.relatedFileId != null && visible.has(String(t.relatedFileId)),
+    ),
+    saturated,
+  };
+}
+
+/**
+ * Tasks related to the visible files, via `tasks.by_relatedFile` (one capped
+ * read per file). Used by hub triage so cost tracks visible files, not the
+ * full org task range.
  */
 export async function loadRelatedTasksForFiles(
   ctx: QueryCtx,
@@ -268,10 +337,9 @@ export async function loadRelatedTasksForFiles(
 }
 
 /**
- * Note counts per visible file, via the full `by_org_file` key.
- *
- * Supplying only the `organizationId` half of that key turns the read into an
- * org-wide note scan, which is what this replaced.
+ * Bounded note badge counts via `pipelineFileNotes.by_org_file`.
+ * Takes `cap + 1` and saturates at `cap` so a missing denorm field can never
+ * permanently lie as 0 while notes exist.
  */
 export async function loadNoteCountsForFiles(
   ctx: QueryCtx,
@@ -299,12 +367,15 @@ export async function loadNoteCountsForFiles(
         .withIndex("by_org_file", (q) =>
           q.eq("organizationId", organizationId).eq("pipelineFileId", fileId),
         )
-        .take(PIPELINE_FILE_NOTE_SCAN_CAP),
+        .take(PIPELINE_FILE_NOTE_SCAN_CAP + 1),
     ),
   );
   const counts = new Map<string, number>();
   perFile.forEach((notes, i) => {
-    counts.set(String(targets[i]!.fileId), notes.length);
+    counts.set(
+      String(targets[i]!.fileId),
+      Math.min(notes.length, PIPELINE_FILE_NOTE_SCAN_CAP),
+    );
   });
   return counts;
 }

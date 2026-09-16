@@ -22,8 +22,8 @@ import { loadNoteCountsForFiles } from "./pipelineHubBoundedReads";
 /**
  * Batch note counts for pipeline table rows.
  *
- * Reads through the full `by_org_file` key (org **and** file) so each file
- * costs one capped index range read; see `loadNoteCountsForFiles`.
+ * Hub path uses a bounded `by_org_file` count (capped / saturated) so badges
+ * cannot permanently undercount when a denormalized field is missing.
  */
 export async function batchPipelineFileNoteCounts(
   ctx: QueryCtx,

@@ -7,9 +7,12 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { useTriageClockTime } from "@/components/providers/TriageClockProvider";
 import {
   EMPTY_HUB_TRIAGE_HIGHLIGHT_MAP,
+  hubTriageMapFromQuery,
   normalizeHubTriageHighlightMap,
   type HubTriageHighlightMapView,
 } from "@/lib/pipeline/hubTriageHighlight";
+import { projectHubTriageHighlightMap } from "@/lib/pipeline/projectHubTriageHighlightMap";
+import { resolveTriageEvaluationTime } from "@/lib/triageClock";
 
 function triageHighlightContextKey(
   organizationId: Id<"organizations"> | null | undefined,
@@ -20,13 +23,19 @@ function triageHighlightContextKey(
   return `${organizationId}:${key}`;
 }
 
-/** Reactive triage bubbles for hub / board / file workspace (Phase 24.2A). */
+/**
+ * Reactive triage bubbles for hub / board / file workspace (Phase 24.2A).
+ *
+ * Query args are stable (no minute `nowBucket`) so Convex does not force a full
+ * uncached re-read every 60s. Time-sensitive schedule / snooze / overdue gates
+ * are projected locally from `fileCandidates` using TriageClockProvider.
+ */
 export function useHubTriageHighlightMap(
   organizationId: Id<"organizations"> | null | undefined,
   memberUserKey: string | undefined,
 ): HubTriageHighlightMapView {
-  const nowBucket = useTriageClockTime();
   const contextKey = triageHighlightContextKey(organizationId, memberUserKey);
+  const nowBucket = useTriageClockTime();
 
   const queryArgs = useMemo(() => {
     if (!contextKey) return "skip" as const;
@@ -34,9 +43,8 @@ export function useHubTriageHighlightMap(
     return {
       organizationId: organizationId!,
       memberUserKey: key,
-      nowBucket,
     };
-  }, [contextKey, organizationId, memberUserKey, nowBucket]);
+  }, [contextKey, organizationId, memberUserKey]);
 
   const raw = useQuery(api.taskHighlights.getHubTriageHighlightMap, queryArgs);
 
@@ -47,8 +55,15 @@ export function useHubTriageHighlightMap(
 
   const normalized = useMemo(() => {
     if (raw === undefined) return undefined;
+    const candidates = raw.fileCandidates;
+    if (Array.isArray(candidates)) {
+      const now = resolveTriageEvaluationTime(nowBucket);
+      return hubTriageMapFromQuery(
+        projectHubTriageHighlightMap(candidates, now),
+      );
+    }
     return normalizeHubTriageHighlightMap(raw);
-  }, [raw]);
+  }, [raw, nowBucket]);
 
   useEffect(() => {
     if (!contextKey) {
