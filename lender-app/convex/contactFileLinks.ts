@@ -11,6 +11,7 @@ import {
   assertCanReadPipelineRow,
   assertOrgScopeArgs,
 } from "./organizationAccess";
+import { normalizePipelineFileId } from "./pipelineFileRouteResolve";
 import { insertContactActivity } from "./contactActivity";
 import {
   isReferralContactFileLink,
@@ -80,10 +81,24 @@ export const listByContactWithFiles = query({
  */
 export const listByFile = query({
   args: {
-    fileId: v.id("pipeline"),
+    /** String so wrong-table path ids soft-fail instead of ArgumentValidationError. */
+    fileId: v.string(),
     memberUserKey: v.optional(v.string()),
   },
-  handler: async (ctx, { fileId, memberUserKey }) => {
+  handler: async (ctx, { fileId: rawFileId, memberUserKey }) => {
+    const fileId = normalizePipelineFileId(ctx, rawFileId);
+    if (!fileId) {
+      return {
+        ok: false as const,
+        code: "ACCESS_DENIED" as const,
+        message: "Invalid pipeline file id.",
+        details: {
+          fileId: String(rawFileId),
+          organizationId: null,
+          step: "normalizePipelineFileId",
+        },
+      };
+    }
     const fileIdStr = String(fileId);
     const file = await ctx.db.get(fileId);
 

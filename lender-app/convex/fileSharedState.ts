@@ -25,6 +25,7 @@ import { collectPipelineWatcherUserKeys } from "./notificationRecipients";
 import { dispatchUserNotification } from "./notifications";
 import { refreshPipelineGlobalSearchText } from "./globalSearchSync";
 import { assertCanAccessFile } from "./organizationAccess";
+import { normalizePipelineFileId } from "./pipelineFileRouteResolve";
 
 const fieldKeyValidator = v.union(
   v.literal("fundingAmount"),
@@ -33,11 +34,14 @@ const fieldKeyValidator = v.union(
 
 export const getResolvedForBlock = query({
   args: {
-    fileId: v.id("pipeline"),
+    /** String so wrong-table path ids soft-fail instead of ArgumentValidationError. */
+    fileId: v.string(),
     blockId: v.string(),
     memberUserKey: v.optional(v.string()),
   },
-  handler: async (ctx, { fileId, blockId, memberUserKey }) => {
+  handler: async (ctx, { fileId: rawFileId, blockId, memberUserKey }) => {
+    const fileId = normalizePipelineFileId(ctx, rawFileId);
+    if (!fileId) return null;
     const p = await assertCanAccessFile(ctx, fileId, memberUserKey);
 
     const ov = p.fileBlockFieldOverrides ?? {};
