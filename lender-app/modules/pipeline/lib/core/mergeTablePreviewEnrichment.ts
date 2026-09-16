@@ -18,6 +18,52 @@ export type PipelineTablePreviewEnrichmentRow = {
   projectLinkedClients: LinkedClientSummary[];
 };
 
+type EnrichmentSentinelFields = Pick<
+  PipelineTablePreviewRow,
+  "fileNotesCount" | "graphLinks" | "projectLinkedClients"
+>;
+
+/**
+ * True when a row carries the deferred fields always set by enrichment merge.
+ * `projectCapitalRollup` is optional (absent without a project) — ignore it.
+ */
+export function isTablePreviewRowFullyEnriched(
+  row: EnrichmentSentinelFields,
+): boolean {
+  return (
+    row.fileNotesCount !== undefined &&
+    row.graphLinks !== undefined &&
+    row.projectLinkedClients !== undefined
+  );
+}
+
+/** Offline/cached snapshot safe for capital/client filters. Empty → true. */
+export function isTablePreviewRowsFullyEnriched(
+  rows: ReadonlyArray<EnrichmentSentinelFields>,
+): boolean {
+  return rows.every(isTablePreviewRowFullyEnriched);
+}
+
+/**
+ * Live ready: enrichment covers every current core file id — not merely
+ * `enrichment !== undefined`. Convex can retain a prior enrichment array while
+ * core advances; sticky "defined" would let filters false-negative on new ids.
+ *
+ * - enrichment undefined → false (still loading)
+ * - core empty → true once enrichment is defined (incl. [])
+ * - enrichment empty while core non-empty → false (merge leaves deferred unknown)
+ */
+export function isTablePreviewEnrichmentAligned(
+  coreRows: ReadonlyArray<{ _id: string }>,
+  enrichment: PipelineTablePreviewEnrichmentRow[] | undefined,
+): boolean {
+  if (enrichment === undefined) return false;
+  if (coreRows.length === 0) return true;
+  if (enrichment.length === 0) return false;
+  const ids = new Set(enrichment.map((e) => String(e.fileId)));
+  return coreRows.every((r) => ids.has(String(r._id)));
+}
+
 export function mergeTablePreviewEnrichment(
   rows: PipelineTablePreviewRow[],
   enrichment: PipelineTablePreviewEnrichmentRow[] | undefined,

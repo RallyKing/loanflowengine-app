@@ -15,7 +15,11 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
-import { mergeTablePreviewEnrichment } from "@/lib/pipeline/mergeTablePreviewEnrichment";
+import {
+  isTablePreviewEnrichmentAligned,
+  isTablePreviewRowsFullyEnriched,
+  mergeTablePreviewEnrichment,
+} from "@/lib/pipeline/mergeTablePreviewEnrichment";
 import {
   NewPipelineHierarchyCreateDialog,
   type HierarchyCreateContext,
@@ -475,13 +479,18 @@ export function PipelinePageClient() {
     api.pipeline.listTablePreviewEnrichment,
     listPreviewArgs,
   );
-  const rows = useMemo(
-    () =>
-      rowsCore === undefined
-        ? undefined
-        : mergeTablePreviewEnrichment(rowsCore, rowsEnrichment),
-    [rowsCore, rowsEnrichment],
-  );
+  /** Enrichment must cover the *current* core id set (not a sticky prior tick). */
+  const enrichmentAligned =
+    rowsCore !== undefined &&
+    isTablePreviewEnrichmentAligned(rowsCore, rowsEnrichment);
+  const rows = useMemo(() => {
+    if (rowsCore === undefined) return undefined;
+    // Skip partial/stale merge until enrichment aligns with current core ids.
+    return enrichmentAligned
+      ? mergeTablePreviewEnrichment(rowsCore, rowsEnrichment)
+      : rowsCore;
+  }, [rowsCore, rowsEnrichment, enrichmentAligned]);
+
   const referralPartnerListArgs = useMemo(() => {
     if (!orgQueryReady || !activeOrganizationId || !memberUserKey) return "skip" as const;
     return {
@@ -529,10 +538,12 @@ export function PipelinePageClient() {
   }, [canUseHub]);
 
   useEffect(() => {
-    if (canUseHub && rows !== undefined) {
+    // Only persist fully enriched snapshots — incomplete rows must not be
+    // treated as enrichment-ready when loaded offline.
+    if (canUseHub && enrichmentAligned && rows !== undefined) {
       void persistQuerySnapshot(snapshotKey, rows);
     }
-  }, [canUseHub, rows, snapshotKey]);
+  }, [canUseHub, enrichmentAligned, rows, snapshotKey]);
 
   useEffect(() => {
     if (canUseHub) {
@@ -682,10 +693,16 @@ export function PipelinePageClient() {
   const listLoading = canUseHub ? rowsCore === undefined : !cacheReady;
   /**
    * Capital / client-involvement filters and note-count UI need enrichment.
-   * Offline cache is a previously merged snapshot — treat as ready.
-   * Live: wait for `listTablePreviewEnrichment` (undefined = still loading).
+   * Live: enrichment must cover every current core file id (not sticky prior).
+   * Offline: ready only when the cached/optimistic snapshot carries deferred
+   * sentinels on every row (incomplete pre-enrichment snapshots stay gated).
    */
-  const enrichmentReady = !canUseHub || rowsEnrichment !== undefined;
+  const enrichmentReady = canUseHub
+    ? enrichmentAligned
+    : cacheReady &&
+      isTablePreviewRowsFullyEnriched(
+        optimisticRows ?? cachedRows ?? EMPTY_PIPELINE,
+      );
 
   usePipelineHubLayoutShiftTracker(
     hubListRef,
