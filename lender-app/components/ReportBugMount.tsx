@@ -59,6 +59,7 @@ function ReportBugFabAndDialog() {
   const [formError, setFormError] = useState<string | null>(null);
   /** Bumps on close / new capture so late screenshot results are ignored. */
   const captureGenerationRef = useRef(0);
+  const captureAbortRef = useRef<AbortController | null>(null);
 
   const visible =
     Boolean(isSignedIn) &&
@@ -91,23 +92,40 @@ function ReportBugFabAndDialog() {
 
   const close = useCallback(() => {
     captureGenerationRef.current += 1;
+    captureAbortRef.current?.abort();
+    captureAbortRef.current = null;
     setOpen(false);
     resetForm();
   }, [resetForm]);
 
   const runCapture = useCallback(async () => {
     const generation = ++captureGenerationRef.current;
+    captureAbortRef.current?.abort();
+    const abort = new AbortController();
+    captureAbortRef.current = abort;
+
     setCapturing(true);
     setCaptureError(null);
     try {
       // DOM filter excludes FAB/overlay/dialog — safe while sheet is open.
-      const shot = await captureViewportScreenshot();
+      const shot = await captureViewportScreenshot({ signal: abort.signal });
       if (generation !== captureGenerationRef.current) {
-        try {
-          URL.revokeObjectURL(shot.objectUrl);
-        } catch {
-          /* ignore */
+        if (shot) {
+          try {
+            URL.revokeObjectURL(shot.objectUrl);
+          } catch {
+            /* ignore */
+          }
         }
+        return;
+      }
+      if (!shot) {
+        // Soft degrade: form stays usable; submit works without a screenshot.
+        setScreenshotFile(null);
+        setPreviewUrl(null);
+        setCaptureError(
+          "Screenshot skipped (page too heavy). You can still submit, or try Re-capture.",
+        );
         return;
       }
       revokePreview();
@@ -128,7 +146,8 @@ function ReportBugFabAndDialog() {
 
   /**
    * Open the sheet immediately; screenshot fills in async (shows “Capturing…”).
-   * Previously we awaited capture before setOpen — FAB spun for seconds on heavy pages.
+   * Previously we awaited capture before setOpen — FAB spun / froze on heavy pages.
+   * Double-rAF + setTimeout lets the sheet paint before main-thread clone work.
    */
   const openDialog = useCallback(() => {
     setOpen(true);
@@ -138,7 +157,13 @@ function ReportBugFabAndDialog() {
     setScreenshotFile(null);
     setPreviewUrl(null);
     setViewport(null);
-    void runCapture();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          void runCapture();
+        }, 0);
+      });
+    });
   }, [revokePreview, runCapture]);
 
   const onSubmit = useCallback(async () => {
@@ -324,6 +349,9 @@ function ReportBugFabAndDialog() {
               </div>
               {captureError && previewUrl ? (
                 <p className="mt-1 text-xs text-destructive">{captureError}</p>
+              ) : null}
+              {captureError && !previewUrl && !capturing ? (
+                <p className="mt-1 text-xs text-muted-foreground">{captureError}</p>
               ) : null}
             </div>
 
