@@ -53,6 +53,34 @@ export function isPipelinePatchQuietNotifyOnly(keys: string[]): boolean {
   );
 }
 
+/** Args that are not pipeline field keys when classifying quiet-only patches. */
+const PIPELINE_PATCH_META_KEYS = new Set([
+  "id",
+  "expectedUpdatedAt",
+  "preferencesAccountId",
+  "memberUserKey",
+  "organizationId",
+]);
+
+/**
+ * Online-only: omit `expectedUpdatedAt` for scratch-only patches so Scenario /
+ * criteria / termOptions do not soft-conflict when deal autosave bumps
+ * `pipeline.updatedAt`. Offline queue must keep `expectedUpdatedAt` so flush
+ * still OCC-protects against silently overwriting newer server values.
+ */
+export function stripOccForOnlineQuietPipelinePatch<
+  T extends { expectedUpdatedAt?: number },
+>(args: T): T {
+  const patchKeys = Object.keys(args).filter((k) => {
+    if (PIPELINE_PATCH_META_KEYS.has(k)) return false;
+    return (args as Record<string, unknown>)[k] !== undefined;
+  });
+  if (!isPipelinePatchQuietNotifyOnly(patchKeys)) return args;
+  if (args.expectedUpdatedAt === undefined) return args;
+  const { expectedUpdatedAt: _drop, ...rest } = args;
+  return rest as T;
+}
+
 export function clampPipelineScenarioText(
   raw: string | null | undefined,
 ): string | undefined {

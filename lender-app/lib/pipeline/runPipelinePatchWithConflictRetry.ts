@@ -1,5 +1,6 @@
 import {
   isPatchPipelineConflictResult,
+  stripOccForOnlineQuietPipelinePatch,
   type PatchPipelineConflict,
   type PatchPipelineResult,
   type PatchPipelineSuccess,
@@ -12,12 +13,11 @@ type PatchArgsWithOcc = {
 /**
  * Soft OCC from `pipeline.patch` (same posture as `patchDeal`): never retry the
  * same field payload with a bumped `expectedUpdatedAt` — that would convert
- * timestamp races into silent last-writer-wins for those keys (including
- * concurrent same-field edits). Callers surface the conflict and let the user
- * (or a later dirty flush with fresh `updatedAt`) save again.
+ * timestamp races into silent last-writer-wins for those keys.
  *
- * Scratch-only Scenario / criteria / termOptions patches skip OCC on the server
- * so they do not fail when deal autosave bumps `pipeline.updatedAt`.
+ * Online quiet-only Scenario / criteria / termOptions patches strip
+ * `expectedUpdatedAt` before the call (deal autosave race). Offline callers
+ * must enqueue with `expectedUpdatedAt` intact so flush still OCC-protects.
  */
 export async function runPipelinePatchHandlingConflict<
   TArgs extends PatchArgsWithOcc,
@@ -26,7 +26,8 @@ export async function runPipelinePatchHandlingConflict<
   payload: TArgs,
   onConflict?: (conflict: PatchPipelineConflict) => void,
 ): Promise<PatchPipelineSuccess> {
-  const result = await patch(payload);
+  const onlinePayload = stripOccForOnlineQuietPipelinePatch(payload);
+  const result = await patch(onlinePayload);
   if (!isPatchPipelineConflictResult(result)) {
     return result;
   }

@@ -9,6 +9,7 @@ import {
   isPipelinePatchQuietNotifyOnly,
   MAX_PIPELINE_SCENARIO_CHARS,
   PATCH_PIPELINE_CONFLICT_CODE,
+  stripOccForOnlineQuietPipelinePatch,
 } from "../modules/pipeline/lib/core/patchPipelineResult";
 import { runPipelinePatchHandlingConflict } from "../lib/pipeline/runPipelinePatchWithConflictRetry";
 import type { PatchPipelineResult } from "../lib/pipeline/patchPipelineResult";
@@ -21,6 +22,33 @@ function testQuietNotify() {
   );
   assert.equal(isPipelinePatchQuietNotifyOnly(["scenario", "status"]), false);
   assert.equal(isPipelinePatchQuietNotifyOnly([]), false);
+}
+
+function testStripOccOnlineQuiet() {
+  const quiet = stripOccForOnlineQuietPipelinePatch({
+    id: "f1",
+    scenario: "hello",
+    expectedUpdatedAt: 99,
+    preferencesAccountId: "u1",
+  });
+  assert.equal("expectedUpdatedAt" in quiet, false);
+  assert.equal(quiet.scenario, "hello");
+
+  const mixed = stripOccForOnlineQuietPipelinePatch({
+    id: "f1",
+    scenario: "hello",
+    status: "Active",
+    expectedUpdatedAt: 99,
+  });
+  assert.equal(mixed.expectedUpdatedAt, 99);
+
+  const offlineKept = {
+    id: "f1",
+    scenario: "hello",
+    expectedUpdatedAt: 42,
+  };
+  // Offline path must not call strip — assert helper is opt-in only.
+  assert.equal(offlineKept.expectedUpdatedAt, 42);
 }
 
 function testClamp() {
@@ -48,21 +76,22 @@ function testConflictGuard() {
   );
 }
 
-async function testSuccessPassthrough() {
-  let calls = 0;
+async function testOnlineQuietOmitsOcc() {
+  let seen: { expectedUpdatedAt?: number } | null = null;
   const patch = async (args: {
     id: string;
+    scenario?: string;
     expectedUpdatedAt?: number;
   }): Promise<PatchPipelineResult> => {
-    calls += 1;
+    seen = args;
     return { ok: true, id: args.id };
   };
-  const res = await runPipelinePatchHandlingConflict(patch, {
+  await runPipelinePatchHandlingConflict(patch, {
     id: "file1",
+    scenario: "text",
     expectedUpdatedAt: 1,
   });
-  assert.equal(res.ok, true);
-  assert.equal(calls, 1);
+  assert.equal(seen?.expectedUpdatedAt, undefined);
 }
 
 async function testConflictNoRetry() {
@@ -78,9 +107,13 @@ async function testConflictNoRetry() {
   };
   await assert.rejects(
     () =>
-      runPipelinePatchHandlingConflict(patch, { expectedUpdatedAt: 1 }, () => {
-        notified += 1;
-      }),
+      runPipelinePatchHandlingConflict(
+        patch,
+        { status: "Active", expectedUpdatedAt: 1 },
+        () => {
+          notified += 1;
+        },
+      ),
     /File changed elsewhere/,
   );
   assert.equal(calls, 1);
@@ -89,9 +122,10 @@ async function testConflictNoRetry() {
 
 async function main() {
   testQuietNotify();
+  testStripOccOnlineQuiet();
   testClamp();
   testConflictGuard();
-  await testSuccessPassthrough();
+  await testOnlineQuietOmitsOcc();
   await testConflictNoRetry();
   console.log("pipeline-scenario-patch-tests: ok");
 }
