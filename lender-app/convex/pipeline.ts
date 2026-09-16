@@ -118,7 +118,7 @@ import {
 } from "./projectCapitalStack";
 import {
   batchGraphLinksForPipelineFiles,
-  emptyGraphLinksForPipelineFiles,
+  type PipelineRowGraphLinks,
 } from "./pipelineGraphPreviewLinks";
 import type { HierarchyDocCaches } from "./pipelineHierarchyCompat";
 
@@ -1263,7 +1263,7 @@ export const listTablePreviewEnrichment = query({
 
     let graphLinksByFile: Awaited<
       ReturnType<typeof batchGraphLinksForPipelineFiles>
-    >;
+    > | null = null;
     try {
       graphLinksByFile = await batchGraphLinksForPipelineFiles(
         ctx,
@@ -1289,26 +1289,21 @@ export const listTablePreviewEnrichment = query({
        * over-read kill the enrichment query (page-level Server Error).
        * Convex may still abort on hard 4096 before this catch — caps above
        * are the primary guard; this covers unexpected graph failures.
+       *
+       * CRITICAL: omit `graphLinks` (leave undefined) — do NOT publish `[]`
+       * / empty objects. Clients treat `graphLinks !== undefined` as
+       * authoritative enrichment; empty arrays stick badges offline.
        */
       console.warn(
-        "[listTablePreviewEnrichment] graph links truncated; returning empty graphLinks",
+        "[listTablePreviewEnrichment] graph links failed; omitting graphLinks (non-authoritative)",
         err instanceof Error ? err.message : err,
       );
-      graphLinksByFile = emptyGraphLinksForPipelineFiles(visible);
+      graphLinksByFile = null;
     }
 
     return visible.map((p) => {
-      const graphLinks = graphLinksByFile.get(String(p._id)) ?? {
-        clients: [],
-        projects: [],
-        lenders: [],
-        referrals: [],
-        team: [],
-        tasks: [],
-      };
-      return {
+      const base = {
         fileId: p._id,
-        graphLinks,
         fileNotesCount: fileNoteCounts.get(String(p._id)) ?? 0,
         projectCapitalRollup: p.projectId
           ? capitalRollupByProject.get(String(p.projectId))
@@ -1317,6 +1312,20 @@ export const listTablePreviewEnrichment = query({
           ? (projectLinkedById.get(String(p.projectId)) ?? [])
           : [],
       };
+      if (!graphLinksByFile) {
+        // Soft-fail: notes/capital/projectLinkedClients only — no graphLinks.
+        return base;
+      }
+      const graphLinks: PipelineRowGraphLinks =
+        graphLinksByFile.get(String(p._id)) ?? {
+          clients: [],
+          projects: [],
+          lenders: [],
+          referrals: [],
+          team: [],
+          tasks: [],
+        };
+      return { ...base, graphLinks };
     });
   },
 });

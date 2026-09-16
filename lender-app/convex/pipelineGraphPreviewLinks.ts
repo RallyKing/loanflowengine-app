@@ -577,7 +577,13 @@ export async function batchGraphLinksForPipelineFiles(
   return out;
 }
 
-/** Empty graph links for every file — fail-soft when budget cannot run graph. */
+/**
+ * Empty graph-link shells keyed by file id — test / placeholder only.
+ *
+ * Do NOT publish these from `listTablePreviewEnrichment` soft-fail: clients
+ * treat `graphLinks !== undefined` as authoritative (including empty arrays),
+ * which sticks badges offline. Soft-fail must omit `graphLinks` entirely.
+ */
 export function emptyGraphLinksForPipelineFiles(
   files: Doc<"pipeline">[],
 ): Map<string, PipelineRowGraphLinks> {

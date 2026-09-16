@@ -671,9 +671,23 @@ async function main(): Promise<void> {
     team: [],
     tasks: [],
   });
+  /**
+   * Soft-fail contract (listTablePreviewEnrichment): emptyGraphLinksForPipelineFiles
+   * is a test/placeholder helper only. Publishing these empties as enrichment
+   * rows is forbidden — clients treat graphLinks !== undefined as authoritative
+   * and sticky-empty badges can persist offline. Soft-fail must omit graphLinks.
+   */
+  for (const file of denseFiles) {
+    const shell = empty.get(String(file._id));
+    assert.ok(shell);
+    // Helper still returns empty shells for tests — enrichment soft-fail must
+    // never attach these to returned rows (omit / leave undefined instead).
+    assert.equal(shell!.clients.length, 0);
+    assert.equal(shell!.referrals.length, 0);
+  }
 
   console.log(
-    `[pipeline-hub-read-bounds] OK — ${db.docReads} docs read for ${VISIBLE_FILES} visible files across a ${totalDocs}-doc deployment (${HIDDEN_SAME_ORG_FILES} hidden same-org files not scanned). Graph label caps: contact=${PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP} member=${PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP}.`,
+    `[pipeline-hub-read-bounds] OK — ${db.docReads} docs read for ${VISIBLE_FILES} visible files across a ${totalDocs}-doc deployment (${HIDDEN_SAME_ORG_FILES} hidden same-org files not scanned). Graph label caps: contact=${PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP} member=${PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP}. Soft-fail must omit graphLinks (not publish emptyGraphLinksForPipelineFiles).`,
   );
 }
 
