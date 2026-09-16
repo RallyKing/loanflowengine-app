@@ -23,30 +23,29 @@
 export const PIPELINE_TABLE_PREVIEW_MAX_ROWS = 2_000;
 
 /**
- * Org-scoped ceiling for junction/edge tables on the hub path
- * (`fileLenders`, `fileClients`, `fileProjects`, `fileTeamMembers`, `fileTasks`).
+ * Per-file cap for junction/edge reads on the hub path
+ * (`fileLenders`, `fileClients`, `fileProjects`, `fileTeamMembers`, `fileTasks`,
+ * `loanClients`, `contactFileLinks`).
  *
- * One indexed `by_organization` take replaces the PR #38 per-file fan-out
- * (`takeAcrossFiles`), which multiplied query count and docs for orgs that are
- * most of the deployment. Filter to the visible file id set in memory.
- */
-export const PIPELINE_ORG_EDGE_SCAN_CAP = 20_000;
-
-/**
- * Per-file cap for junction/edge reads that lack an org index
- * (`contactFileLinks`) or for single-file workspace helpers.
- * A loan file with more than this many edges of one kind is pathological.
+ * Hub joins use visible-scoped `by_file` / `by_pipeline` takes so document cost
+ * tracks the visible file set — not org-wide junction cardinality (org
+ * take-then-filter over-read archived/snoozed edges after #38/#39).
  */
 export const PIPELINE_FILE_EDGE_SCAN_CAP = 200;
 
 /**
- * Org-scoped ceiling for `tasks.by_organization` when loading related tasks for
- * the hub graph (filter to visible `relatedFileId`s in memory). Replaces
- * per-file `by_relatedFile` fan-out on `listTablePreview`.
+ * @deprecated Hub joins no longer org-scan junction tables. Kept so older
+ * proofs/docs that mention the constant still resolve; do not use on the hub path.
+ */
+export const PIPELINE_ORG_EDGE_SCAN_CAP = 20_000;
+
+/**
+ * @deprecated Hub graph related-tasks use `by_relatedFile` (same as triage).
+ * Kept for reference only — do not use on the hub path.
  */
 export const PIPELINE_ORG_RELATED_TASK_SCAN_CAP = 5_000;
 
-/** Per-file cap for `tasks.by_relatedFile` (triage + single-file helpers). */
+/** Per-file cap for `tasks.by_relatedFile` (triage + hub graph). */
 export const PIPELINE_FILE_RELATED_TASK_SCAN_CAP = 200;
 
 /**

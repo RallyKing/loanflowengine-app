@@ -42,8 +42,14 @@ import {
 import { buildNewFilePipelineMetricsContext } from "../lib/userPreferencesNewFileDrawer";
 import { batchPipelineFileNoteCounts } from "./pipelineFileNotes";
 import {
+  loadFileClientEdgesForFiles,
   loadFileLenderEdgesForFiles,
+  loadFileProjectEdgesForFiles,
+  loadFileTaskEdgesForFiles,
+  loadFileTeamMemberEdgesForFiles,
+  loadLoanClientLinksForFiles,
   loadOrgScopedPipelineRowsBounded,
+  loadRelatedTasksForFiles,
 } from "./pipelineHubBoundedReads";
 import { PIPELINE_TABLE_PREVIEW_MAX_ROWS } from "../lib/pipeline/tablePreviewReadBounds";
 import { PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID } from "./auth/platformGodMode";
@@ -86,15 +92,22 @@ import {
   pipelineHierarchyFkArgs,
   resolvePipelineHierarchyForCreate,
 } from "./hierarchyEnforcement";
-import { ownerFieldsForInsert } from "./resourceAccess";
+import {
+  filterPipelineRowsForMemberWithAccessLevels,
+  ownerFieldsForInsert,
+} from "./resourceAccess";
 import { buildPipelineViewerAccess } from "./resourceViewerAccess";
-import { buildPipelineOwnershipPresentation } from "./resourceOwnershipPresentation";
+import {
+  buildHubTableOwnershipPresentations,
+  buildPipelineOwnershipPresentation,
+} from "./resourceOwnershipPresentation";
 import { safeResolveFileHierarchy } from "./pipelineHierarchyCompat";
 import {
   resolveTableRowClientDisplayName,
   resolveTableRowProjectDisplayTitle,
 } from "../lib/pipeline/resolveTableRowHierarchyDisplay";
 import {
+  buildLoanLinkedClientSummaries,
   ensurePrimaryLoanClientLink,
   resolveProjectLinkedClients,
 } from "./pipelineMultiClientLinks";
@@ -785,32 +798,78 @@ export const listTablePreview = query({
       return true;
     });
     const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
-    const visible = await filterPipelineRowsForMember(
+    const {
+      rows: visible,
+      viewerKey,
+      accessByFileId,
+      directSharePermission,
+    } = await filterPipelineRowsForMemberWithAccessLevels(
       ctx,
       orgScoped,
       organizationId,
       memberUserKey,
     );
-    const intakeIds = new Set<Id<"intakeSheets">>();
-    const lenderIds = new Set<Id<"lenders">>();
-    for (const r of visible) {
-      if (r.intakeSheetId) intakeIds.add(r.intakeSheetId);
-      if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
-      for (const lid of r.lenders ?? []) lenderIds.add(lid);
-    }
+    const visibleIds = visible.map((r) => r._id);
+
+    /**
+     * Visible-scoped junction reads once (docs ∝ visible files). Reused for
+     * primary lender, hierarchy linked clients, and graph badges — no second
+     * org-wide take-then-filter pass.
+     */
+    const [
+      fileLenderRead,
+      fileClientRead,
+      fileProjectRead,
+      fileTeamRead,
+      fileTaskRead,
+      loanClientRead,
+      relatedTaskRead,
+    ] = await Promise.all([
+      loadFileLenderEdgesForFiles(ctx, visibleIds, organizationId),
+      loadFileClientEdgesForFiles(ctx, visibleIds, organizationId),
+      loadFileProjectEdgesForFiles(ctx, visibleIds, organizationId),
+      loadFileTeamMemberEdgesForFiles(ctx, visibleIds, organizationId),
+      loadFileTaskEdgesForFiles(ctx, visibleIds, organizationId),
+      loadLoanClientLinksForFiles(ctx, visibleIds, organizationId),
+      loadRelatedTasksForFiles(ctx, visibleIds, organizationId),
+    ]);
+
+    const allFileLenders = fileLenderRead.rows;
     const fileLenderEdgesByFile = new Map<string, Doc<"fileLenders">[]>();
-    const { rows: allFileLenders } = await loadFileLenderEdgesForFiles(
-      ctx,
-      visible.map((r) => r._id),
-      organizationId,
-    );
     for (const edge of allFileLenders) {
       const key = String(edge.fileId);
       const bucket = fileLenderEdgesByFile.get(key) ?? [];
       bucket.push(edge);
       fileLenderEdgesByFile.set(key, bucket);
-      lenderIds.add(edge.lenderId);
     }
+    const fileClientsByFile = new Map<string, Doc<"fileClients">[]>();
+    for (const edge of fileClientRead.rows) {
+      const key = String(edge.fileId);
+      const bucket = fileClientsByFile.get(key) ?? [];
+      bucket.push(edge);
+      fileClientsByFile.set(key, bucket);
+    }
+    const loanClientsByFile = new Map<string, Doc<"loanClients">[]>();
+    for (const link of loanClientRead.rows) {
+      const key = String(link.pipelineId);
+      const bucket = loanClientsByFile.get(key) ?? [];
+      bucket.push(link);
+      loanClientsByFile.set(key, bucket);
+    }
+
+    const intakeIds = new Set<Id<"intakeSheets">>();
+    const lenderIds = new Set<Id<"lenders">>();
+    const linkedClientIds = new Set<Id<"clients">>();
+    for (const r of visible) {
+      if (r.intakeSheetId) intakeIds.add(r.intakeSheetId);
+      if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
+      for (const lid of r.lenders ?? []) lenderIds.add(lid);
+      if (r.clientId) linkedClientIds.add(r.clientId);
+    }
+    for (const edge of allFileLenders) lenderIds.add(edge.lenderId);
+    for (const edge of fileClientRead.rows) linkedClientIds.add(edge.clientId);
+    for (const link of loanClientRead.rows) linkedClientIds.add(link.clientId);
+
     const intakeDocs = await Promise.all(
       [...intakeIds].map((id) => ctx.db.get(id)),
     );
@@ -834,18 +893,51 @@ export const listTablePreview = query({
         doc.company?.trim() || doc.contactName?.trim() || "Lender",
       );
     }
-    const editAccess = await Promise.all(
-      visible.map((row) =>
-        resolveOrgPipelineFileAccessLevel(ctx, row, memberUserKey),
-      ),
+
+    const linkedClientDocs = await Promise.all(
+      [...linkedClientIds].map((id) => ctx.db.get(id)),
     );
-    const ownershipRows = await Promise.all(
-      visible.map((p) =>
-        buildPipelineOwnershipPresentation(ctx, p, memberUserKey),
-      ),
+    const linkedClientDocById = new Map<string, Doc<"clients">>();
+    for (const doc of linkedClientDocs) {
+      if (doc) linkedClientDocById.set(String(doc._id), doc);
+    }
+
+    const ownershipRows = await buildHubTableOwnershipPresentations(
+      ctx,
+      visible,
+      viewerKey,
+      accessByFileId,
+      directSharePermission,
     );
+
+    const linkedClientsByFile = new Map<
+      string,
+      Awaited<ReturnType<typeof buildLoanLinkedClientSummaries>>
+    >();
+    await Promise.all(
+      visible.map(async (p) => {
+        const key = String(p._id);
+        linkedClientsByFile.set(
+          key,
+          await buildLoanLinkedClientSummaries(
+            ctx,
+            p,
+            fileClientsByFile.get(key) ?? [],
+            loanClientsByFile.get(key) ?? [],
+            linkedClientDocById,
+          ),
+        );
+      }),
+    );
+
     const hierarchyRows = await Promise.all(
-      visible.map((p) => safeResolveFileHierarchy(ctx, p)),
+      visible.map((p) =>
+        safeResolveFileHierarchy(
+          ctx,
+          p,
+          linkedClientsByFile.get(String(p._id)) ?? [],
+        ),
+      ),
     );
     const projectIds = [
       ...new Set(
@@ -879,19 +971,17 @@ export const listTablePreview = query({
       }),
     );
     const clientLabelById = new Map<string, string>();
-    await Promise.all(
-      clientIds.map(async (cid) => {
-        const client = await ctx.db.get(cid);
-        if (!client) return;
-        const label =
-          client.displayName?.trim() ||
-          client.companyName?.trim() ||
-          client.primaryContactName?.trim() ||
-          client.normalizedName?.trim() ||
-          "";
-        if (label) clientLabelById.set(String(cid), label);
-      }),
-    );
+    for (const cid of clientIds) {
+      const client = linkedClientDocById.get(String(cid));
+      if (!client) continue;
+      const label =
+        client.displayName?.trim() ||
+        client.companyName?.trim() ||
+        client.primaryContactName?.trim() ||
+        client.normalizedName?.trim() ||
+        "";
+      if (label) clientLabelById.set(String(cid), label);
+    }
     const capitalRollupByProject = await batchCapitalRollupsForProjects(
       ctx,
       projectIds,
@@ -920,6 +1010,11 @@ export const listTablePreview = query({
       }),
       {
         fileLenderEdges: allFileLenders,
+        fileClientEdges: fileClientRead.rows,
+        fileProjectEdges: fileProjectRead.rows,
+        fileTeamMemberEdges: fileTeamRead.rows,
+        fileTaskEdges: fileTaskRead.rows,
+        relatedTasks: relatedTaskRead.rows,
         lenderLabelById,
         clientLabelById,
         projectTitleById,
@@ -959,6 +1054,7 @@ export const listTablePreview = query({
         lenderLabelById,
       });
       const previewCore = buildTablePreviewRow(p, intake, lenderById);
+      const access = accessByFileId.get(String(p._id)) ?? "none";
       return {
         ...previewCore,
         searchText: [
@@ -970,7 +1066,7 @@ export const listTablePreview = query({
           .join(" ")
           .toLowerCase(),
         primaryLender,
-        canEditFile: editAccess[i] === "edit",
+        canEditFile: access === "edit",
         ownership: ownershipRows[i],
         clientId: p.clientId,
         projectId: p.projectId,

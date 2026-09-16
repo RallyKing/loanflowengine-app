@@ -122,6 +122,28 @@ export async function resolveLoanLinkedClients(
     .withIndex("by_file", (q) => q.eq("fileId", row._id))
     .collect();
 
+  return await buildLoanLinkedClientSummaries(ctx, row, fileEdges, links);
+}
+
+/**
+ * Hub path: build linked-client summaries from preloaded `fileClients` +
+ * `loanClients` rows (no per-file junction re-read).
+ */
+export async function buildLoanLinkedClientSummaries(
+  ctx: QueryCtx | MutationCtx,
+  row: Doc<"pipeline">,
+  fileEdges: ReadonlyArray<{
+    clientId: Id<"clients">;
+    relationshipType: ClientRelationshipType;
+    sortOrder: number;
+  }>,
+  loanLinks: ReadonlyArray<{
+    clientId: Id<"clients">;
+    relationshipType: ClientRelationshipType;
+    sortOrder: number;
+  }>,
+  clientDocs?: Map<string, Doc<"clients">>,
+): Promise<LinkedClientSummary[]> {
   const merged = new Map<
     string,
     {
@@ -138,7 +160,7 @@ export async function resolveLoanLinkedClients(
       sortOrder: edge.sortOrder,
     });
   }
-  for (const link of links) {
+  for (const link of loanLinks) {
     merged.set(String(link.clientId), {
       clientId: link.clientId,
       relationshipType: link.relationshipType,
@@ -148,7 +170,7 @@ export async function resolveLoanLinkedClients(
 
   const summaries: LinkedClientSummary[] = [];
   for (const entry of merged.values()) {
-    const summary = await clientSummary(
+    const summary = await clientSummaryFromCache(
       ctx,
       entry.clientId,
       entry.relationshipType,
@@ -156,21 +178,51 @@ export async function resolveLoanLinkedClients(
       row.clientId != null &&
         String(entry.clientId) === String(row.clientId) &&
         entry.relationshipType === "primary",
+      clientDocs,
     );
     if (summary) summaries.push(summary);
   }
 
   if (summaries.length === 0 && row.clientId) {
-    const primary = await clientSummary(
+    const primary = await clientSummaryFromCache(
       ctx,
       row.clientId,
       "primary",
       PRIMARY_SORT,
       true,
+      clientDocs,
     );
     if (primary) summaries.push(primary);
   }
   return summaries.sort(compareClientLinks);
+}
+
+async function clientSummaryFromCache(
+  ctx: QueryCtx | MutationCtx,
+  clientId: Id<"clients">,
+  relationshipType: ClientRelationshipType,
+  sortOrder: number,
+  isAuthoritativePrimary: boolean,
+  clientDocs?: Map<string, Doc<"clients">>,
+): Promise<LinkedClientSummary | null> {
+  const cached = clientDocs?.get(String(clientId));
+  if (cached) {
+    return {
+      clientId: String(cached._id),
+      displayName: cached.displayName,
+      normalizedName: cached.normalizedName,
+      relationshipType,
+      sortOrder,
+      isAuthoritativePrimary,
+    };
+  }
+  return await clientSummary(
+    ctx,
+    clientId,
+    relationshipType,
+    sortOrder,
+    isAuthoritativePrimary,
+  );
 }
 
 export async function linkedClientDisplayNamesForPipeline(

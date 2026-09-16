@@ -41,6 +41,16 @@ const HOT_PATH_FUNCTIONS = [
   },
 ];
 
+/** Extra static bans for hub junction readers — docs must track visible files. */
+const HUB_JUNCTION_BANS = [
+  {
+    id: "org-junction-overread",
+    test: /withIndex\(\s*["']by_organization["']/,
+    message:
+      "Hub junction helpers must use by_file / by_pipeline / by_relatedFile — not org take-then-filter.",
+  },
+];
+
 /** Extra static bans for the triage builder specifically. */
 const TRIAGE_BANS = [
   {
@@ -137,6 +147,18 @@ function main() {
     const codeLines = stripComments(raw).split(/\r?\n/);
     checkRegion(rel, rawLines, codeLines, 0, codeLines.length, problems);
     checkIndexedReads(rel, rawLines, codeLines, 0, codeLines.length, problems);
+    for (let i = 0; i < codeLines.length; i++) {
+      const code = codeLines[i];
+      if (!code || !code.trim()) continue;
+      if ((rawLines[i - 1] ?? "").includes(ALLOW_MARKER) || rawLines[i].includes(ALLOW_MARKER)) {
+        continue;
+      }
+      for (const rule of HUB_JUNCTION_BANS) {
+        if (rule.test.test(code)) {
+          problems.push(`${rel}:${i + 1} [${rule.id}] ${rule.message}`);
+        }
+      }
+    }
   }
 
   for (const { file, symbol } of HOT_PATH_FUNCTIONS) {
