@@ -11,7 +11,7 @@ import {
   useState,
   startTransition,
 } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQueries, useQuery, type RequestForQueries } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
@@ -19,6 +19,7 @@ import {
   isTablePreviewEnrichmentAligned,
   isTablePreviewRowsFullyEnriched,
   mergeTablePreviewEnrichment,
+  type PipelineTablePreviewEnrichmentRow,
 } from "@/lib/pipeline/mergeTablePreviewEnrichment";
 import {
   NewPipelineHierarchyCreateDialog,
@@ -475,10 +476,27 @@ export function PipelinePageClient() {
     memberUserKey,
   ]);
   const rowsCore = useQuery(api.pipeline.listTablePreview, listPreviewArgs);
-  const rowsEnrichment = useQuery(
-    api.pipeline.listTablePreviewEnrichment,
-    listPreviewArgs,
-  );
+  /**
+   * Enrichment is best-effort: `useQuery` throws on Convex server errors and
+   * would trip `PageErrorBoundary`. `useQueries` returns `Error` so the hub
+   * keeps painting core rows when graph/read-budget enrichment fails.
+   */
+  const enrichmentQueries = useMemo((): RequestForQueries => {
+    if (listPreviewArgs === "skip") return {};
+    return {
+      enrichment: {
+        query: api.pipeline.listTablePreviewEnrichment,
+        args: listPreviewArgs,
+      },
+    };
+  }, [listPreviewArgs]);
+  const enrichmentResults = useQueries(enrichmentQueries);
+  const rowsEnrichmentRaw =
+    listPreviewArgs === "skip" ? undefined : enrichmentResults.enrichment;
+  const rowsEnrichment =
+    rowsEnrichmentRaw instanceof Error
+      ? undefined
+      : (rowsEnrichmentRaw as PipelineTablePreviewEnrichmentRow[] | undefined);
   /** Enrichment must cover the *current* core id set (not a sticky prior tick). */
   const enrichmentAligned =
     rowsCore !== undefined &&
@@ -538,9 +556,14 @@ export function PipelinePageClient() {
   }, [canUseHub]);
 
   useEffect(() => {
-    // Only persist fully enriched snapshots — incomplete rows must not be
-    // treated as enrichment-ready when loaded offline.
-    if (canUseHub && enrichmentAligned && rows !== undefined) {
+    // Only persist fully enriched snapshots — incomplete / graph-omitted rows
+    // must not sticky-cache as enrichment-ready offline (empty badges).
+    if (
+      canUseHub &&
+      enrichmentAligned &&
+      rows !== undefined &&
+      isTablePreviewRowsFullyEnriched(rows)
+    ) {
       void persistQuerySnapshot(snapshotKey, rows);
     }
   }, [canUseHub, enrichmentAligned, rows, snapshotKey]);
@@ -693,12 +716,15 @@ export function PipelinePageClient() {
   const listLoading = canUseHub ? rowsCore === undefined : !cacheReady;
   /**
    * Capital / client-involvement filters and note-count UI need enrichment.
-   * Live: enrichment must cover every current core file id (not sticky prior).
+   * Live: enrichment must cover every current core file id with complete
+   * payloads (incl. defined graphLinks — soft-fail omit is not ready).
    * Offline: ready only when the cached/optimistic snapshot carries deferred
-   * sentinels on every row (incomplete pre-enrichment snapshots stay gated).
+   * sentinels on every row (incomplete / graph-omitted snapshots stay gated).
    */
   const enrichmentReady = canUseHub
-    ? enrichmentAligned
+    ? enrichmentAligned &&
+      rows !== undefined &&
+      isTablePreviewRowsFullyEnriched(rows)
     : cacheReady &&
       isTablePreviewRowsFullyEnriched(
         optimisticRows ?? cachedRows ?? EMPTY_PIPELINE,

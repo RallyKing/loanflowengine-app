@@ -27,8 +27,15 @@ import {
   PIPELINE_FILE_EDGE_SCAN_CAP,
   PIPELINE_FILE_NOTE_SCAN_CAP,
   PIPELINE_FILE_RELATED_TASK_SCAN_CAP,
+  PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP,
+  PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP,
+  PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP,
   PIPELINE_TABLE_PREVIEW_MAX_ROWS,
 } from "../lib/pipeline/tablePreviewReadBounds";
+import {
+  batchGraphLinksForPipelineFiles,
+  emptyGraphLinksForPipelineFiles,
+} from "../convex/pipelineGraphPreviewLinks";
 
 type Row = Record<string, unknown> & { _id: string; _creationTime: number };
 
@@ -576,8 +583,111 @@ async function main(): Promise<void> {
     "the fake db must reject unindexed reads",
   );
 
+  /* 8. Graph label gets are hard-capped — dense unique contacts/members cannot
+   * tip listTablePreviewEnrichment over the Convex 4096-document limit. */
+  assert.ok(
+    PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP +
+      PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP +
+      PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP <
+      500,
+    "graph label get caps must stay well under residual enrichment headroom",
+  );
+
+  const contactRows: Row[] = [];
+  for (let i = 0; i < 600; i++) {
+    contactRows.push({
+      _id: `contact_dense_${i}`,
+      _creationTime: i,
+      name: `Contact ${i}`,
+      contactRoleIds: ["referral_partner"],
+    });
+  }
+  db.seed("contacts", contactRows);
+  const authRows: Row[] = [];
+  for (let i = 0; i < 300; i++) {
+    authRows.push({
+      _id: `auth_dense_${i}`,
+      _creationTime: i,
+      displayUsername: `user${i}`,
+      normalizedUsername: `user${i}`,
+    });
+  }
+  db.seed("authUsers", authRows);
+
+  const denseFiles = Array.from({ length: 50 }, (_, i) => ({
+    _id: `graph_file_${i}` as Id<"pipeline">,
+    _creationTime: i,
+    organizationId: OUR_ORG,
+    assigneeId: `auth_dense_${i}`,
+    sharedWithIds: [`auth_dense_${i + 50}`, `auth_dense_${i + 100}`],
+  })) as unknown as import("../convex/_generated/dataModel").Doc<"pipeline">[];
+
+  const denseCfls = Array.from({ length: 500 }, (_, i) => ({
+    _id: `cfl_dense_${i}`,
+    _creationTime: i,
+    fileId: denseFiles[i % denseFiles.length]!._id,
+    contactId: `contact_dense_${i}` as Id<"contacts">,
+    contactRoleId: "referral_partner",
+  })) as unknown as import("../convex/_generated/dataModel").Doc<"contactFileLinks">[];
+
+  db.reset();
+  const graphLinks = await batchGraphLinksForPipelineFiles(
+    ctx,
+    denseFiles,
+    OUR_ORG,
+    denseFiles.map((f) => ({
+      fileId: f._id,
+      linkedFromHierarchy: [],
+      clientDisplayName: "",
+      projectDisplayTitle: "",
+    })),
+    {
+      fileLenderEdges: [],
+      fileClientEdges: [],
+      fileProjectEdges: [],
+      fileTeamMemberEdges: [],
+      fileTaskEdges: [],
+      relatedTasks: [],
+      contactFileLinks: denseCfls,
+    },
+  );
+  assert.equal(graphLinks.size, denseFiles.length);
+  const contactGets = db.docReads;
+  assert.ok(
+    contactGets <=
+      PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP +
+        PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP +
+        PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP,
+    `graph label gets touched ${contactGets} docs; must stay under caps`,
+  );
+
+  const empty = emptyGraphLinksForPipelineFiles(denseFiles);
+  assert.equal(empty.size, denseFiles.length);
+  assert.deepEqual(empty.get(String(denseFiles[0]!._id)), {
+    clients: [],
+    projects: [],
+    lenders: [],
+    referrals: [],
+    team: [],
+    tasks: [],
+  });
+  /**
+   * Soft-fail contract (listTablePreviewEnrichment): emptyGraphLinksForPipelineFiles
+   * is a test/placeholder helper only. Publishing these empties as enrichment
+   * rows is forbidden — clients treat graphLinks !== undefined as authoritative
+   * and sticky-empty badges can persist offline. Soft-fail must omit graphLinks.
+   */
+  for (const file of denseFiles) {
+    const shell = empty.get(String(file._id));
+    assert.ok(shell);
+    // Helper still returns empty shells for tests — enrichment soft-fail must
+    // never attach these to returned rows (omit / leave undefined instead).
+    assert.equal(shell!.clients.length, 0);
+    assert.equal(shell!.referrals.length, 0);
+  }
+
   console.log(
-    `[pipeline-hub-read-bounds] OK — ${db.docReads} docs read for ${VISIBLE_FILES} visible files across a ${totalDocs}-doc deployment (${HIDDEN_SAME_ORG_FILES} hidden same-org files not scanned).`,
+    `[pipeline-hub-read-bounds] OK — ${db.docReads} docs read for ${VISIBLE_FILES} visible files across a ${totalDocs}-doc deployment (${HIDDEN_SAME_ORG_FILES} hidden same-org files not scanned). Graph label caps: contact=${PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP} member=${PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP}. Soft-fail must omit graphLinks (not publish emptyGraphLinksForPipelineFiles).`,
   );
 }
 

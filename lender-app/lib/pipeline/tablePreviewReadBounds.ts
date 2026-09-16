@@ -83,6 +83,17 @@ export const PIPELINE_PROJECT_CLIENT_LINKS_SCAN_CAP = 200;
 export const PIPELINE_PROJECT_CAPITAL_SCAN_CAP = 200;
 
 /**
+ * Hub graph badge labels (`batchGraphLinksForPipelineFiles`) must stay inside the
+ * Convex 4096-document read budget shared with ACL + edge scans + notes/capital.
+ * Unique `contacts` / `authUsers` / missing FK `db.get`s are hard-capped so a
+ * dense org cannot tip `listTablePreviewEnrichment` over the limit. Beyond the
+ * cap, badges use fallback labels (or omit referral badges that need contact docs).
+ */
+export const PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP = 200;
+export const PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP = 100;
+export const PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP = 100;
+
+/**
  * @deprecated Triage no longer org-scans tasks. Visible hub files are loaded via
  * `PIPELINE_TABLE_PREVIEW_MAX_ROWS`, then tasks via `by_relatedFile` per file
  * (capped by `PIPELINE_FILE_RELATED_TASK_SCAN_CAP`).

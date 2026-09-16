@@ -42,6 +42,7 @@ import {
 import { buildNewFilePipelineMetricsContext } from "../lib/userPreferencesNewFileDrawer";
 import { batchPipelineFileNoteCounts } from "./pipelineFileNotes";
 import {
+  loadContactFileLinksForFiles,
   loadFileClientEdgesForFiles,
   loadFileLenderEdgesForFiles,
   loadFileProjectEdgesForFiles,
@@ -115,7 +116,10 @@ import {
   batchCapitalRollupsForProjects,
   syncCapitalSourcesFromProjectLoans,
 } from "./projectCapitalStack";
-import { batchGraphLinksForPipelineFiles } from "./pipelineGraphPreviewLinks";
+import {
+  batchGraphLinksForPipelineFiles,
+  type PipelineRowGraphLinks,
+} from "./pipelineGraphPreviewLinks";
 import type { HierarchyDocCaches } from "./pipelineHierarchyCompat";
 
 /** Org-scoped files must record the authenticated creator as canonical owner. */
@@ -1095,27 +1099,37 @@ export const listTablePreviewEnrichment = query({
 
     const lenderIds = new Set<Id<"lenders">>();
     const linkedClientIds = new Set<Id<"clients">>();
-    const projectIds = [
-      ...new Set(
-        visible
-          .map((p) => p.projectId)
-          .filter((id): id is Id<"projects"> => id != null),
-      ),
-    ];
+    /** Capital rollups only for FK projects on visible rows (not junction-only). */
+    const capitalProjectIdSet = new Set<Id<"projects">>();
+    /** Graph labels also cover `fileProjects` junction project ids. */
+    const labelProjectIdSet = new Set<Id<"projects">>();
     for (const r of visible) {
       if (r.clientId) linkedClientIds.add(r.clientId);
+      if (r.projectId) {
+        capitalProjectIdSet.add(r.projectId);
+        labelProjectIdSet.add(r.projectId);
+      }
       if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
       for (const lid of r.lenders ?? []) lenderIds.add(lid);
     }
     for (const edge of fileLenderRead.rows) lenderIds.add(edge.lenderId);
     for (const edge of fileClientRead.rows) linkedClientIds.add(edge.clientId);
+    for (const edge of fileProjectRead.rows) labelProjectIdSet.add(edge.projectId);
     for (const link of loanClientRead.rows) linkedClientIds.add(link.clientId);
+    const projectIds = [...capitalProjectIdSet];
+    const labelProjectIds = [...labelProjectIdSet];
 
-    const [lenderDocs, linkedClientDocs, projectDocs] = await Promise.all([
-      Promise.all([...lenderIds].map((id) => ctx.db.get(id))),
-      Promise.all([...linkedClientIds].map((id) => ctx.db.get(id))),
-      Promise.all(projectIds.map((id) => ctx.db.get(id))),
-    ]);
+    const [lenderDocs, linkedClientDocs, projectDocs, labelProjectDocs] =
+      await Promise.all([
+        Promise.all([...lenderIds].map((id) => ctx.db.get(id))),
+        Promise.all([...linkedClientIds].map((id) => ctx.db.get(id))),
+        Promise.all(projectIds.map((id) => ctx.db.get(id))),
+        Promise.all(
+          labelProjectIds
+            .filter((id) => !capitalProjectIdSet.has(id))
+            .map((id) => ctx.db.get(id)),
+        ),
+      ]);
 
     const lenderLabelById = new Map<string, string>();
     for (const doc of lenderDocs) {
@@ -1144,6 +1158,12 @@ export const listTablePreviewEnrichment = query({
     for (const doc of projectDocs) {
       if (!doc) continue;
       projects.push(doc);
+      projectById.set(String(doc._id), doc);
+      const title = doc.title?.trim();
+      if (title) projectTitleById.set(String(doc._id), title);
+    }
+    for (const doc of labelProjectDocs) {
+      if (!doc) continue;
       projectById.set(String(doc._id), doc);
       const title = doc.title?.trim();
       if (title) projectTitleById.set(String(doc._id), title);
@@ -1200,7 +1220,12 @@ export const listTablePreviewEnrichment = query({
       ),
     );
 
-    const [capitalRollupByProject, fileNoteCounts, projectLinkedById, graphLinksByFile] =
+    /**
+     * Notes / capital / project-linked clients first so they always land even
+     * when graph badge resolution is truncated under the 4096-read budget.
+     * Graph runs after with hard-capped contact/member label gets.
+     */
+    const [capitalRollupByProject, fileNoteCounts, projectLinkedById] =
       await Promise.all([
         batchCapitalRollupsForProjects(ctx, projectIds),
         batchPipelineFileNoteCounts(ctx, visible),
@@ -1209,46 +1234,76 @@ export const listTablePreviewEnrichment = query({
           projects,
           linkedClientDocById,
         ),
-        batchGraphLinksForPipelineFiles(
-          ctx,
-          visible,
-          organizationId,
-          visible.map((p, i) => {
-            const h = hierarchyRows[i]!;
-            return {
-              fileId: p._id,
-              linkedFromHierarchy: h.linkedClients.map((c) => ({
-                clientId: String(c.clientId),
-                displayName: c.displayName,
-                relationshipType: c.relationshipType,
-              })),
-              clientDisplayName:
-                h.client.kind === "record"
-                  ? h.client.displayName
-                  : h.client.displayName,
-              projectDisplayTitle:
-                h.project.kind === "record" ? h.project.title : h.project.title,
-            };
-          }),
-          {
-            fileLenderEdges: fileLenderRead.rows,
-            fileClientEdges: fileClientRead.rows,
-            fileProjectEdges: fileProjectRead.rows,
-            fileTeamMemberEdges: fileTeamRead.rows,
-            fileTaskEdges: fileTaskRead.rows,
-            relatedTasks: relatedTaskRead.rows,
-            lenderLabelById,
-            clientLabelById,
-            projectTitleById,
-          },
-        ),
       ]);
 
-    return visible.map((p) => {
-      const graphLinks = graphLinksByFile.get(String(p._id))!;
+    const hierarchyExtras = visible.map((p, i) => {
+      const h = hierarchyRows[i]!;
       return {
         fileId: p._id,
-        graphLinks,
+        linkedFromHierarchy: h.linkedClients.map((c) => ({
+          clientId: String(c.clientId),
+          displayName: c.displayName,
+          relationshipType: c.relationshipType,
+        })),
+        clientDisplayName:
+          h.client.kind === "record"
+            ? h.client.displayName
+            : h.client.displayName,
+        projectDisplayTitle:
+          h.project.kind === "record" ? h.project.title : h.project.title,
+      };
+    });
+
+    /**
+     * Prefetch CFLs once (visible-scoped) and pass into graph so contact label
+     * resolution can hard-cap unique gets without a second edge pass.
+     */
+    const contactFileLinks = (await loadContactFileLinksForFiles(ctx, visibleIds))
+      .rows;
+
+    let graphLinksByFile: Awaited<
+      ReturnType<typeof batchGraphLinksForPipelineFiles>
+    > | null = null;
+    try {
+      graphLinksByFile = await batchGraphLinksForPipelineFiles(
+        ctx,
+        visible,
+        organizationId,
+        hierarchyExtras,
+        {
+          fileLenderEdges: fileLenderRead.rows,
+          fileClientEdges: fileClientRead.rows,
+          fileProjectEdges: fileProjectRead.rows,
+          fileTeamMemberEdges: fileTeamRead.rows,
+          fileTaskEdges: fileTaskRead.rows,
+          relatedTasks: relatedTaskRead.rows,
+          contactFileLinks,
+          lenderLabelById,
+          clientLabelById,
+          projectTitleById,
+        },
+      );
+    } catch (err) {
+      /**
+       * Fail soft: notes/capital already resolved. Never let graph label
+       * over-read kill the enrichment query (page-level Server Error).
+       * Convex may still abort on hard 4096 before this catch — caps above
+       * are the primary guard; this covers unexpected graph failures.
+       *
+       * CRITICAL: omit `graphLinks` (leave undefined) — do NOT publish `[]`
+       * / empty objects. Clients treat `graphLinks !== undefined` as
+       * authoritative enrichment; empty arrays stick badges offline.
+       */
+      console.warn(
+        "[listTablePreviewEnrichment] graph links failed; omitting graphLinks (non-authoritative)",
+        err instanceof Error ? err.message : err,
+      );
+      graphLinksByFile = null;
+    }
+
+    return visible.map((p) => {
+      const base = {
+        fileId: p._id,
         fileNotesCount: fileNoteCounts.get(String(p._id)) ?? 0,
         projectCapitalRollup: p.projectId
           ? capitalRollupByProject.get(String(p.projectId))
@@ -1257,6 +1312,20 @@ export const listTablePreviewEnrichment = query({
           ? (projectLinkedById.get(String(p.projectId)) ?? [])
           : [],
       };
+      if (!graphLinksByFile) {
+        // Soft-fail: notes/capital/projectLinkedClients only — no graphLinks.
+        return base;
+      }
+      const graphLinks: PipelineRowGraphLinks =
+        graphLinksByFile.get(String(p._id)) ?? {
+          clients: [],
+          projects: [],
+          lenders: [],
+          referrals: [],
+          team: [],
+          tasks: [],
+        };
+      return { ...base, graphLinks };
     });
   },
 });

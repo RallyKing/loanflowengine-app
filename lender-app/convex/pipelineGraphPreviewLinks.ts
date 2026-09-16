@@ -1,6 +1,11 @@
 /**
  * Phase 15 Step 4 — graph link summaries embedded in `listTablePreview` rows.
  * ACL: only files already visible to the member are enriched.
+ *
+ * Read budget: unique label `db.get`s are hard-capped (see
+ * `PIPELINE_GRAPH_*_LABEL_GET_CAP`) so enrichment stays under Convex's 4096
+ * document limit. Beyond the cap, badges use fallback labels / omit referrals
+ * that require contact docs — never throw.
  */
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
@@ -13,6 +18,11 @@ import {
   loadFileTeamMemberEdgesForFiles,
   loadRelatedTasksForFiles,
 } from "./pipelineHubBoundedReads";
+import {
+  PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP,
+  PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP,
+  PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP,
+} from "../lib/pipeline/tablePreviewReadBounds";
 import {
   DEFAULT_CONTACT_ROLE_IDS,
   canonicalContactRoleIdsFromDoc,
@@ -100,6 +110,19 @@ function mergeClientLinks(
   return dedupeLinks(out);
 }
 
+/** Resolve at most `cap` unique ids; remainder stays unresolved (no get). */
+async function resolveUniqueIdsCapped(
+  ids: Iterable<string>,
+  cap: number,
+  resolve: (id: string) => Promise<void>,
+): Promise<void> {
+  if (cap <= 0) return;
+  const list = [...ids];
+  if (list.length === 0) return;
+  const slice = list.length > cap ? list.slice(0, cap) : list;
+  await Promise.all(slice.map((id) => resolve(id)));
+}
+
 export async function batchGraphLinksForPipelineFiles(
   ctx: QueryCtx,
   files: Doc<"pipeline">[],
@@ -122,9 +145,21 @@ export async function batchGraphLinksForPipelineFiles(
     fileTeamMemberEdges?: Doc<"fileTeamMembers">[];
     fileTaskEdges?: Doc<"fileTasks">[];
     relatedTasks?: Doc<"tasks">[];
+    /** Preloaded CFLs — skips a second visible-scoped contactFileLinks pass. */
+    contactFileLinks?: Doc<"contactFileLinks">[];
     lenderLabelById?: Map<string, string>;
     clientLabelById?: Map<string, string>;
     projectTitleById?: Map<string, string>;
+    /** Preloaded contact docs/labels — skips/reduces contact `db.get` fan-out. */
+    contactDocById?: Map<string, Doc<"contacts">>;
+    contactLabelById?: Map<string, string>;
+    /** Preloaded team member display labels keyed by auth user id. */
+    memberLabelById?: Map<string, string>;
+    /**
+     * When true, skip CFL + contact/member label resolution and return empty
+     * referral/team labels from keys only — used to stay under the read budget.
+     */
+    skipHeavyGraphLabels?: boolean;
   },
 ): Promise<Map<string, PipelineRowGraphLinks>> {
   const fileIdSet = new Set(files.map((f) => String(f._id)));
@@ -188,7 +223,12 @@ export async function batchGraphLinksForPipelineFiles(
   for (const r of ftaskAll) taskIds.add(String(r.taskId));
   for (const r of ftAll) userKeys.add(r.userKey.trim());
 
-  const { rows: cflAll } = await loadContactFileLinksForFiles(ctx, fileIds);
+  const skipHeavy = options?.skipHeavyGraphLabels === true;
+
+  const cflAll: Doc<"contactFileLinks">[] = skipHeavy
+    ? []
+    : (options?.contactFileLinks ??
+      (await loadContactFileLinksForFiles(ctx, fileIds)).rows);
   for (const link of cflAll) {
     contactIds.add(String(link.contactId));
   }
@@ -203,51 +243,64 @@ export async function batchGraphLinksForPipelineFiles(
     taskIds.add(String(task._id));
   }
 
+  /** Shared budget for missing client/project/lender/task label gets. */
+  let missingEntityBudget = PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP;
+
   const clientNames = new Map<string, string>(options?.clientLabelById ?? []);
   const missingClients = [...clientIds].filter((id) => !clientNames.has(id));
-  await Promise.all(
-    missingClients.map(async (id) => {
-      const doc = await ctx.db.get(id as Id<"clients">);
-      if (doc) clientNames.set(id, doc.displayName?.trim() || "Client");
-    }),
-  );
+  const clientGetCap = Math.min(missingClients.length, missingEntityBudget);
+  missingEntityBudget -= clientGetCap;
+  await resolveUniqueIdsCapped(missingClients, clientGetCap, async (id) => {
+    const doc = await ctx.db.get(id as Id<"clients">);
+    if (doc) clientNames.set(id, doc.displayName?.trim() || "Client");
+  });
 
   const projectNames = new Map<string, string>(options?.projectTitleById ?? []);
   const missingProjects = [...projectIds].filter((id) => !projectNames.has(id));
-  await Promise.all(
-    missingProjects.map(async (id) => {
-      const doc = await ctx.db.get(id as Id<"projects">);
-      if (doc) projectNames.set(id, doc.title?.trim() || "Project");
-    }),
-  );
+  const projectGetCap = Math.min(missingProjects.length, missingEntityBudget);
+  missingEntityBudget -= projectGetCap;
+  await resolveUniqueIdsCapped(missingProjects, projectGetCap, async (id) => {
+    const doc = await ctx.db.get(id as Id<"projects">);
+    if (doc) projectNames.set(id, doc.title?.trim() || "Project");
+  });
 
   const lenderNames = new Map<string, string>(options?.lenderLabelById ?? []);
   const missingLenders = [...lenderIds].filter((id) => !lenderNames.has(id));
-  await Promise.all(
-    missingLenders.map(async (id) => {
-      const doc = await ctx.db.get(id as Id<"lenders">);
-      if (doc) {
-        lenderNames.set(
-          id,
-          doc.company?.trim() || doc.contactName?.trim() || "Lender",
-        );
-      }
-    }),
-  );
+  const lenderGetCap = Math.min(missingLenders.length, missingEntityBudget);
+  missingEntityBudget -= lenderGetCap;
+  await resolveUniqueIdsCapped(missingLenders, lenderGetCap, async (id) => {
+    const doc = await ctx.db.get(id as Id<"lenders">);
+    if (doc) {
+      lenderNames.set(
+        id,
+        doc.company?.trim() || doc.contactName?.trim() || "Lender",
+      );
+    }
+  });
 
-  const contactNames = new Map<string, string>();
-  const contactDocs = new Map<string, Doc<"contacts">>();
-  const contactReferralFlags = new Map<string, boolean>();
-  await Promise.all(
-    [...contactIds].map(async (id) => {
-      const doc = await ctx.db.get(id as Id<"contacts">);
-      if (doc) {
-        contactDocs.set(id, doc);
-        contactNames.set(id, doc.name?.trim() || "Referral");
-        contactReferralFlags.set(id, contactQualifiesForReferralHub(doc));
-      }
-    }),
+  const contactNames = new Map<string, string>(options?.contactLabelById ?? []);
+  const contactDocs = new Map<string, Doc<"contacts">>(
+    options?.contactDocById ?? [],
   );
+  for (const [id, doc] of contactDocs) {
+    if (!contactNames.has(id)) {
+      contactNames.set(id, doc.name?.trim() || "Referral");
+    }
+  }
+  if (!skipHeavy) {
+    const missingContacts = [...contactIds].filter((id) => !contactDocs.has(id));
+    await resolveUniqueIdsCapped(
+      missingContacts,
+      PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP,
+      async (id) => {
+        const doc = await ctx.db.get(id as Id<"contacts">);
+        if (doc) {
+          contactDocs.set(id, doc);
+          contactNames.set(id, doc.name?.trim() || "Referral");
+        }
+      },
+    );
+  }
 
   const taskTitles = new Map<string, string>();
   const taskStatuses = new Map<string, string>();
@@ -256,32 +309,40 @@ export async function batchGraphLinksForPipelineFiles(
     taskStatuses.set(String(task._id), task.status);
   }
   const missingTaskIds = [...taskIds].filter((id) => !taskTitles.has(id));
-  await Promise.all(
-    missingTaskIds.map(async (id) => {
-      const doc = await ctx.db.get(id as Id<"tasks">);
-      if (doc) {
-        taskTitles.set(id, doc.title?.trim() || "Task");
-        taskStatuses.set(id, doc.status);
-      }
-    }),
-  );
+  const taskGetCap = Math.min(missingTaskIds.length, missingEntityBudget);
+  missingEntityBudget -= taskGetCap;
+  await resolveUniqueIdsCapped(missingTaskIds, taskGetCap, async (id) => {
+    const doc = await ctx.db.get(id as Id<"tasks">);
+    if (doc) {
+      taskTitles.set(id, doc.title?.trim() || "Task");
+      taskStatuses.set(id, doc.status);
+    }
+  });
 
-  const memberLabels = new Map<string, string>();
-  await Promise.all(
-    [...userKeys].map(async (uk) => {
-      const authUser = await ctx.db.get(uk as Id<"authUsers">);
-      if (authUser) {
-        memberLabels.set(
-          uk,
-          authUser.displayUsername?.trim() ||
-            authUser.normalizedUsername ||
+  const memberLabels = new Map<string, string>(options?.memberLabelById ?? []);
+  const missingMembers = [...userKeys].filter((uk) => !memberLabels.has(uk));
+  if (!skipHeavy) {
+    await resolveUniqueIdsCapped(
+      missingMembers,
+      PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP,
+      async (uk) => {
+        const authUser = await ctx.db.get(uk as Id<"authUsers">);
+        if (authUser) {
+          memberLabels.set(
             uk,
-        );
-      } else {
-        memberLabels.set(uk, uk);
-      }
-    }),
-  );
+            authUser.displayUsername?.trim() ||
+              authUser.normalizedUsername ||
+              uk,
+          );
+        } else {
+          memberLabels.set(uk, uk);
+        }
+      },
+    );
+  }
+  for (const uk of missingMembers) {
+    if (!memberLabels.has(uk)) memberLabels.set(uk, uk);
+  }
 
   const fcByFile = new Map<string, typeof fcAll>();
   for (const r of fcAll) {
@@ -513,5 +574,22 @@ export async function batchGraphLinksForPipelineFiles(
     if (!out.has(fid)) out.set(fid, { ...EMPTY_LINKS });
   }
 
+  return out;
+}
+
+/**
+ * Empty graph-link shells keyed by file id — test / placeholder only.
+ *
+ * Do NOT publish these from `listTablePreviewEnrichment` soft-fail: clients
+ * treat `graphLinks !== undefined` as authoritative (including empty arrays),
+ * which sticks badges offline. Soft-fail must omit `graphLinks` entirely.
+ */
+export function emptyGraphLinksForPipelineFiles(
+  files: Doc<"pipeline">[],
+): Map<string, PipelineRowGraphLinks> {
+  const out = new Map<string, PipelineRowGraphLinks>();
+  for (const f of files) {
+    out.set(String(f._id), { ...EMPTY_LINKS });
+  }
   return out;
 }
