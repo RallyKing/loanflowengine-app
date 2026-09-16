@@ -10,6 +10,7 @@ import {
   type CapitalSourceRow,
   type ProjectCapitalRollup,
 } from "../lib/projectCapitalStack";
+import { PIPELINE_PROJECT_CAPITAL_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
 
 export async function listRequirementsForProject(
   ctx: QueryCtx | MutationCtx,
@@ -18,7 +19,7 @@ export async function listRequirementsForProject(
   const rows = await ctx.db
     .query("projectCapitalRequirements")
     .withIndex("by_project", (q) => q.eq("projectId", projectId))
-    .collect();
+    .take(PIPELINE_PROJECT_CAPITAL_SCAN_CAP + 1);
   return rows.sort((a, b) => a.priorityOrder - b.priorityOrder);
 }
 
@@ -29,7 +30,7 @@ export async function listSourcesForProject(
   const rows = await ctx.db
     .query("projectCapitalSources")
     .withIndex("by_project", (q) => q.eq("projectId", projectId))
-    .collect();
+    .take(PIPELINE_PROJECT_CAPITAL_SCAN_CAP + 1);
   return rows.sort((a, b) => a.sortOrder - b.sortOrder);
 }
 

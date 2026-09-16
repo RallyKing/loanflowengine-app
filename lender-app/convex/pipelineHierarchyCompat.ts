@@ -62,6 +62,7 @@ function resolveFileHierarchyFromLegacyFields(
 export async function safeResolveFileHierarchy(
   ctx: QueryCtx,
   row: Doc<"pipeline">,
+  linkedClientsOverride?: ResolvedFileHierarchy["linkedClients"],
 ): Promise<ResolvedFileHierarchy> {
   try {
     const hasInvalidFk =
@@ -70,16 +71,16 @@ export async function safeResolveFileHierarchy(
       (row.clientId != null &&
         normalizePipelineClientId(ctx, String(row.clientId)) == null);
     if (hasInvalidFk) {
-      const linkedClients = await resolveLoanLinkedClients(ctx, row).catch(
-        () => [],
-      );
+      const linkedClients =
+        linkedClientsOverride ??
+        (await resolveLoanLinkedClients(ctx, row).catch(() => []));
       return resolveFileHierarchyFromLegacyFields(row, linkedClients);
     }
-    return await resolveFileHierarchy(ctx, row);
+    return await resolveFileHierarchy(ctx, row, linkedClientsOverride);
   } catch {
-    const linkedClients = await resolveLoanLinkedClients(ctx, row).catch(
-      () => [],
-    );
+    const linkedClients =
+      linkedClientsOverride ??
+      (await resolveLoanLinkedClients(ctx, row).catch(() => []));
     return resolveFileHierarchyFromLegacyFields(row, linkedClients);
   }
 }
@@ -90,9 +91,12 @@ export async function resolveFileHierarchy(
 
   row: Doc<"pipeline">,
 
+  linkedClientsOverride?: ResolvedFileHierarchy["linkedClients"],
+
 ): Promise<ResolvedFileHierarchy> {
 
-  const linkedClients = await resolveLoanLinkedClients(ctx, row);
+  const linkedClients =
+    linkedClientsOverride ?? (await resolveLoanLinkedClients(ctx, row));
 
 
 
@@ -220,7 +224,7 @@ export async function resolveFileHierarchy(
 
     ),
 
-    linkedClients: [],
+    linkedClients: linkedClientsOverride ?? [],
 
   };
 

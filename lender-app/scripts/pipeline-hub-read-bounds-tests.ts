@@ -7,9 +7,9 @@
  * read that is not index-scoped, so a regression back to `.collect()` on a bare
  * table fails here instead of in production.
  *
- * The dataset is deliberately lopsided — a small "our org" inside a large
- * deployment — so a full-table scan and a correctly scoped read differ by orders
- * of magnitude in documents touched.
+ * The dataset is deliberately lopsided — a small visible set inside a large org
+ * (plus another org) — so an org-wide take-then-filter and a visible-scoped
+ * `by_file` read differ by orders of magnitude in documents touched.
  */
 import assert from "node:assert/strict";
 import type { QueryCtx } from "../convex/_generated/server";
@@ -18,17 +18,15 @@ import {
   loadContactFileLinksForFiles,
   loadFileClientEdgesForFiles,
   loadFileLenderEdgesForFiles,
+  loadLoanClientLinksForFiles,
   loadNoteCountsForFiles,
   loadOrgScopedPipelineRowsBounded,
   loadRelatedTasksForFiles,
-  loadRelatedTasksForVisibleFilesOrgBatched,
 } from "../convex/pipelineHubBoundedReads";
 import {
   PIPELINE_FILE_EDGE_SCAN_CAP,
   PIPELINE_FILE_NOTE_SCAN_CAP,
   PIPELINE_FILE_RELATED_TASK_SCAN_CAP,
-  PIPELINE_ORG_EDGE_SCAN_CAP,
-  PIPELINE_ORG_RELATED_TASK_SCAN_CAP,
   PIPELINE_TABLE_PREVIEW_MAX_ROWS,
 } from "../lib/pipeline/tablePreviewReadBounds";
 
@@ -64,6 +62,9 @@ const INDEX_FIELDS: Record<string, Record<string, string[]>> = {
   fileTasks: {
     by_file: ["fileId"],
     by_organization: ["organizationId"],
+  },
+  loanClients: {
+    by_pipeline: ["pipelineId"],
   },
   contactFileLinks: { by_file: ["fileId", "updatedAt"] },
   tasks: {
@@ -205,7 +206,10 @@ class FakeDb {
 const OUR_ORG = "org_ours" as Id<"organizations">;
 const OTHER_ORG = "org_theirs" as Id<"organizations">;
 
-const OUR_FILES = 40;
+/** Visible hub files (active). */
+const VISIBLE_FILES = 40;
+/** Same-org files that are archived/snoozed and must NOT be junction-scanned. */
+const HIDDEN_SAME_ORG_FILES = 400;
 const OTHER_FILES = 4_000;
 const EDGES_PER_FILE = 3;
 
@@ -213,12 +217,21 @@ function buildDb(): FakeDb {
   const db = new FakeDb();
 
   const pipeline: Row[] = [];
-  for (let i = 0; i < OUR_FILES; i++) {
+  for (let i = 0; i < VISIBLE_FILES; i++) {
     pipeline.push({
       _id: `ours_${i}`,
       _creationTime: 1_000 + i,
       organizationId: OUR_ORG,
       createdAt: 1_000 + i,
+    });
+  }
+  for (let i = 0; i < HIDDEN_SAME_ORG_FILES; i++) {
+    pipeline.push({
+      _id: `ours_hidden_${i}`,
+      _creationTime: 2_000 + i,
+      organizationId: OUR_ORG,
+      createdAt: 2_000 + i,
+      archivedAt: 9_000 + i,
     });
   }
   for (let i = 0; i < OTHER_FILES; i++) {
@@ -266,6 +279,20 @@ function buildDb(): FakeDb {
     }
     db.seed(table, rows);
   }
+
+  const loanClients: Row[] = [];
+  for (const file of pipeline) {
+    for (let e = 0; e < EDGES_PER_FILE; e++) {
+      loanClients.push({
+        _id: `loanClients_${file._id}_${e}`,
+        _creationTime: e,
+        pipelineId: file._id,
+        organizationId: file.organizationId,
+        clientId: `client_${e}`,
+      });
+    }
+  }
+  db.seed("loanClients", loanClients);
 
   db.seed(
     "contactFileLinks",
@@ -315,6 +342,7 @@ async function main(): Promise<void> {
     db.rows("pipeline").length +
     db.rows("fileLenders").length +
     db.rows("fileClients").length +
+    db.rows("loanClients").length +
     db.rows("contactFileLinks").length +
     db.rows("tasks").length +
     db.rows("pipelineFileNotes").length;
@@ -329,7 +357,7 @@ async function main(): Promise<void> {
   );
   assert.equal(
     pipelineRead.rows.length,
-    OUR_FILES,
+    VISIBLE_FILES + HIDDEN_SAME_ORG_FILES,
     "pipeline read must return exactly our org's rows",
   );
   assert.equal(pipelineRead.saturated, false);
@@ -342,8 +370,8 @@ async function main(): Promise<void> {
     "every pipeline read must be index-scoped",
   );
   assert.ok(
-    db.docReads <= OUR_FILES + 1,
-    `pipeline read touched ${db.docReads} docs; expected <= ${OUR_FILES + 1} (table holds ${db.rows("pipeline").length})`,
+    db.docReads <= VISIBLE_FILES + HIDDEN_SAME_ORG_FILES + 1,
+    `pipeline read touched ${db.docReads} docs; expected <= ${VISIBLE_FILES + HIDDEN_SAME_ORG_FILES + 1}`,
   );
   assert.ok(
     db.reads.every((r) => (r.limit ?? Infinity) <= PIPELINE_TABLE_PREVIEW_MAX_ROWS + 1),
@@ -359,7 +387,7 @@ async function main(): Promise<void> {
   /* Ordering matches what the hub previously got from `.order("desc")`. */
   assert.deepEqual(
     tinyCap.rows.map((r) => r._id),
-    Array.from({ length: 10 }, (_, i) => `ours_${OUR_FILES - 1 - i}`),
+    Array.from({ length: 10 }, (_, i) => `ours_hidden_${HIDDEN_SAME_ORG_FILES - 1 - i}`),
     "rows must stay newest-first",
   );
 
@@ -373,7 +401,7 @@ async function main(): Promise<void> {
   );
   assert.equal(
     withLegacy.rows.length,
-    OUR_FILES + 5,
+    VISIBLE_FILES + HIDDEN_SAME_ORG_FILES + 5,
     "platform default org must still see org-unstamped legacy rows",
   );
   assert.ok(
@@ -381,13 +409,15 @@ async function main(): Promise<void> {
     "legacy rows must come from the index, not a scan",
   );
 
-  /* 2. fileLenders edges are org-batched (one read), filtered to visible ids. */
-  const visible = pipelineRead.rows.map((r) => r._id as unknown as Id<"pipeline">);
+  /* 2. fileLenders edges are visible-scoped via by_file — not org take-then-filter. */
+  const visible = Array.from({ length: VISIBLE_FILES }, (_, i) =>
+    `ours_${i}` as unknown as Id<"pipeline">,
+  );
   db.reset();
   const lenderEdges = await loadFileLenderEdgesForFiles(ctx, visible, OUR_ORG);
   assert.equal(
     lenderEdges.rows.length,
-    OUR_FILES * EDGES_PER_FILE,
+    VISIBLE_FILES * EDGES_PER_FILE,
     "must return every edge for the visible files",
   );
   assert.ok(
@@ -396,60 +426,74 @@ async function main(): Promise<void> {
   );
   assert.equal(
     db.reads.length,
-    1,
-    "org-batched fileLenders must be a single indexed read",
+    VISIBLE_FILES,
+    "visible-scoped fileLenders must be one by_file read per visible file",
   );
-  assert.equal(db.reads[0]?.index, "by_organization");
-  assert.equal(db.reads[0]?.eq[0]?.[1], OUR_ORG);
-  assert.equal(db.reads[0]?.limit, PIPELINE_ORG_EDGE_SCAN_CAP + 1);
   assert.ok(
-    db.docReads <= OUR_FILES * EDGES_PER_FILE + 1,
-    `fileLenders touched ${db.docReads} docs; expected org slice only`,
+    db.reads.every(
+      (r) =>
+        r.index === "by_file" &&
+        r.limit === PIPELINE_FILE_EDGE_SCAN_CAP + 1,
+    ),
+  );
+  assert.ok(
+    db.docReads === VISIBLE_FILES * EDGES_PER_FILE,
+    `fileLenders touched ${db.docReads} docs; expected only visible edges (${VISIBLE_FILES * EDGES_PER_FILE}), not hidden same-org edges`,
+  );
+  assert.ok(
+    !db.reads.some((r) => r.index === "by_organization"),
+    "hub fileLenders must not org-scan",
   );
 
-  /* Duplicate ids still one org read. */
+  /* Duplicate ids still one read per unique file. */
   db.reset();
   await loadFileLenderEdgesForFiles(ctx, [...visible, ...visible], OUR_ORG);
-  assert.equal(db.reads.length, 1, "duplicate file ids must not multiply reads");
+  assert.equal(db.reads.length, VISIBLE_FILES, "duplicate file ids must not multiply reads");
 
-  /* 3. Remaining hub joins: org-batch + CFL per-file + org-batched related tasks. */
+  /* 3. Remaining hub joins: by_file / by_pipeline / by_relatedFile only. */
   db.reset();
   await loadFileClientEdgesForFiles(ctx, visible, OUR_ORG);
-  assert.equal(db.reads.length, 1);
-  assert.equal(db.reads[0]?.index, "by_organization");
+  assert.equal(db.reads.length, VISIBLE_FILES);
+  assert.ok(db.reads.every((r) => r.index === "by_file"));
+
+  db.reset();
+  await loadLoanClientLinksForFiles(ctx, visible, OUR_ORG);
+  assert.equal(db.reads.length, VISIBLE_FILES);
+  assert.ok(db.reads.every((r) => r.index === "by_pipeline"));
 
   db.reset();
   await loadContactFileLinksForFiles(ctx, visible);
-  assert.equal(db.reads.length, OUR_FILES, "CFL still one read per visible file");
+  assert.equal(db.reads.length, VISIBLE_FILES, "CFL still one read per visible file");
   assert.ok(
     db.reads.every((r) => r.index === "by_file" && r.limit === PIPELINE_FILE_EDGE_SCAN_CAP + 1),
   );
 
   db.reset();
-  const relatedOrg = await loadRelatedTasksForVisibleFilesOrgBatched(
-    ctx,
-    visible,
-    OUR_ORG,
-  );
-  assert.equal(relatedOrg.rows.length, OUR_FILES);
-  assert.equal(db.reads.length, 1);
-  assert.equal(db.reads[0]?.index, "by_organization");
-  assert.equal(db.reads[0]?.limit, PIPELINE_ORG_RELATED_TASK_SCAN_CAP + 1);
+  const relatedVisible = await loadRelatedTasksForFiles(ctx, visible, OUR_ORG);
+  assert.equal(relatedVisible.rows.length, VISIBLE_FILES);
+  assert.equal(db.reads.length, VISIBLE_FILES);
   assert.ok(
-    relatedOrg.rows.every((t) => visible.map(String).includes(String(t.relatedFileId))),
-    "org-batched related tasks must filter to visible files",
+    db.reads.every(
+      (r) =>
+        r.index === "by_relatedFile" &&
+        r.limit === PIPELINE_FILE_RELATED_TASK_SCAN_CAP + 1,
+    ),
+  );
+  assert.ok(
+    !db.reads.some((r) => r.index === "by_organization"),
+    "hub graph related tasks must not org-scan",
   );
 
   /* 4. Hub note badges use bounded by_org_file counts (never denorm 0-lie). */
   db.reset();
   const noteCounts = await loadNoteCountsForFiles(
     ctx,
-    pipelineRead.rows.map((r) => ({
-      _id: r._id as unknown as Id<"pipeline">,
-      organizationId: r.organizationId as Id<"organizations">,
+    visible.map((id) => ({
+      _id: id,
+      organizationId: OUR_ORG,
     })),
   );
-  assert.equal(noteCounts.size, OUR_FILES);
+  assert.equal(noteCounts.size, VISIBLE_FILES);
   assert.ok([...noteCounts.values()].every((n) => n === 2));
   assert.ok(
     db.reads.every(
@@ -467,28 +511,28 @@ async function main(): Promise<void> {
     "hub note reads must take cap+1 for saturation",
   );
 
-  /* 5. Whole-hub budget: org-batched joins stay far below deployment size. */
+  /* 5. Whole-hub budget: visible-scoped joins stay far below org+deployment size. */
   db.reset();
-  const hubRows = await loadOrgScopedPipelineRowsBounded(
-    ctx,
-    OUR_ORG,
-    PIPELINE_TABLE_PREVIEW_MAX_ROWS,
-    false,
-  );
-  const hubIds = hubRows.rows.map((r) => r._id as unknown as Id<"pipeline">);
   await Promise.all([
-    loadFileLenderEdgesForFiles(ctx, hubIds, OUR_ORG),
-    loadFileClientEdgesForFiles(ctx, hubIds, OUR_ORG),
-    loadContactFileLinksForFiles(ctx, hubIds),
-    loadRelatedTasksForVisibleFilesOrgBatched(ctx, hubIds, OUR_ORG),
+    loadFileLenderEdgesForFiles(ctx, visible, OUR_ORG),
+    loadFileClientEdgesForFiles(ctx, visible, OUR_ORG),
+    loadLoanClientLinksForFiles(ctx, visible, OUR_ORG),
+    loadContactFileLinksForFiles(ctx, visible),
+    loadRelatedTasksForFiles(ctx, visible, OUR_ORG),
     loadNoteCountsForFiles(
       ctx,
-      hubRows.rows.map((r) => ({
-        _id: r._id as unknown as Id<"pipeline">,
-        organizationId: r.organizationId as Id<"organizations">,
+      visible.map((id) => ({
+        _id: id,
+        organizationId: OUR_ORG,
       })),
     ),
   ]);
+  const orgEdgeDocsIfScanned =
+    (VISIBLE_FILES + HIDDEN_SAME_ORG_FILES) * EDGES_PER_FILE;
+  assert.ok(
+    db.docReads < orgEdgeDocsIfScanned,
+    `hub join budget read ${db.docReads} docs; must stay under same-org edge cardinality ${orgEdgeDocsIfScanned} (hidden files must not be scanned)`,
+  );
   assert.ok(
     db.docReads < totalDocs / 20,
     `hub join budget read ${db.docReads} of ${totalDocs} docs; expected under ${Math.floor(totalDocs / 20)}`,
@@ -496,15 +540,15 @@ async function main(): Promise<void> {
   const fileLenderReads = db.reads.filter((r) => r.table === "fileLenders");
   assert.equal(
     fileLenderReads.length,
-    1,
-    "hub tick must not double-read fileLenders",
+    VISIBLE_FILES,
+    "hub tick must not double-read fileLenders beyond visible files",
   );
 
   /* 6. Triage path: by_relatedFile per visible file — never org-wide task collect. */
   db.reset();
-  const triageTasks = await loadRelatedTasksForFiles(ctx, hubIds, OUR_ORG);
-  assert.equal(triageTasks.rows.length, OUR_FILES);
-  assert.equal(db.reads.length, OUR_FILES);
+  const triageTasks = await loadRelatedTasksForFiles(ctx, visible, OUR_ORG);
+  assert.equal(triageTasks.rows.length, VISIBLE_FILES);
+  assert.equal(db.reads.length, VISIBLE_FILES);
   assert.ok(
     db.reads.every(
       (r) =>
@@ -515,7 +559,7 @@ async function main(): Promise<void> {
     "triage must use by_relatedFile only",
   );
   assert.ok(
-    db.reads.every((r) => hubIds.map(String).includes(String(r.eq[0]?.[1]))),
+    db.reads.every((r) => visible.map(String).includes(String(r.eq[0]?.[1]))),
     "triage must not read tasks for non-visible files",
   );
   assert.ok(
@@ -533,7 +577,7 @@ async function main(): Promise<void> {
   );
 
   console.log(
-    `[pipeline-hub-read-bounds] OK — ${db.docReads} docs read for ${OUR_FILES} visible files across a ${totalDocs}-doc deployment.`,
+    `[pipeline-hub-read-bounds] OK — ${db.docReads} docs read for ${VISIBLE_FILES} visible files across a ${totalDocs}-doc deployment (${HIDDEN_SAME_ORG_FILES} hidden same-org files not scanned).`,
   );
 }
 

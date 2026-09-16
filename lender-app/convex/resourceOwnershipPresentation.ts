@@ -241,6 +241,63 @@ export async function buildPipelineOwnershipPresentation(
   };
 }
 
+/**
+ * Hub-table ownership: one username batch + pre-resolved ACL. Skips per-file
+ * collaborator `.collect()` and hierarchy-label re-resolve (hub compact UI only
+ * needs line + badge + isOwner / viewerAccessLevel for actions).
+ */
+export async function buildHubTableOwnershipPresentations(
+  ctx: QueryCtx,
+  files: Doc<"pipeline">[],
+  viewerKey: string,
+  accessByFileId: Map<string, ResourceAccessLevel>,
+  directSharePermission: Map<string, "view" | "edit">,
+): Promise<Array<ResourceOwnershipPresentation | null>> {
+  const ownerKeys = new Set<string>();
+  for (const file of files) {
+    const owner = resolveRowOwnerUserId(file);
+    if (owner) ownerKeys.add(owner);
+  }
+  const usernameByKey = await resolveDisplayUsernameMap(ctx, ownerKeys);
+
+  return files.map((file) => {
+    const ownerUserId = resolveRowOwnerUserId(file);
+    if (!ownerUserId) return null;
+    const ownerDisplayUsername =
+      usernameByKey[ownerUserId] ??
+      (ownerUserId.length > 14 ? `${ownerUserId.slice(0, 12)}…` : ownerUserId);
+    const fileId = String(file._id);
+    const level = accessByFileId.get(fileId) ?? "none";
+    const isOwner = ownerUserId === viewerKey;
+    const sharePerm = directSharePermission.get(fileId) ?? null;
+    const isSharedViewer = sharePerm != null;
+
+    let badge: ResourceOwnershipBadgeKind | null = null;
+    let ownershipLine: string;
+    if (isOwner) {
+      badge = "owner";
+      ownershipLine = `Owned by ${ownerDisplayUsername}`;
+    } else if (isSharedViewer) {
+      badge = sharePerm === "edit" ? "shared_edit" : "shared_view";
+      ownershipLine = `Shared by ${ownerDisplayUsername}`;
+    } else {
+      ownershipLine = `Owned by ${ownerDisplayUsername}`;
+    }
+
+    return {
+      ownershipLine,
+      badge,
+      ownerUserId,
+      ownerDisplayUsername,
+      viewerAccessLevel: level,
+      isOwner,
+      isSharedViewer,
+      collaboratorCount: 0,
+      hierarchyAccessLabel: null,
+    };
+  });
+}
+
 export async function buildTaskOwnershipPresentation(
   ctx: QueryCtx | MutationCtx,
   task: Doc<"tasks">,

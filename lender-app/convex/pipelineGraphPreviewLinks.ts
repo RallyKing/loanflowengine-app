@@ -11,7 +11,7 @@ import {
   loadFileProjectEdgesForFiles,
   loadFileTaskEdgesForFiles,
   loadFileTeamMemberEdgesForFiles,
-  loadRelatedTasksForVisibleFilesOrgBatched,
+  loadRelatedTasksForFiles,
 } from "./pipelineHubBoundedReads";
 import {
   DEFAULT_CONTACT_ROLE_IDS,
@@ -115,8 +115,13 @@ export async function batchGraphLinksForPipelineFiles(
     projectDisplayTitle: string;
   }>,
   options?: {
-    /** Preloaded `fileLenders` for these files — skips a second org edge read. */
+    /** Preloaded junction edges — skips a second visible-scoped read. */
     fileLenderEdges?: Doc<"fileLenders">[];
+    fileClientEdges?: Doc<"fileClients">[];
+    fileProjectEdges?: Doc<"fileProjects">[];
+    fileTeamMemberEdges?: Doc<"fileTeamMembers">[];
+    fileTaskEdges?: Doc<"fileTasks">[];
+    relatedTasks?: Doc<"tasks">[];
     lenderLabelById?: Map<string, string>;
     clientLabelById?: Map<string, string>;
     projectTitleById?: Map<string, string>;
@@ -128,16 +133,23 @@ export async function batchGraphLinksForPipelineFiles(
   );
 
   /**
-   * Junction reads are org-scoped via `by_organization` (one take per table,
-   * filtered to visible ids). `contactFileLinks` still uses per-file `by_file`
-   * because that table has no org key.
+   * Junction reads are visible-scoped via `by_file` (docs ∝ visible files).
+   * Callers should preload edges once and pass them here to avoid a second pass.
    */
   const fileIds = files.map((f) => f._id);
   const [fcRead, fpRead, ftRead, ftaskRead] = await Promise.all([
-    loadFileClientEdgesForFiles(ctx, fileIds, organizationId),
-    loadFileProjectEdgesForFiles(ctx, fileIds, organizationId),
-    loadFileTeamMemberEdgesForFiles(ctx, fileIds, organizationId),
-    loadFileTaskEdgesForFiles(ctx, fileIds, organizationId),
+    options?.fileClientEdges
+      ? Promise.resolve({ rows: options.fileClientEdges, saturated: false })
+      : loadFileClientEdgesForFiles(ctx, fileIds, organizationId),
+    options?.fileProjectEdges
+      ? Promise.resolve({ rows: options.fileProjectEdges, saturated: false })
+      : loadFileProjectEdgesForFiles(ctx, fileIds, organizationId),
+    options?.fileTeamMemberEdges
+      ? Promise.resolve({ rows: options.fileTeamMemberEdges, saturated: false })
+      : loadFileTeamMemberEdgesForFiles(ctx, fileIds, organizationId),
+    options?.fileTaskEdges
+      ? Promise.resolve({ rows: options.fileTaskEdges, saturated: false })
+      : loadFileTaskEdgesForFiles(ctx, fileIds, organizationId),
   ]);
   const flAll =
     options?.fileLenderEdges ??
@@ -181,12 +193,12 @@ export async function batchGraphLinksForPipelineFiles(
     contactIds.add(String(link.contactId));
   }
 
-  /** One org-scoped task take filtered to visible files — not per-file fan-out. */
-  const { rows: relatedTasks } = await loadRelatedTasksForVisibleFilesOrgBatched(
-    ctx,
-    fileIds,
-    organizationId,
-  );
+  /** Visible-scoped related tasks (`by_relatedFile`) — same path as triage. */
+  const relatedTasks =
+    options?.relatedTasks ??
+    (
+      await loadRelatedTasksForFiles(ctx, fileIds, organizationId)
+    ).rows;
   for (const task of relatedTasks) {
     taskIds.add(String(task._id));
   }
