@@ -15,6 +15,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
+import { mergeTablePreviewEnrichment } from "@/lib/pipeline/mergeTablePreviewEnrichment";
 import {
   NewPipelineHierarchyCreateDialog,
   type HierarchyCreateContext,
@@ -469,7 +470,18 @@ export function PipelinePageClient() {
     activeOrganizationId,
     memberUserKey,
   ]);
-  const rows = useQuery(api.pipeline.listTablePreview, listPreviewArgs);
+  const rowsCore = useQuery(api.pipeline.listTablePreview, listPreviewArgs);
+  const rowsEnrichment = useQuery(
+    api.pipeline.listTablePreviewEnrichment,
+    listPreviewArgs,
+  );
+  const rows = useMemo(
+    () =>
+      rowsCore === undefined
+        ? undefined
+        : mergeTablePreviewEnrichment(rowsCore, rowsEnrichment),
+    [rowsCore, rowsEnrichment],
+  );
   const referralPartnerListArgs = useMemo(() => {
     if (!orgQueryReady || !activeOrganizationId || !memberUserKey) return "skip" as const;
     return {
@@ -480,7 +492,7 @@ export function PipelinePageClient() {
     };
   }, [orgQueryReady, activeOrganizationId, memberUserKey]);
   const referralPartnerContacts = useQuery(
-    api.contacts.list,
+    api.contacts.listIdNameForRole,
     referralPartnerListArgs,
   );
   const { canUseHub } = useLiveConnection();
@@ -667,7 +679,7 @@ export function PipelinePageClient() {
     [router, hubReturnParams],
   );
 
-  const listLoading = canUseHub ? rows === undefined : !cacheReady;
+  const listLoading = canUseHub ? rowsCore === undefined : !cacheReady;
 
   usePipelineHubLayoutShiftTracker(
     hubListRef,

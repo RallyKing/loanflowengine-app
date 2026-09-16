@@ -267,17 +267,21 @@ export async function batchGraphLinksForPipelineFiles(
   );
 
   const memberLabels = new Map<string, string>();
-  for (const uk of userKeys) {
-    const authUser = await ctx.db.get(uk as Id<"authUsers">);
-    if (authUser) {
-      memberLabels.set(
-        uk,
-        authUser.displayUsername?.trim() || authUser.normalizedUsername || uk,
-      );
-    } else {
-      memberLabels.set(uk, uk);
-    }
-  }
+  await Promise.all(
+    [...userKeys].map(async (uk) => {
+      const authUser = await ctx.db.get(uk as Id<"authUsers">);
+      if (authUser) {
+        memberLabels.set(
+          uk,
+          authUser.displayUsername?.trim() ||
+            authUser.normalizedUsername ||
+            uk,
+        );
+      } else {
+        memberLabels.set(uk, uk);
+      }
+    }),
+  );
 
   const fcByFile = new Map<string, typeof fcAll>();
   for (const r of fcAll) {

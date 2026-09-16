@@ -33,8 +33,13 @@ const HOT_PATH_FILES = [
  */
 const HOT_PATH_FUNCTIONS = [
   { file: "convex/pipeline.ts", symbol: "export const listTablePreview" },
+  {
+    file: "convex/pipeline.ts",
+    symbol: "export const listTablePreviewEnrichment",
+  },
   { file: "convex/taskHighlights.ts", symbol: "async function buildHubTriageHighlightMap" },
   { file: "convex/contacts.ts", symbol: "export const list" },
+  { file: "convex/contacts.ts", symbol: "export const listIdNameForRole" },
   {
     file: "convex/pipelineFileNotes.ts",
     symbol: "export async function batchPipelineFileNoteCounts",
@@ -62,6 +67,10 @@ const HOT_PATH_FUNCTIONS = [
   {
     file: "convex/pipelineMultiClientLinks.ts",
     symbol: "export async function listProjectClientLinks",
+  },
+  {
+    file: "convex/pipelineMultiClientLinks.ts",
+    symbol: "export async function batchProjectLinkedClientsForProjects",
   },
   {
     file: "convex/projectCapitalStack.ts",

@@ -86,31 +86,55 @@ async function clientSummary(
 export async function resolveProjectLinkedClients(
   ctx: QueryCtx | MutationCtx,
   project: Doc<"projects">,
+  clientDocs?: Map<string, Doc<"clients">>,
 ): Promise<LinkedClientSummary[]> {
   const links = await listProjectClientLinks(ctx, project._id);
   const summaries: LinkedClientSummary[] = [];
   for (const link of links) {
-    const summary = await clientSummary(
+    const summary = await clientSummaryFromCache(
       ctx,
       link.clientId,
       link.relationshipType,
       link.sortOrder,
       String(link.clientId) === String(project.clientId) &&
         link.relationshipType === "primary",
+      clientDocs,
     );
     if (summary) summaries.push(summary);
   }
   if (summaries.length === 0) {
-    const primary = await clientSummary(
+    const primary = await clientSummaryFromCache(
       ctx,
       project.clientId,
       "primary",
       PRIMARY_SORT,
       true,
+      clientDocs,
     );
     if (primary) summaries.push(primary);
   }
   return summaries.sort(compareClientLinks);
+}
+
+/**
+ * Hub enrichment: project linked-client summaries from preloaded project docs
+ * + optional client cache (no per-link get when cache hits).
+ */
+export async function batchProjectLinkedClientsForProjects(
+  ctx: QueryCtx | MutationCtx,
+  projects: Doc<"projects">[],
+  clientDocs?: Map<string, Doc<"clients">>,
+): Promise<Map<string, LinkedClientSummary[]>> {
+  const out = new Map<string, LinkedClientSummary[]>();
+  await Promise.all(
+    projects.map(async (project) => {
+      out.set(
+        String(project._id),
+        await resolveProjectLinkedClients(ctx, project, clientDocs),
+      );
+    }),
+  );
+  return out;
 }
 
 export async function resolveLoanLinkedClients(

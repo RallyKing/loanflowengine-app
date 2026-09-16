@@ -1,10 +1,12 @@
 /**
- * Read bounds for the pipeline hub table subscription (`pipeline:listTablePreview`)
- * and hub triage (`taskHighlights:getHubTriageHighlightMap`).
+ * Read bounds for the pipeline hub table subscription (`pipeline:listTablePreview`
+ * + deferred `pipeline:listTablePreviewEnrichment`) and hub triage
+ * (`taskHighlights:getHubTriageHighlightMap`).
  *
- * The hub is a single long-lived Convex subscription that re-runs on every write
- * touching any joined table. Every read it performs must be index-scoped and
- * capped so the subscription cost stays proportional to the *visible* rows
+ * The hub paints from `listTablePreview` (ACL, hierarchy, deal columns) then
+ * merges enrichment (graph / capital / notes / project linked clients). Both
+ * queries re-run on writes touching joined tables. Every read must be
+ * index-scoped and capped so cost stays proportional to the *visible* rows
  * rather than to org (or table) size.
  *
  * These caps are deliberately generous relative to real data — they exist to

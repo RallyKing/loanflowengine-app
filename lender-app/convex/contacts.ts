@@ -363,6 +363,68 @@ export const list = query({
   },
 });
 
+/**
+ * Hub referral filter options — `_id` + `name` only. Skips primary-entity
+ * enrichment so the hub page does not pull full ContactHubRecord payloads.
+ */
+export const listIdNameForRole = query({
+  args: {
+    organizationId: v.id("organizations"),
+    memberUserKey: v.optional(v.string()),
+    contactRoleIdFilter: v.string(),
+    strictCanonicalRoleMatch: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const {
+      organizationId,
+      memberUserKey,
+      contactRoleIdFilter,
+      strictCanonicalRoleMatch,
+      limit,
+    } = args;
+    await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
+    await assertOrgPermission(
+      ctx,
+      organizationId,
+      memberUserKey,
+      "contacts.view",
+    );
+    const rowCap =
+      limit != null && Number.isFinite(limit) && limit > 0
+        ? Math.min(Math.floor(limit), CONTACTS_LIST_ABSOLUTE_CAP)
+        : CONTACTS_LIST_ABSOLUTE_CAP;
+    let rows = await ctx.db
+      .query("contacts")
+      .withIndex("by_organization_updatedAt", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .order("desc")
+      .take(rowCap);
+
+    const roleFilter = contactRoleIdFilter.trim();
+    const matched: typeof rows = [];
+    for (const r of rows) {
+      if (
+        await contactMatchesRoleFilter(
+          ctx,
+          r,
+          roleFilter,
+          strictCanonicalRoleMatch,
+        )
+      ) {
+        matched.push(r);
+      }
+    }
+    rows = matched;
+
+    return rows.map((row) => ({
+      _id: row._id,
+      name: row.name?.trim() || "Contact",
+    }));
+  },
+});
+
 export const get = query({
   args: {
     id: v.id("contacts"),
