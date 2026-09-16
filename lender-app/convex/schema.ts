@@ -3994,6 +3994,7 @@ export default defineSchema({
     scope: v.union(v.literal("global"), v.literal("organization")),
     slug: v.string(),
     name: v.string(),
+    description: v.optional(v.string()),
     channel: v.union(
       v.literal("email"),
       v.literal("sms"),
@@ -4007,12 +4008,35 @@ export default defineSchema({
       v.literal("published"),
       v.literal("archived"),
     ),
+    /**
+     * Custom merge fields the sender fills (or defaults) when applying the
+     * template — keys become `{{key}}` tokens alongside built-in variables.
+     */
+    customInputs: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          inputType: v.union(
+            v.literal("text"),
+            v.literal("textarea"),
+            v.literal("number"),
+            v.literal("phone"),
+            v.literal("email"),
+          ),
+          defaultValue: v.optional(v.string()),
+          required: v.optional(v.boolean()),
+          helpText: v.optional(v.string()),
+        }),
+      ),
+    ),
     roleRestrictions: v.optional(v.array(v.string())),
     publishedVersion: v.optional(v.number()),
     currentDraftVersion: v.optional(v.number()),
     createdByUserKey: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
   })
     .index("by_org_slug", ["organizationId", "slug"])
     .index("by_scope_slug", ["scope", "slug"])
@@ -4029,6 +4053,25 @@ export default defineSchema({
     ),
     subjectTemplate: v.optional(v.string()),
     bodyTemplate: v.string(),
+    /** Snapshot of custom input definitions at this version. */
+    customInputs: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          inputType: v.union(
+            v.literal("text"),
+            v.literal("textarea"),
+            v.literal("number"),
+            v.literal("phone"),
+            v.literal("email"),
+          ),
+          defaultValue: v.optional(v.string()),
+          required: v.optional(v.boolean()),
+          helpText: v.optional(v.string()),
+        }),
+      ),
+    ),
     previewVariables: v.optional(v.any()),
     conditionalBlocks: v.optional(v.any()),
     createdByUserKey: v.string(),
