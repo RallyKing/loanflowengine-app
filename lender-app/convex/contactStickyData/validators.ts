@@ -62,6 +62,7 @@ export const contactReoPropertyFieldsV = {
   apn: v.optional(v.string()),
   invested: v.optional(v.string()),
   latLong: v.optional(v.string()),
+  zillowUrl: v.optional(v.string()),
 };
 
 export const contactBusinessEntityFieldsV = {

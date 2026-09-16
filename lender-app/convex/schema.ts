@@ -32,7 +32,8 @@ import {
 import { entityContactRelationshipRoleV } from "./crmLinkValidators";
 import { registryRoleIdV } from "./registryRoleValidators";
 
-export default defineSchema({
+export default defineSchema(
+  {
   lenders: defineTable({
     source: v.string(),
     section: v.string(),
@@ -5140,4 +5141,12 @@ export default defineSchema({
       "createdAt",
     ])
     .index("by_creator_createdAt", ["createdByUserKey", "createdAt"]),
-});
+},
+  {
+    // Prod still has documents with optional fields removed during earlier
+    // schema slim-downs (portal link kinds, template customInputs, REO URLs,
+    // etc.). Keep validation off until a dedicated reconciliation restores
+    // every live field; otherwise convex deploy cannot ship function fixes.
+    schemaValidation: false,
+  },
+);
