@@ -6,7 +6,6 @@ import { cn } from "@/lib/cn";
 import { guessAttachmentKind, type AttachmentKind } from "@/lib/uploadToConvexStorage";
 import {
   fetchAsBlobUrl,
-  isLegacyBinaryOfficeName,
   loadDocxPreview,
   loadSpreadsheetPreview,
   loadTextPreview,
@@ -28,22 +27,27 @@ export type RichFilePreviewProps = {
 function OpenFallback({
   url,
   message,
+  allowOpen = true,
 }: {
   url: string;
   message: string;
+  /** When false (view-only lender packages), omit the storage URL link. */
+  allowOpen?: boolean;
 }) {
   return (
     <div className="flex h-full min-h-[12rem] flex-col items-center justify-center gap-3 p-4 text-sm text-muted-foreground">
       <p className="text-center">{message}</p>
-      <a
-        href={url}
-        className="inline-flex items-center gap-2 text-primary hover:underline"
-        target="_blank"
-        rel="noreferrer"
-      >
-        <ExternalLink className="h-4 w-4" aria-hidden />
-        Open in new tab
-      </a>
+      {allowOpen ? (
+        <a
+          href={url}
+          className="inline-flex items-center gap-2 text-primary hover:underline"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <ExternalLink className="h-4 w-4" aria-hidden />
+          Open in new tab
+        </a>
+      ) : null}
     </div>
   );
 }
@@ -191,7 +195,8 @@ export function RichFilePreview({
         if (kind === "text") {
           setBusy(true);
           const t = await loadTextPreview(url);
-          if (!cancelled) setTextBody(t);
+          if (cancelled) return;
+          setTextBody(t);
           setBusy(false);
           return;
         }
@@ -199,21 +204,18 @@ export function RichFilePreview({
         if (kind === "html") {
           setBusy(true);
           const t = await loadTextPreview(url);
-          if (!cancelled) setHtmlBody(t);
+          if (cancelled) return;
+          setHtmlBody(t);
           setBusy(false);
           return;
         }
 
         if (kind === "spreadsheet") {
-          if (isLegacyBinaryOfficeName(fileName) && fileName.toLowerCase().endsWith(".xls")) {
-            // Attempt xlsx path; exceljs may reject legacy BIFF.
-          }
           setBusy(true);
           const table = await loadSpreadsheetPreview(url, fileName);
-          if (!cancelled) {
-            setSheet(table);
-            setActiveSheet(table.sheetName);
-          }
+          if (cancelled) return;
+          setSheet(table);
+          setActiveSheet(table.sheetName);
           setBusy(false);
           return;
         }
@@ -227,16 +229,15 @@ export function RichFilePreview({
           }
           setBusy(true);
           const doc = await loadDocxPreview(url);
-          if (!cancelled) {
-            setDocxParas(doc.paragraphs);
-            setDocxTitle(doc.title);
-          }
+          if (cancelled) return;
+          setDocxParas(doc.paragraphs);
+          setDocxTitle(doc.title);
           setBusy(false);
           return;
         }
 
         // image / other — no async load
-        setBusy(false);
+        if (!cancelled) setBusy(false);
       } catch (e) {
         fail(e instanceof Error ? e.message : String(e));
       }
@@ -314,6 +315,8 @@ export function RichFilePreview({
     );
   }
 
+  const allowOpen = !protectMedia;
+
   if (kind === "pdf") {
     if (err || !blobUrl) {
       return (
@@ -321,18 +324,23 @@ export function RichFilePreview({
           <OpenFallback
             url={url}
             message={err ?? "PDF preview failed to load."}
+            allowOpen={allowOpen}
           />
         </div>
       );
     }
+    const pdfSrc = protectMedia
+      ? `${blobUrl}#toolbar=0&navpanes=0`
+      : blobUrl;
     return (
       <div
         className={cn(className, viewport, "overflow-hidden")}
         data-testid="rich-file-preview-pdf"
+        onContextMenu={protectMedia ? (e) => e.preventDefault() : undefined}
       >
         <iframe
           title={fileName}
-          src={blobUrl}
+          src={pdfSrc}
           className="absolute inset-0 h-full w-full border-0 bg-white"
         />
       </div>
@@ -343,12 +351,20 @@ export function RichFilePreview({
     if (err || textBody == null) {
       return (
         <div className={cn(className, viewport)}>
-          <OpenFallback url={url} message={err ?? "Text preview is not available."} />
+          <OpenFallback
+            url={url}
+            message={err ?? "Text preview is not available."}
+            allowOpen={allowOpen}
+          />
         </div>
       );
     }
     return (
-      <div className={cn(className, viewport)} data-testid="rich-file-preview-text">
+      <div
+        className={cn(className, viewport)}
+        data-testid="rich-file-preview-text"
+        onContextMenu={protectMedia ? (e) => e.preventDefault() : undefined}
+      >
         <pre className="whitespace-pre-wrap break-words p-3 text-xs">{textBody}</pre>
       </div>
     );
@@ -358,15 +374,28 @@ export function RichFilePreview({
     if (err || htmlBody == null) {
       return (
         <div className={cn(className, viewport)}>
-          <OpenFallback url={url} message={err ?? "Could not render this HTML document."} />
+          <OpenFallback
+            url={url}
+            message={err ?? "Could not render this HTML document."}
+            allowOpen={allowOpen}
+          />
         </div>
       );
     }
+    // Never inject HTML into the app document (XSS). Opaque sandboxed iframe:
+    // no scripts, no same-origin, no forms — preview only.
     return (
-      <div className={cn(className, viewport)} data-testid="rich-file-preview-html">
-        <div
-          className="prose prose-slate mx-auto max-w-none rounded-dlc-md border border-border/60 bg-white p-6 shadow-dlc-1"
-          dangerouslySetInnerHTML={{ __html: htmlBody }}
+      <div
+        className={cn(className, viewport, "overflow-hidden")}
+        data-testid="rich-file-preview-html"
+        onContextMenu={protectMedia ? (e) => e.preventDefault() : undefined}
+      >
+        <iframe
+          title={fileName}
+          srcDoc={htmlBody}
+          sandbox=""
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 h-full w-full border-0 bg-white"
         />
       </div>
     );
@@ -382,6 +411,7 @@ export function RichFilePreview({
               err ??
               "Spreadsheet preview is not available for this file. Try .xlsx or .csv."
             }
+            allowOpen={allowOpen}
           />
         </div>
       );
@@ -390,6 +420,7 @@ export function RichFilePreview({
       <div
         className={cn(className, viewport, "bg-background")}
         data-testid="rich-file-preview-spreadsheet"
+        onContextMenu={protectMedia ? (e) => e.preventDefault() : undefined}
       >
         {busy ? (
           <div className="absolute inset-x-0 top-0 z-[2] flex items-center justify-center gap-2 bg-background/80 py-1 text-xs text-muted-foreground">
@@ -414,6 +445,7 @@ export function RichFilePreview({
           <OpenFallback
             url={url}
             message={err ?? "Word preview is not available for this file."}
+            allowOpen={allowOpen}
           />
         </div>
       );
@@ -422,6 +454,7 @@ export function RichFilePreview({
       <div
         className={cn(className, viewport, "bg-white")}
         data-testid="rich-file-preview-word"
+        onContextMenu={protectMedia ? (e) => e.preventDefault() : undefined}
       >
         <article className="mx-auto max-w-3xl space-y-3 p-6 text-sm leading-relaxed text-foreground">
           {docxTitle ? (
@@ -443,6 +476,7 @@ export function RichFilePreview({
       <OpenFallback
         url={url}
         message="Inline preview is not available for this file type."
+        allowOpen={allowOpen}
       />
     </div>
   );
