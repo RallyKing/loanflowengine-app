@@ -111,6 +111,7 @@
     "clsx": "^2.1.1",
     "convex": "^1.17.0",
     "exceljs": "^4.4.0",
+    "html-to-image": "^1.11.13",
     "jose": "^6.2.3",
     "jszip": "^3.10.1",
     "lucide-react": "^0.460.0",

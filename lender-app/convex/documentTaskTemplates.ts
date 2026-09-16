@@ -16,6 +16,7 @@ import {
   fileTaskTypeV,
   persistAssignedBlocksPatch,
 } from "./documentVaultTaskTypes";
+import { partitionDocumentTaskTemplates } from "../lib/library/partitionDocumentTaskTemplates";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -201,31 +202,21 @@ export const listStacksWithTemplates = query({
   },
   handler: async (ctx, { organizationId, memberUserKey }) => {
     await requireOrgReader(ctx, organizationId, memberUserKey);
+    // Two indexed org reads (stacks + templates). Partition in memory —
+    // avoids N+1 by_stack collects. Individual = full task library (includes
+    // stack members) so Manage Templates / Apply never hide reusable tasks
+    // after they are added to a stack.
     const stacks = await ctx.db
       .query("documentTaskTemplateStacks")
       .withIndex("by_org", (q) => q.eq("organizationId", organizationId))
+      // bounded: org-scoped template library (resource-safety ratchet)
       .collect();
-    stacks.sort((a, b) => a.sortOrder - b.sortOrder);
-
-    const out = [];
-    for (const stack of stacks) {
-      const templates = await ctx.db
-        .query("documentTaskTemplates")
-        .withIndex("by_stack", (q) => q.eq("stackId", stack._id))
-        .collect();
-      templates.sort((a, b) => a.sortOrder - b.sortOrder);
-      out.push({ ...stack, templates });
-    }
-
-    const loose = await ctx.db
+    const templates = await ctx.db
       .query("documentTaskTemplates")
       .withIndex("by_org", (q) => q.eq("organizationId", organizationId))
+      // bounded: org-scoped template library (resource-safety ratchet)
       .collect();
-    const individual = loose
-      .filter((t) => !t.stackId)
-      .sort((a, b) => a.sortOrder - b.sortOrder);
-
-    return { stacks: out, individualTemplates: individual };
+    return partitionDocumentTaskTemplates(stacks, templates);
   },
 });
 
