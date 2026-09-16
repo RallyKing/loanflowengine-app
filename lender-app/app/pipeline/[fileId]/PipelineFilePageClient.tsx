@@ -29,7 +29,8 @@ export function PipelineFilePageClient({ fileId }: { fileId: string }) {
   const { activeOrganizationId } = useOrgPermissions();
   const memberUserKey = useActorUserKey().trim() || undefined;
   const rawId = fileId.trim();
-  const canResolve = isLikelyConvexTableId(rawId);
+  const canResolve =
+    isLikelyConvexTableId(rawId) && Boolean(memberUserKey);
 
   const target = useQuery(
     api.pipelineFileRouteResolve.resolveFileRouteTarget,

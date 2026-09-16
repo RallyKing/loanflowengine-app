@@ -9,6 +9,7 @@ import { query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
+import { requireAuthenticatedCaller } from "./callerAuth";
 import { assertOrgMember } from "./organizationAccess";
 import { PIPELINE_HUB_ACL_OWNER_SCAN_CAP } from "../lib/pipeline/tablePreviewReadBounds";
 
@@ -43,9 +44,28 @@ const resolveResultValidator = v.union(
   }),
 );
 
+async function assertCallerCanSeeOrg(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  memberUserKey: string | undefined,
+  preferredOrgId: Id<"organizations"> | undefined,
+): Promise<boolean> {
+  if (preferredOrgId && preferredOrgId !== organizationId) {
+    return false;
+  }
+  try {
+    await assertOrgMember(ctx, organizationId, memberUserKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Classify a `/pipeline/[rawId]` path segment so the client can redirect
  * contact/client ids away from the file workspace before getDetail runs.
+ *
+ * Auth required. Cross-tenant ids return `missing` (no existence oracle).
  */
 export const resolveFileRouteTarget = query({
   args: {
@@ -55,53 +75,75 @@ export const resolveFileRouteTarget = query({
   },
   returns: resolveResultValidator,
   handler: async (ctx, args) => {
+    await requireAuthenticatedCaller(ctx, args.memberUserKey);
+
     const raw = args.rawId.trim();
     if (!raw) return { kind: "invalid" as const };
+
+    const preferredOrgId = args.organizationId;
 
     const asPipeline = ctx.db.normalizeId("pipeline", raw);
     if (asPipeline) {
       const doc = await ctx.db.get(asPipeline);
-      if (!doc) return { kind: "missing" as const };
+      if (!doc?.organizationId) return { kind: "missing" as const };
+      if (
+        !(await assertCallerCanSeeOrg(
+          ctx,
+          doc.organizationId,
+          args.memberUserKey,
+          preferredOrgId,
+        ))
+      ) {
+        return { kind: "missing" as const };
+      }
       return { kind: "pipeline" as const, fileId: asPipeline };
     }
 
     const asClient = ctx.db.normalizeId("clients", raw);
     if (asClient) {
       const doc = await ctx.db.get(asClient);
-      if (!doc) return { kind: "missing" as const };
+      if (!doc?.organizationId) return { kind: "missing" as const };
+      if (
+        !(await assertCallerCanSeeOrg(
+          ctx,
+          doc.organizationId,
+          args.memberUserKey,
+          preferredOrgId,
+        ))
+      ) {
+        return { kind: "missing" as const };
+      }
       return { kind: "client" as const, clientId: asClient };
     }
 
     const asContact = ctx.db.normalizeId("contacts", raw);
     if (asContact) {
       const contact = await ctx.db.get(asContact);
-      if (!contact) return { kind: "missing" as const };
-
-      // Prefer client workspace when we can bind primaryContact → clients.
-      if (args.organizationId && args.memberUserKey?.trim()) {
-        await assertOrgMember(
+      if (!contact?.organizationId) return { kind: "missing" as const };
+      if (
+        !(await assertCallerCanSeeOrg(
           ctx,
-          args.organizationId,
-          args.memberUserKey.trim(),
-        );
-        if (contact.organizationId === args.organizationId) {
-          const clients = await ctx.db
-            .query("clients")
-            .withIndex("by_organization", (q) =>
-              q.eq("organizationId", args.organizationId!),
-            )
-            .take(PIPELINE_HUB_ACL_OWNER_SCAN_CAP);
-          const match = clients.find(
-            (c) =>
-              c.primaryContactId != null &&
-              String(c.primaryContactId) === String(asContact),
-          );
-          if (match) {
-            return { kind: "client" as const, clientId: match._id };
-          }
-        }
+          contact.organizationId,
+          args.memberUserKey,
+          preferredOrgId,
+        ))
+      ) {
+        return { kind: "missing" as const };
       }
 
+      const orgId = contact.organizationId;
+      const clients = await ctx.db
+        .query("clients")
+        .withIndex("by_organization", (q) => q.eq("organizationId", orgId))
+        .take(PIPELINE_HUB_ACL_OWNER_SCAN_CAP);
+      const match = clients.find(
+        (c) =>
+          c.primaryContactId != null &&
+          String(c.primaryContactId) === String(asContact),
+      );
+      if (match) {
+        return { kind: "client" as const, clientId: match._id };
+      }
       return { kind: "contact" as const, contactId: asContact };
     }
 
