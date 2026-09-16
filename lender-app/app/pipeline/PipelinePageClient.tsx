@@ -556,9 +556,14 @@ export function PipelinePageClient() {
   }, [canUseHub]);
 
   useEffect(() => {
-    // Only persist fully enriched snapshots — incomplete rows must not be
-    // treated as enrichment-ready when loaded offline.
-    if (canUseHub && enrichmentAligned && rows !== undefined) {
+    // Only persist fully enriched snapshots — incomplete / graph-omitted rows
+    // must not sticky-cache as enrichment-ready offline (empty badges).
+    if (
+      canUseHub &&
+      enrichmentAligned &&
+      rows !== undefined &&
+      isTablePreviewRowsFullyEnriched(rows)
+    ) {
       void persistQuerySnapshot(snapshotKey, rows);
     }
   }, [canUseHub, enrichmentAligned, rows, snapshotKey]);
@@ -711,12 +716,15 @@ export function PipelinePageClient() {
   const listLoading = canUseHub ? rowsCore === undefined : !cacheReady;
   /**
    * Capital / client-involvement filters and note-count UI need enrichment.
-   * Live: enrichment must cover every current core file id (not sticky prior).
+   * Live: enrichment must cover every current core file id with complete
+   * payloads (incl. defined graphLinks — soft-fail omit is not ready).
    * Offline: ready only when the cached/optimistic snapshot carries deferred
-   * sentinels on every row (incomplete pre-enrichment snapshots stay gated).
+   * sentinels on every row (incomplete / graph-omitted snapshots stay gated).
    */
   const enrichmentReady = canUseHub
-    ? enrichmentAligned
+    ? enrichmentAligned &&
+      rows !== undefined &&
+      isTablePreviewRowsFullyEnriched(rows)
     : cacheReady &&
       isTablePreviewRowsFullyEnriched(
         optimisticRows ?? cachedRows ?? EMPTY_PIPELINE,

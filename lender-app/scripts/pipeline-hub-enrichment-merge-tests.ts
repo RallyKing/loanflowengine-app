@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import {
+  isEnrichmentPayloadComplete,
   isTablePreviewEnrichmentAligned,
   isTablePreviewRowFullyEnriched,
   isTablePreviewRowsFullyEnriched,
@@ -189,6 +190,97 @@ assert.equal(
     }),
   ]),
   true,
+);
+
+// --- Soft-fail / omitted graphLinks (undefined ≠ empty published graph) ---
+
+assert.equal(
+  isEnrichmentPayloadComplete({
+    fileNotesCount: 0,
+    graphLinks: undefined,
+    projectLinkedClients: [],
+  }),
+  false,
+  "undefined graphLinks is not a complete enrichment payload",
+);
+assert.equal(
+  isEnrichmentPayloadComplete({
+    fileNotesCount: 0,
+    graphLinks: emptyGraphLinks,
+    projectLinkedClients: [],
+  }),
+  true,
+  "intentionally empty published graphLinks is complete",
+);
+
+assert.equal(
+  isTablePreviewEnrichmentAligned(core, [
+    {
+      fileId: "f1" as Id<"pipeline">,
+      fileNotesCount: 0,
+      graphLinks: undefined,
+      projectLinkedClients: [],
+    },
+    {
+      fileId: "f2" as Id<"pipeline">,
+      fileNotesCount: 1,
+      graphLinks: emptyGraphLinks,
+      projectLinkedClients: [],
+    },
+  ]),
+  false,
+  "undefined graphLinks on any covered id must not be enrichment-ready",
+);
+
+assert.equal(
+  isTablePreviewEnrichmentAligned(core, [
+    {
+      fileId: "f1" as Id<"pipeline">,
+      fileNotesCount: 0,
+      graphLinks: emptyGraphLinks,
+      projectLinkedClients: [],
+    },
+    {
+      fileId: "f2" as Id<"pipeline">,
+      fileNotesCount: 1,
+      // omitted graphLinks (soft-fail omit)
+      projectLinkedClients: [],
+    },
+  ]),
+  false,
+  "omitted graphLinks must not align / force-ready",
+);
+
+assert.equal(
+  isTablePreviewRowFullyEnriched(
+    stubRow("f1", {
+      fileNotesCount: 0,
+      graphLinks: undefined,
+      projectLinkedClients: [],
+    }),
+  ),
+  false,
+  "undefined graphLinks => not fully enriched",
+);
+
+const mergedOmitGraph = mergeTablePreviewEnrichment(core, [
+  {
+    fileId: "f1" as Id<"pipeline">,
+    fileNotesCount: 2,
+    graphLinks: undefined,
+    projectLinkedClients: [],
+  },
+]);
+assert.equal(
+  mergedOmitGraph[0]!.graphLinks,
+  undefined,
+  "merge must not coerce omitted graph to empty published links",
+);
+assert.equal(mergedOmitGraph[0]!.fileNotesCount, 2);
+assert.equal(
+  isTablePreviewRowFullyEnriched(mergedOmitGraph[0]!),
+  false,
+  "partial merge without graph stays not fully enriched",
 );
 
 console.log("pipeline-hub-enrichment-merge-tests: OK");
