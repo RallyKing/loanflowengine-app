@@ -42,8 +42,13 @@ test("OpenFallback respects allowOpen / protectMedia", () => {
   }
 });
 
-test("view-only PDF hides browser toolbar hash", () => {
-  assert.match(src, /#toolbar=0&navpanes=0/);
+test("PDF preview uses pdf.js canvas (no native viewer chrome)", () => {
+  // Canvas path has no browser PDF toolbar/download chrome to hash-hide;
+  // assert we do not reintroduce a native PDF iframe viewer.
+  assert.match(src, /PdfInlinePreview/);
+  assert.equal(/<iframe[\s\S]*?application\/pdf/.test(src), false);
+  assert.equal(src.includes("#toolbar=0"), false);
+  assert.match(src, /onContextMenu=\{protectMedia \? \(e\) => e\.preventDefault\(\) : undefined\}/);
 });
 
 console.log("All rich-file-preview security tests passed.");
