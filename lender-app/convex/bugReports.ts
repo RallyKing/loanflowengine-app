@@ -7,12 +7,15 @@ import {
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { assertOrgScopeArgs, resolveMemberUserKey } from "./organizationAccess";
 import {
+  BUG_REPORT_GITHUB_ISSUES_ENABLED_ENV,
   BUG_REPORT_MAX_DESCRIPTION_CHARS,
   BUG_REPORT_MAX_SCREENSHOT_BYTES,
   BUG_REPORT_MIN_DESCRIPTION_CHARS,
   BUG_REPORT_RATE_LIMIT_PER_HOUR,
+  isBugReportGitHubIssuesEnabled,
   normalizeBugReportDescription,
   normalizeBugReportSeverity,
   validateBugReportDescription,
@@ -44,6 +47,62 @@ async function consumeBugReportRateLimit(
   }
 }
 
+/**
+ * Optional pipeline context: never hard-fail submit on bad/missing ids.
+ * Invalid format, missing row, or cross-org → omit + warn.
+ */
+async function resolveOptionalPipelineFileId(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  raw: string | undefined,
+): Promise<Id<"pipeline"> | undefined> {
+  if (!raw?.trim()) return undefined;
+  const normalized = ctx.db.normalizeId("pipeline", raw.trim());
+  if (!normalized) {
+    console.warn(
+      "bugReport: ignoring invalid pipelineFileId format (optional context)",
+      raw.slice(0, 64),
+    );
+    return undefined;
+  }
+  const file = await ctx.db.get(normalized);
+  if (!file) {
+    console.warn(
+      "bugReport: ignoring missing pipelineFileId (optional context)",
+      String(normalized),
+    );
+    return undefined;
+  }
+  if (file.organizationId && file.organizationId !== organizationId) {
+    console.warn(
+      "bugReport: ignoring cross-org pipelineFileId (optional context)",
+      String(normalized),
+    );
+    return undefined;
+  }
+  return normalized;
+}
+
+function resolveGitHubTokenPresent(): boolean {
+  const primary = process.env.GITHUB_BUG_REPORT_TOKEN?.trim() ?? "";
+  if (primary) return true;
+  const fallback = process.env.GITHUB_TOKEN?.trim() ?? "";
+  return Boolean(fallback);
+}
+
+/**
+ * Whether submit will attempt GitHub issue creation in the outbound action.
+ * Opt-in env + token required. Does not claim success — only that attempt is scheduled.
+ * Repo privacy is re-checked in the action before any issue body is posted.
+ */
+function willAttemptGitHubIssue(): boolean {
+  return (
+    isBugReportGitHubIssuesEnabled(
+      process.env[BUG_REPORT_GITHUB_ISSUES_ENABLED_ENV],
+    ) && resolveGitHubTokenPresent()
+  );
+}
+
 export const generateUploadUrl = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -64,7 +123,8 @@ export const submitBugReport = mutation({
     severity: v.optional(severityValidator),
     pageUrl: v.string(),
     pagePath: v.string(),
-    pipelineFileId: v.optional(v.id("pipeline")),
+    /** Optional context only — string so invalid Convex ids do not fail arg validation. */
+    pipelineFileId: v.optional(v.string()),
     viewportWidth: v.number(),
     viewportHeight: v.number(),
     userAgent: v.string(),
@@ -73,7 +133,10 @@ export const submitBugReport = mutation({
   },
   returns: v.object({
     reportId: v.id("bugReports"),
+    /** True only when GitHub issue attempt is opted-in and a token is present. */
     githubScheduled: v.boolean(),
+    /** True when the one-shot outbound action was scheduled (Convex + webhook path). */
+    outboundScheduled: v.boolean(),
   }),
   handler: async (ctx, args) => {
     await assertOrgScopeArgs(ctx, args.organizationId, args.memberUserKey);
@@ -133,18 +196,11 @@ export const submitBugReport = mutation({
       screenshotMimeType = meta.contentType ?? "image/png";
     }
 
-    if (args.pipelineFileId) {
-      const file = await ctx.db.get(args.pipelineFileId);
-      if (!file) {
-        throw new Error("Pipeline file not found.");
-      }
-      if (
-        file.organizationId &&
-        file.organizationId !== args.organizationId
-      ) {
-        throw new Error("Pipeline file belongs to a different organization.");
-      }
-    }
+    const pipelineFileId = await resolveOptionalPipelineFileId(
+      ctx,
+      args.organizationId,
+      args.pipelineFileId,
+    );
 
     await consumeBugReportRateLimit(ctx, createdByUserKey);
 
@@ -161,7 +217,7 @@ export const submitBugReport = mutation({
       status: "new",
       pageUrl,
       pagePath,
-      pipelineFileId: args.pipelineFileId,
+      pipelineFileId,
       viewportWidth,
       viewportHeight,
       userAgent,
@@ -171,7 +227,7 @@ export const submitBugReport = mutation({
       createdAt,
     });
 
-    // One-shot delivery: GitHub issue (optional) then GrokBot webhook (optional).
+    // One-shot delivery: optional GitHub (gated) then GrokBot webhook (optional).
     // No cron / self-reschedule.
     await ctx.scheduler.runAfter(
       0,
@@ -179,7 +235,12 @@ export const submitBugReport = mutation({
       { reportId },
     );
 
-    return { reportId, githubScheduled: true };
+    const githubScheduled = willAttemptGitHubIssue();
+    return {
+      reportId,
+      githubScheduled,
+      outboundScheduled: true,
+    };
   },
 });
 
@@ -241,6 +302,75 @@ export const internalGetScreenshotUrl = internalQuery({
   returns: v.union(v.string(), v.null()),
   handler: async (ctx, { storageId }) => {
     return await ctx.storage.getUrl(storageId);
+  },
+});
+
+/**
+ * Compare-and-set claim for outbound delivery.
+ * - Already fully delivered → no-op
+ * - Claim held within TTL → concurrent run skips (idempotent)
+ * - Else claim and proceed; failed runs can retry after TTL
+ *
+ * GitHub is optional (often permanently skipped). Webhook success + GitHub
+ * terminal skip/success counts as fully delivered.
+ */
+export const internalClaimOutboundDelivery = internalMutation({
+  args: { reportId: v.id("bugReports") },
+  returns: v.object({
+    claimed: v.boolean(),
+    alreadyDelivered: v.boolean(),
+    skipGithub: v.boolean(),
+    skipWebhook: v.boolean(),
+  }),
+  handler: async (ctx, { reportId }) => {
+    const row = await ctx.db.get(reportId);
+    if (!row) {
+      return {
+        claimed: false,
+        alreadyDelivered: false,
+        skipGithub: true,
+        skipWebhook: true,
+      };
+    }
+    const githubTerminalSkip = new Set([
+      "github_issues_disabled",
+      "missing_token",
+      "repo_not_private",
+    ]);
+    const skipGithub =
+      Boolean(row.githubIssueUrl) ||
+      githubTerminalSkip.has(row.githubIssueError ?? "");
+    const skipWebhook = Boolean(row.webhookDeliveredAt);
+    if (skipGithub && skipWebhook) {
+      return {
+        claimed: false,
+        alreadyDelivered: true,
+        skipGithub,
+        skipWebhook,
+      };
+    }
+    const CLAIM_TTL_MS = 5 * 60 * 1000;
+    const claimedAt = row.outboundDeliveryClaimedAt;
+    if (
+      typeof claimedAt === "number" &&
+      Date.now() - claimedAt < CLAIM_TTL_MS
+    ) {
+      return {
+        claimed: false,
+        alreadyDelivered: false,
+        skipGithub,
+        skipWebhook,
+      };
+    }
+    await ctx.db.patch(reportId, {
+      outboundDeliveryClaimedAt: Date.now(),
+    });
+    return {
+      claimed: true,
+      alreadyDelivered: false,
+      skipGithub,
+      skipWebhook,
+    };
   },
 });
 

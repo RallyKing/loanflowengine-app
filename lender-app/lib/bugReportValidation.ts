@@ -8,6 +8,20 @@ export const BUG_REPORT_MIN_DESCRIPTION_CHARS = 8;
 export const BUG_REPORT_RATE_LIMIT_PER_HOUR = 10;
 export const BUG_REPORT_GITHUB_TITLE_PREFIX = "[LFE Bug]";
 
+/** Env flag: must be exactly `"true"` to attempt GitHub issue creation. */
+export const BUG_REPORT_GITHUB_ISSUES_ENABLED_ENV =
+  "BUG_REPORT_GITHUB_ISSUES_ENABLED";
+
+/**
+ * Whether GitHub issue creation is opted-in via env.
+ * Default is off — Convex + GrokBot webhook are the primary intake path.
+ */
+export function isBugReportGitHubIssuesEnabled(
+  envValue: string | undefined | null,
+): boolean {
+  return (envValue ?? "").trim().toLowerCase() === "true";
+}
+
 export type BugReportSeverity = "low" | "medium" | "high";
 
 const SEVERITIES = new Set<BugReportSeverity>(["low", "medium", "high"]);
@@ -53,6 +67,41 @@ export function buildBugReportGitHubTitle(description: string): string {
   const clean = normalizeBugReportDescription(description).replace(/\s+/g, " ");
   const snippet = clean.slice(0, 80);
   return `${BUG_REPORT_GITHUB_TITLE_PREFIX} ${snippet}`.trim();
+}
+
+/**
+ * Public-safe GitHub issue body: description + non-PII metadata only.
+ * Never includes screenshot URLs, pipeline file ids, reporter email/user key,
+ * or full page URLs (path only). Screenshots stay Convex-private / webhook-only.
+ */
+export function buildBugReportGitHubIssueBody(args: {
+  description: string;
+  pagePath: string;
+  viewportWidth: number;
+  viewportHeight: number;
+  severity: string;
+  createdAt: number;
+  reportId: string;
+}): string {
+  const path = args.pagePath.trim().slice(0, 500) || "/";
+  const lines: string[] = [
+    "## Description",
+    normalizeBugReportDescription(args.description),
+    "",
+    "## Metadata",
+    `- **Severity:** ${args.severity}`,
+    `- **Report id:** \`${args.reportId}\``,
+    `- **Path:** \`${path.replace(/`/g, "'")}\``,
+    `- **Viewport:** ${args.viewportWidth}×${args.viewportHeight}`,
+    `- **Created at:** ${new Date(args.createdAt).toISOString()}`,
+    "",
+    "## Screenshot",
+    "_Screenshot is retained in private Convex storage and delivered via the intake webhook only — not attached to this public tracker._",
+    "",
+    "---",
+    "_Submitted via LFE in-app **Report a bug**. Primary triage: Convex `bugReports` + GrokBot webhook._",
+  ];
+  return lines.join("\n");
 }
 
 /**

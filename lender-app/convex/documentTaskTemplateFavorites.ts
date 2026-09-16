@@ -17,6 +17,7 @@ const toggleReturns = v.object({
 /**
  * List favorited individual task templates for the caller in an org.
  * Indexed by org + user — no scheduler, no polling, no full-table scan.
+ * Dedupes duplicate rows if a prior race left extras.
  */
 export const listForOrg = query({
   args: {
@@ -39,14 +40,22 @@ export const listForOrg = query({
       )
       // bounded: per-user favorites within one org
       .collect();
-    return {
-      templateIds: rows.map((row) => row.templateId),
-    };
+    const seen = new Set<string>();
+    const templateIds: Array<(typeof rows)[number]["templateId"]> = [];
+    for (const row of rows) {
+      const id = String(row.templateId);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      templateIds.push(row.templateId);
+    }
+    return { templateIds };
   },
 });
 
 /**
  * Toggle favorite for one org task template. Does not affect inject behavior.
+ * Race-safe: collect all matching rows (never `.unique()`), delete-all to unfavorite,
+ * or insert only when none remain.
  */
 export const toggle = mutation({
   args: {
@@ -78,10 +87,13 @@ export const toggle = mutation({
           .eq("memberUserKey", key)
           .eq("templateId", templateId),
       )
-      .unique();
+      .collect();
 
-    if (existing) {
-      await ctx.db.delete(existing._id);
+    if (existing.length > 0) {
+      // Unfavorite: delete every duplicate row so `.unique()` never blows up later.
+      for (const row of existing) {
+        await ctx.db.delete(row._id);
+      }
       return { favorited: false, templateId };
     }
 

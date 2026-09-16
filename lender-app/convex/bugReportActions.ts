@@ -2,21 +2,31 @@
 
 /**
  * One-shot outbound delivery for in-app bug reports:
- * 1) optional GitHub issue
- * 2) optional GrokBot / Cursor Cloud Minion webhook
+ * 1) optional GitHub issue (opt-in + private repo only; text-only body)
+ * 2) optional GrokBot / Cursor Cloud Minion webhook (primary triage path)
  *
  * Fired via `scheduler.runAfter(0, …)` from `submitBugReport`.
  * Never self-reschedules. Never cron.
+ * Idempotent: claim + skip if GitHub/webhook already succeeded.
  */
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { buildBugReportGitHubTitle } from "../lib/bugReportValidation";
+import {
+  BUG_REPORT_GITHUB_ISSUES_ENABLED_ENV,
+  buildBugReportGitHubIssueBody,
+  buildBugReportGitHubTitle,
+  isBugReportGitHubIssuesEnabled,
+} from "../lib/bugReportValidation";
 
-const GITHUB_REPO = "RallyKing/loanflowengine-app";
-const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/issues`;
+const DEFAULT_GITHUB_REPO = "RallyKing/loanflowengine-app";
+
+function resolveGitHubRepo(): string {
+  const fromEnv = process.env.BUG_REPORT_GITHUB_REPO?.trim() ?? "";
+  return fromEnv || DEFAULT_GITHUB_REPO;
+}
 
 function resolveGitHubToken(): string | null {
   const primary = process.env.GITHUB_BUG_REPORT_TOKEN?.trim() ?? "";
@@ -44,59 +54,60 @@ function resolveGrokBotAuthorizationHeader(): string | null {
   return `Bearer ${key}`;
 }
 
-function buildIssueBody(args: {
-  description: string;
-  pageUrl: string;
-  pagePath: string;
-  pipelineFileId?: string;
-  viewportWidth: number;
-  viewportHeight: number;
-  userAgent: string;
-  createdByUserKey: string;
-  createdByEmail?: string;
-  severity: string;
-  createdAt: number;
-  reportId: string;
-  screenshotUrl: string | null;
-}): string {
-  const lines: string[] = [
-    "## Description",
-    args.description,
-    "",
-    "## Metadata",
-    `- **Severity:** ${args.severity}`,
-    `- **Report id:** \`${args.reportId}\``,
-    `- **Page URL:** ${args.pageUrl}`,
-    `- **Path:** \`${args.pagePath}\``,
-    `- **Pipeline file id:** ${args.pipelineFileId ? `\`${args.pipelineFileId}\`` : "_none_"}`,
-    `- **Viewport:** ${args.viewportWidth}×${args.viewportHeight}`,
-    `- **User agent:** \`${args.userAgent.replace(/`/g, "'")}\``,
-    `- **Reporter user key:** \`${args.createdByUserKey}\``,
-    `- **Reporter email:** ${args.createdByEmail ?? "_unknown_"}`,
-    `- **Created at:** ${new Date(args.createdAt).toISOString()}`,
-    "",
-    "## Screenshot",
-  ];
+type GitHubResult = {
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
+  issueUrl?: string;
+};
 
-  if (args.screenshotUrl) {
-    lines.push(
-      "Convex storage URL (short-lived — download promptly):",
-      "",
-      args.screenshotUrl,
-      "",
-      "If the link expired, open the report in Convex `bugReports` and regenerate via `storage.getUrl`.",
-    );
-  } else {
-    lines.push("_No screenshot attached._");
+/**
+ * Confirm the target repo is private before posting any issue body.
+ * Public / unknown → refuse (PII / screenshot risk).
+ */
+async function assertGitHubRepoIsPrivate(
+  token: string,
+  repo: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "loanflowengine-bug-reports",
+      },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      console.error(
+        "bugReport: GitHub repo visibility check failed",
+        res.status,
+        text.slice(0, 200),
+      );
+      return { ok: false, reason: `repo_check_http_${res.status}` };
+    }
+    let isPrivate = false;
+    try {
+      const parsed = JSON.parse(text) as { private?: unknown };
+      isPrivate = parsed.private === true;
+    } catch {
+      return { ok: false, reason: "repo_check_parse_error" };
+    }
+    if (!isPrivate) {
+      console.warn(
+        "bugReport: refusing GitHub issue — target repo is not private:",
+        repo,
+      );
+      return { ok: false, reason: "repo_not_private" };
+    }
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown_error";
+    console.error("bugReport: GitHub repo visibility check threw", message);
+    return { ok: false, reason: `repo_check_${message.slice(0, 80)}` };
   }
-
-  lines.push(
-    "",
-    "---",
-    "_Submitted via LFE in-app **Report a bug**. Cursor Cloud Minion / GrokBot: triage from this issue._",
-  );
-
-  return lines.join("\n");
 }
 
 async function createGitHubIssue(
@@ -104,24 +115,39 @@ async function createGitHubIssue(
   reportId: Id<"bugReports">,
   report: {
     description: string;
-    pageUrl: string;
     pagePath: string;
-    pipelineFileId?: Id<"pipeline">;
     viewportWidth: number;
     viewportHeight: number;
-    userAgent: string;
-    createdByUserKey: string;
-    createdByEmail?: string;
     severity: string;
     createdAt: number;
+    githubIssueUrl?: string;
   },
-  screenshotUrl: string | null,
-): Promise<{
-  ok: boolean;
-  skipped?: boolean;
-  reason?: string;
-  issueUrl?: string;
-}> {
+): Promise<GitHubResult> {
+  // Idempotent: already created.
+  if (report.githubIssueUrl) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "already_created",
+      issueUrl: report.githubIssueUrl,
+    };
+  }
+
+  if (
+    !isBugReportGitHubIssuesEnabled(
+      process.env[BUG_REPORT_GITHUB_ISSUES_ENABLED_ENV],
+    )
+  ) {
+    console.warn(
+      "bugReport: GitHub issues disabled (set BUG_REPORT_GITHUB_ISSUES_ENABLED=true only for a private intake repo). Primary path: Convex + GrokBot webhook.",
+    );
+    await ctx.runMutation(internal.bugReports.internalPatchGitHubIssue, {
+      reportId,
+      githubIssueError: "github_issues_disabled",
+    });
+    return { ok: false, skipped: true, reason: "github_issues_disabled" };
+  }
+
   const token = resolveGitHubToken();
   if (!token) {
     console.warn(
@@ -134,27 +160,32 @@ async function createGitHubIssue(
     return { ok: false, skipped: true, reason: "missing_token" };
   }
 
+  const repo = resolveGitHubRepo();
+  const privacy = await assertGitHubRepoIsPrivate(token, repo);
+  if (!privacy.ok) {
+    await ctx.runMutation(internal.bugReports.internalPatchGitHubIssue, {
+      reportId,
+      githubIssueError: privacy.reason,
+    });
+    return { ok: false, skipped: true, reason: privacy.reason };
+  }
+
+  // Text-only public-safe body: no screenshot URL, no pipeline file id, no PII.
   const title = buildBugReportGitHubTitle(report.description);
-  const body = buildIssueBody({
+  const body = buildBugReportGitHubIssueBody({
     description: report.description,
-    pageUrl: report.pageUrl,
     pagePath: report.pagePath,
-    pipelineFileId: report.pipelineFileId
-      ? String(report.pipelineFileId)
-      : undefined,
     viewportWidth: report.viewportWidth,
     viewportHeight: report.viewportHeight,
-    userAgent: report.userAgent,
-    createdByUserKey: report.createdByUserKey,
-    createdByEmail: report.createdByEmail,
     severity: report.severity,
     createdAt: report.createdAt,
     reportId: String(reportId),
-    screenshotUrl,
   });
 
+  const api = `https://api.github.com/repos/${repo}/issues`;
+
   try {
-    const res = await fetch(GITHUB_API, {
+    const res = await fetch(api, {
       method: "POST",
       headers: {
         Accept: "application/vnd.github+json",
@@ -167,7 +198,6 @@ async function createGitHubIssue(
         title,
         body,
         labels: ["lfe-bug-report", "bug"],
-        // Wake GrokBot / Cursor Cloud Minion via GitHub `issue-assigned` routine.
         assignees: ["RallyKing"],
       }),
     });
@@ -222,7 +252,12 @@ async function postGrokBotWebhook(
   ctx: ActionCtx,
   reportId: Id<"bugReports">,
   payload: Record<string, unknown>,
+  alreadyDeliveredAt: number | undefined,
 ): Promise<{ ok: boolean; skipped?: boolean; reason?: string }> {
+  if (alreadyDeliveredAt) {
+    return { ok: true, skipped: true, reason: "already_delivered" };
+  }
+
   const url = resolveGrokBotWebhookUrl();
   if (!url) {
     console.warn(
@@ -280,9 +315,9 @@ async function postGrokBotWebhook(
 }
 
 /**
- * One-shot outbound: GitHub (if token) then GrokBot webhook (if URL).
- * Webhook payload includes `githubIssueUrl` when GitHub create succeeded.
- * Does not reschedule itself.
+ * One-shot outbound: GitHub (opt-in + private only) then GrokBot webhook (primary).
+ * Webhook payload may include screenshot URL (private Convex storage URL) for triage.
+ * Does not reschedule itself. Idempotent via claim + prior-success skips.
  */
 export const deliverBugReportOutbound = internalAction({
   args: { reportId: v.id("bugReports") },
@@ -300,6 +335,32 @@ export const deliverBugReportOutbound = internalAction({
     }),
   }),
   handler: async (ctx, { reportId }) => {
+    const claim = await ctx.runMutation(
+      internal.bugReports.internalClaimOutboundDelivery,
+      { reportId },
+    );
+    if (claim.alreadyDelivered) {
+      return {
+        github: { ok: true, skipped: true, reason: "already_delivered" },
+        webhook: { ok: true, skipped: true, reason: "already_delivered" },
+      };
+    }
+    if (!claim.claimed) {
+      // Another run holds the claim — do not double-post.
+      return {
+        github: {
+          ok: claim.skipGithub,
+          skipped: true,
+          reason: "claim_held",
+        },
+        webhook: {
+          ok: claim.skipWebhook,
+          skipped: true,
+          reason: "claim_held",
+        },
+      };
+    }
+
     const report = await ctx.runQuery(internal.bugReports.internalGetBugReport, {
       reportId,
     });
@@ -310,6 +371,7 @@ export const deliverBugReportOutbound = internalAction({
       };
     }
 
+    // Screenshot URL is for webhook / Convex triage only — never for public GitHub.
     let screenshotUrl: string | null = null;
     if (report.screenshotStorageId) {
       screenshotUrl = await ctx.runQuery(
@@ -318,12 +380,14 @@ export const deliverBugReportOutbound = internalAction({
       );
     }
 
-    const github = await createGitHubIssue(
-      ctx,
-      reportId,
-      report,
-      screenshotUrl,
-    );
+    const github = claim.skipGithub
+      ? {
+          ok: true,
+          skipped: true,
+          reason: "already_created",
+          issueUrl: report.githubIssueUrl,
+        }
+      : await createGitHubIssue(ctx, reportId, report);
 
     const webhookPayload = {
       reportId: String(reportId),
@@ -346,7 +410,14 @@ export const deliverBugReportOutbound = internalAction({
       source: "lfe_in_app_bug_report",
     };
 
-    const webhook = await postGrokBotWebhook(ctx, reportId, webhookPayload);
+    const webhook = claim.skipWebhook
+      ? { ok: true, skipped: true, reason: "already_delivered" }
+      : await postGrokBotWebhook(
+          ctx,
+          reportId,
+          webhookPayload,
+          report.webhookDeliveredAt,
+        );
 
     return {
       github: {

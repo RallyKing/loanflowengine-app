@@ -5,7 +5,9 @@
 import assert from "node:assert/strict";
 import {
   BUG_REPORT_MAX_SCREENSHOT_BYTES,
+  buildBugReportGitHubIssueBody,
   buildBugReportGitHubTitle,
+  isBugReportGitHubIssuesEnabled,
   normalizeBugReportSeverity,
   parsePipelineFileIdFromPath,
   validateBugReportDescription,
@@ -42,5 +44,29 @@ assert.equal(
   "j57abc123",
 );
 assert.equal(parsePipelineFileIdFromPath("/tasks"), null);
+
+assert.equal(isBugReportGitHubIssuesEnabled(undefined), false);
+assert.equal(isBugReportGitHubIssuesEnabled(""), false);
+assert.equal(isBugReportGitHubIssuesEnabled("false"), false);
+assert.equal(isBugReportGitHubIssuesEnabled("true"), true);
+assert.equal(isBugReportGitHubIssuesEnabled("TRUE"), true);
+
+const ghBody = buildBugReportGitHubIssueBody({
+  description: "Vault tab crashes on apply",
+  pagePath: "/pipeline/j57secretfile/documents",
+  viewportWidth: 390,
+  viewportHeight: 844,
+  severity: "high",
+  createdAt: Date.parse("2026-09-16T00:00:00.000Z"),
+  reportId: "report123",
+});
+assert.ok(ghBody.includes("Vault tab crashes on apply"));
+assert.ok(ghBody.includes("`/pipeline/j57secretfile/documents`"));
+assert.equal(/https?:\/\//i.test(ghBody), false);
+assert.equal(ghBody.includes("convex.cloud"), false);
+assert.equal(ghBody.toLowerCase().includes("pipeline file id"), false);
+assert.equal(ghBody.toLowerCase().includes("reporter"), false);
+assert.equal(ghBody.includes("@"), false);
+assert.ok(ghBody.includes("private Convex storage"));
 
 console.log("bug-report-validation-tests: ok");

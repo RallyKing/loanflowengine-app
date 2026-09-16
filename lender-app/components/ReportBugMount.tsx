@@ -163,12 +163,11 @@ function ReportBugFabAndDialog() {
         screenshotStorageId = uploaded.storageId as Id<"_storage">;
       }
 
-      const pipelineRaw = parsePipelineFileIdFromPath(pathname);
-      const pipelineFileId = pipelineRaw
-        ? (pipelineRaw as Id<"pipeline">)
-        : undefined;
+      // Optional context only — server omits invalid/missing/cross-org ids.
+      const pipelineFileId =
+        parsePipelineFileIdFromPath(pathname) ?? undefined;
 
-      await submitBugReport({
+      const result = await submitBugReport({
         organizationId: viewer.organizationId as Id<"organizations">,
         memberUserKey: viewer.userKey,
         description,
@@ -185,8 +184,11 @@ function ReportBugFabAndDialog() {
         screenshotStorageId,
       });
 
+      // Never claim GitHub was scheduled when the opt-in/token gate is off.
       showOperationalToast({
-        title: "Bug report sent — Cursor Cloud Minion will pick this up.",
+        title: result.githubScheduled
+          ? "Bug report sent — triage channels notified."
+          : "Bug report saved — Cursor Cloud Minion will pick this up.",
         variant: "success",
         durationMs: 5200,
       });

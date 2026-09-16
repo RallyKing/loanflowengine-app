@@ -5075,6 +5075,11 @@ export default defineSchema({
     webhookDeliveredAt: v.optional(v.number()),
     /** Skip or failure reason for webhook delivery (never includes secrets). */
     webhookError: v.optional(v.string()),
+    /**
+     * Compare-and-set claim for one-shot outbound delivery.
+     * Prevents duplicate GitHub issues / webhook posts if the action is re-run.
+     */
+    outboundDeliveryClaimedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_org_createdAt", ["organizationId", "createdAt"])
