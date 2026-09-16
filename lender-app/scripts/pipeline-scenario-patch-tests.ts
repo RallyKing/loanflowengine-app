@@ -77,13 +77,13 @@ function testConflictGuard() {
 }
 
 async function testOnlineQuietOmitsOcc() {
-  let seen: { expectedUpdatedAt?: number } | null = null;
+  let seenExpectedUpdatedAt: number | undefined = 1;
   const patch = async (args: {
     id: string;
     scenario?: string;
     expectedUpdatedAt?: number;
   }): Promise<PatchPipelineResult> => {
-    seen = args;
+    seenExpectedUpdatedAt = args.expectedUpdatedAt;
     return { ok: true, id: args.id };
   };
   await runPipelinePatchHandlingConflict(patch, {
@@ -91,7 +91,7 @@ async function testOnlineQuietOmitsOcc() {
     scenario: "text",
     expectedUpdatedAt: 1,
   });
-  assert.equal(seen?.expectedUpdatedAt, undefined);
+  assert.equal(seenExpectedUpdatedAt, undefined);
 }
 
 async function testConflictNoRetry() {

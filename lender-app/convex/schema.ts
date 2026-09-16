@@ -3052,6 +3052,12 @@ export default defineSchema({
     ),
     /** True when the live URL still uses `/lender-delivery/{token}` instead of slug URLs. */
     legacyPath: v.optional(v.boolean()),
+    /**
+     * Last issued absolute URL (token plaintext only stored here for operator copy).
+     * Rotates on regenerate; never exposed on public portal queries.
+     * Optional for prod docs that still carry the field after earlier schema drift.
+     */
+    issuedUrl: v.optional(v.string()),
     requiresVerification: v.optional(v.boolean()),
     verificationType: v.optional(
       v.union(v.literal("passcode"), v.literal("email_otp")),
