@@ -204,6 +204,9 @@ export type AttachmentKind =
   | "text"
   | "spreadsheet"
   | "word"
+  | "presentation"
+  | "video"
+  | "archive"
   | "other";
 
 export function guessAttachmentKind(
@@ -212,7 +215,10 @@ export function guessAttachmentKind(
 ): AttachmentKind {
   const ct = (contentType || "").toLowerCase();
   const n = fileName.toLowerCase();
-  if (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(n)) {
+  if (
+    ct.startsWith("image/") ||
+    /\.(png|jpe?g|gif|webp|svg|ico|bmp|tiff?|heic|heif)$/i.test(n)
+  ) {
     return "image";
   }
   if (ct === "application/pdf" || n.endsWith(".pdf")) {
@@ -242,8 +248,30 @@ export function guessAttachmentKind(
   ) {
     return "word";
   }
-  if (ct.startsWith("text/") || /\.(txt|md|log)$/i.test(n)) {
+  if (
+    ct.includes("presentationml") ||
+    ct.includes("ms-powerpoint") ||
+    ct.includes("powerpoint") ||
+    /\.(pptx|ppt)$/i.test(n)
+  ) {
+    return "presentation";
+  }
+  if (ct.startsWith("text/") || /\.(txt|md|log|rtf)$/i.test(n)) {
     return "text";
+  }
+  if (
+    ct.startsWith("video/") ||
+    /\.(mp4|webm|mov|m4v|avi|mkv)$/i.test(n)
+  ) {
+    return "video";
+  }
+  if (
+    ct.includes("zip") ||
+    ct === "application/x-7z-compressed" ||
+    ct === "application/x-rar-compressed" ||
+    /\.(zip|7z|rar)$/i.test(n)
+  ) {
+    return "archive";
   }
   return "other";
 }
