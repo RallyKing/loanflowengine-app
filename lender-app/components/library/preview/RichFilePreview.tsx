@@ -7,6 +7,7 @@ import { guessAttachmentKind, type AttachmentKind } from "@/lib/uploadToConvexSt
 import {
   fetchArrayBuffer,
   fetchAsBlobUrl,
+  isLegacyBinaryOfficeName,
   loadDocxPreview,
   loadSpreadsheetPreviewFromBuffer,
   loadTextPreview,
@@ -245,7 +246,7 @@ export function RichFilePreview({
         }
 
         if (kind === "word") {
-          if (fileName.toLowerCase().endsWith(".doc") && !fileName.toLowerCase().endsWith(".docx")) {
+          if (isLegacyBinaryOfficeName(fileName)) {
             fail(
               "Legacy .doc preview is limited. Download the file or convert to .docx for in-app preview.",
             );

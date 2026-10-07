@@ -76,10 +76,16 @@ function normalizeMatrix(
   };
 }
 
-async function loadCsvFromText(text: string): Promise<SpreadsheetPreviewTable> {
+async function loadCsvFromText(
+  text: string,
+  opts?: { inputTruncated?: boolean },
+): Promise<SpreadsheetPreviewTable> {
   const Papa = (await import("papaparse")).default;
-  const truncatedInput = text.length > MAX_CSV_PREVIEW_CHARS;
-  const capped = truncatedInput ? text.slice(0, MAX_CSV_PREVIEW_CHARS) : text;
+  const truncatedInput =
+    Boolean(opts?.inputTruncated) || text.length > MAX_CSV_PREVIEW_CHARS;
+  const capped = text.length > MAX_CSV_PREVIEW_CHARS
+    ? text.slice(0, MAX_CSV_PREVIEW_CHARS)
+    : text;
   const parsed = Papa.parse<string[]>(capped, {
     skipEmptyLines: true,
   });
@@ -99,6 +105,14 @@ async function loadCsvFromText(text: string): Promise<SpreadsheetPreviewTable> {
     truncatedRows,
     truncatedCols,
   };
+}
+
+async function loadCsvFromBuffer(buf: ArrayBuffer): Promise<SpreadsheetPreviewTable> {
+  const bytes = new Uint8Array(buf);
+  const inputTruncated = bytes.byteLength > MAX_CSV_PREVIEW_CHARS;
+  const slice = bytes.subarray(0, MAX_CSV_PREVIEW_CHARS);
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(slice);
+  return loadCsvFromText(text, { inputTruncated });
 }
 
 export async function fetchArrayBuffer(url: string): Promise<ArrayBuffer> {
@@ -127,10 +141,8 @@ export async function loadTextPreview(url: string): Promise<string> {
 }
 
 export async function loadCsvPreview(url: string): Promise<SpreadsheetPreviewTable> {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Failed to load CSV (${res.status})`);
-  const text = await res.text();
-  return loadCsvFromText(text);
+  const buf = await fetchArrayBuffer(url);
+  return loadCsvFromBuffer(buf);
 }
 
 /**
@@ -249,10 +261,7 @@ export async function loadSpreadsheetPreviewFromBuffer(
 ): Promise<SpreadsheetPreviewTable> {
   const n = fileName.toLowerCase();
   if (n.endsWith(".csv")) {
-    const bytes = new Uint8Array(buf);
-    const slice = bytes.subarray(0, MAX_CSV_PREVIEW_CHARS);
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(slice);
-    return loadCsvFromText(text);
+    return loadCsvFromBuffer(buf);
   }
   if (n.endsWith(".xlsx") || n.endsWith(".xls")) {
     return loadXlsxPreviewFromBuffer(buf, sheetName);
@@ -260,10 +269,7 @@ export async function loadSpreadsheetPreviewFromBuffer(
   try {
     return await loadXlsxPreviewFromBuffer(buf, sheetName);
   } catch {
-    const bytes = new Uint8Array(buf);
-    const slice = bytes.subarray(0, MAX_CSV_PREVIEW_CHARS);
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(slice);
-    return loadCsvFromText(text);
+    return loadCsvFromBuffer(buf);
   }
 }
 

@@ -7,6 +7,8 @@ import * as XLSX from "xlsx";
 import { guessAttachmentKind } from "../lib/uploadToConvexStorage";
 import {
   isLegacyBinaryOfficeName,
+  loadSpreadsheetPreviewFromBuffer,
+  MAX_CSV_PREVIEW_CHARS,
   MAX_SHEET_COLS,
   MAX_SHEET_ROWS,
   parseWorkbookWithXlsx,
@@ -15,6 +17,16 @@ import {
 function test(name: string, fn: () => void) {
   try {
     fn();
+    console.log(`ok - ${name}`);
+  } catch (e) {
+    console.error(`fail - ${name}`);
+    throw e;
+  }
+}
+
+async function testAsync(name: string, fn: () => Promise<void>) {
+  try {
+    await fn();
     console.log(`ok - ${name}`);
   } catch (e) {
     console.error(`fail - ${name}`);
@@ -137,6 +149,19 @@ test("parseWorkbookWithXlsx: clips very wide sheets before sheet_to_json", () =>
   assert.equal(table.rows[0]?.length, MAX_SHEET_COLS);
   assert.equal(table.truncatedCols, true);
   assert.equal(table.truncatedRows, false);
+});
+
+await testAsync("CSV buffer path caps bytes and flags truncation", async () => {
+  const header = "a,b\n";
+  const row = "1,2\n";
+  const big = header + row.repeat(
+    Math.ceil((MAX_CSV_PREVIEW_CHARS + 10_000) / row.length),
+  );
+  const buf = new TextEncoder().encode(big).buffer;
+  assert.ok(buf.byteLength > MAX_CSV_PREVIEW_CHARS);
+  const table = await loadSpreadsheetPreviewFromBuffer(buf, "big.csv");
+  assert.equal(table.truncatedRows, true);
+  assert.ok(table.rows.length <= MAX_SHEET_ROWS);
 });
 
 console.log("All rich-file-preview tests passed.");
