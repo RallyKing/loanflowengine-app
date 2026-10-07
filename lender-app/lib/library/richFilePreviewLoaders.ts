@@ -8,6 +8,10 @@ export type SpreadsheetPreviewTable = {
   sheetNames: string[];
   headers: string[];
   rows: string[][];
+  /** True when the sheet had more data rows than the preview cap. */
+  truncatedRows?: boolean;
+  /** True when the sheet had more columns than the preview cap. */
+  truncatedCols?: boolean;
 };
 
 export type DocxPreviewResult = {
@@ -15,25 +19,53 @@ export type DocxPreviewResult = {
   paragraphs: string[];
 };
 
-const MAX_SHEET_ROWS = 500;
-const MAX_SHEET_COLS = 40;
+/** Preview caps — keep UI responsive for large workbooks. */
+export const MAX_SHEET_ROWS = 500;
+export const MAX_SHEET_COLS = 40;
 const MAX_DOCX_PARAS = 800;
 
-function cellToString(value: unknown): string {
+function cellToDisplayString(value: unknown): string {
   if (value == null) return "";
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime())
+      ? ""
+      : value.toISOString().slice(0, 10);
+  }
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  if (typeof value === "object" && value !== null && "text" in value) {
-    const t = (value as { text?: unknown }).text;
-    return t == null ? "" : String(t);
-  }
-  if (typeof value === "object" && value !== null && "result" in value) {
-    const r = (value as { result?: unknown }).result;
-    return r == null ? "" : String(r);
-  }
   return String(value);
+}
+
+function normalizeMatrix(aoa: unknown[][]): {
+  headers: string[];
+  rows: string[][];
+  truncatedRows: boolean;
+  truncatedCols: boolean;
+} {
+  const truncatedRows = aoa.length > MAX_SHEET_ROWS + 1;
+  const width = aoa.reduce(
+    (max, row) => Math.max(max, Array.isArray(row) ? row.length : 0),
+    0,
+  );
+  const truncatedCols = width > MAX_SHEET_COLS;
+  const colCount = Math.min(Math.max(width, 0), MAX_SHEET_COLS);
+
+  const headerSource = (aoa[0] ?? []) as unknown[];
+  const headers = Array.from({ length: colCount }, (_, i) => {
+    const raw = cellToDisplayString(headerSource[i]).trim();
+    return raw || `Col ${i + 1}`;
+  });
+
+  const body = aoa.slice(1, MAX_SHEET_ROWS + 1);
+  const rows = body.map((row) => {
+    const src = Array.isArray(row) ? row : [];
+    return Array.from({ length: colCount }, (_, i) =>
+      cellToDisplayString(src[i]),
+    );
+  });
+
+  return { headers, rows, truncatedRows, truncatedCols };
 }
 
 export async function fetchArrayBuffer(url: string): Promise<ArrayBuffer> {
@@ -66,22 +98,55 @@ export async function loadCsvPreview(url: string): Promise<SpreadsheetPreviewTab
     skipEmptyLines: true,
   });
   const all = (parsed.data ?? []).filter((row) => Array.isArray(row));
-  const headers = (all[0] ?? []).map((c) => String(c ?? ""));
-  const body = all.slice(1, MAX_SHEET_ROWS + 1).map((row) =>
-    row.slice(0, MAX_SHEET_COLS).map((c) => String(c ?? "")),
-  );
-  while (headers.length < MAX_SHEET_COLS && body.some((r) => r.length > headers.length)) {
-    headers.push(`Col ${headers.length + 1}`);
-  }
+  const { headers, rows, truncatedRows, truncatedCols } = normalizeMatrix(all);
   return {
     sheetName: "CSV",
     sheetNames: ["CSV"],
-    headers: headers.slice(0, MAX_SHEET_COLS),
-    rows: body.map((r) => {
-      const padded = [...r];
-      while (padded.length < headers.length) padded.push("");
-      return padded.slice(0, headers.length);
-    }),
+    headers,
+    rows,
+    truncatedRows,
+    truncatedCols,
+  };
+}
+
+/** Parse workbook bytes (OOXML .xlsx or BIFF .xls) into a capped table for preview. */
+export function parseWorkbookWithXlsx(
+  XLSX: typeof import("xlsx"),
+  buf: ArrayBuffer,
+  sheetName?: string,
+): SpreadsheetPreviewTable {
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
+  const sheetNames = wb.SheetNames ?? [];
+  if (sheetNames.length === 0) {
+    return {
+      sheetName: "Sheet1",
+      sheetNames: ["Sheet1"],
+      headers: [],
+      rows: [],
+    };
+  }
+  const name =
+    (sheetName && sheetNames.includes(sheetName) && sheetName) ||
+    sheetNames[0]!;
+  const sheet = wb.Sheets[name];
+  if (!sheet) {
+    throw new Error(`Worksheet "${name}" was not found in this workbook.`);
+  }
+  const aoa = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: "",
+    raw: false,
+  }) as unknown[][];
+  const { headers, rows, truncatedRows, truncatedCols } = normalizeMatrix(
+    Array.isArray(aoa) ? aoa : [],
+  );
+  return {
+    sheetName: name,
+    sheetNames,
+    headers,
+    rows,
+    truncatedRows,
+    truncatedCols,
   };
 }
 
@@ -89,45 +154,18 @@ export async function loadXlsxPreview(
   url: string,
   sheetName?: string,
 ): Promise<SpreadsheetPreviewTable> {
-  const ExcelJS = (await import("exceljs")).default;
+  const XLSX = await import("xlsx");
   const buf = await fetchArrayBuffer(url);
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buf);
-
-  const sheetNames = wb.worksheets.map((ws) => ws.name);
-  if (sheetNames.length === 0) {
-    return { sheetName: "Sheet1", sheetNames: ["Sheet1"], headers: [], rows: [] };
+  try {
+    return parseWorkbookWithXlsx(XLSX, buf, sheetName);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      msg.includes("Unsupported") || msg.includes("Corrupt")
+        ? `Could not parse this spreadsheet (${msg}). Download the file or re-save as .xlsx / .csv.`
+        : `Could not parse this spreadsheet. ${msg}`,
+    );
   }
-  const chosen =
-    (sheetName && wb.getWorksheet(sheetName)) ||
-    wb.worksheets[0]!;
-  const name = chosen.name;
-
-  const matrix: string[][] = [];
-  chosen.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber > MAX_SHEET_ROWS + 1) return;
-    const values: string[] = [];
-    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-      if (colNumber > MAX_SHEET_COLS) return;
-      while (values.length < colNumber - 1) values.push("");
-      values.push(cellToString(cell.value));
-    });
-    matrix.push(values);
-  });
-
-  const headers = (matrix[0] ?? []).map((c, i) => c || `Col ${i + 1}`);
-  const rows = matrix.slice(1).map((r) => {
-    const padded = [...r];
-    while (padded.length < headers.length) padded.push("");
-    return padded.slice(0, headers.length);
-  });
-
-  return {
-    sheetName: name,
-    sheetNames,
-    headers: headers.slice(0, MAX_SHEET_COLS),
-    rows,
-  };
 }
 
 export async function loadSpreadsheetPreview(
@@ -140,10 +178,10 @@ export async function loadSpreadsheetPreview(
     return loadCsvPreview(url);
   }
   if (n.endsWith(".xlsx") || n.endsWith(".xls")) {
-    // exceljs reads OOXML (.xlsx). Legacy .xls may fail — caller shows fallback.
+    // SheetJS reads OOXML (.xlsx) and legacy BIFF (.xls) in the browser.
     return loadXlsxPreview(url, sheetName);
   }
-  // Content-type-only spreadsheet: try xlsx then csv
+  // Content-type-only spreadsheet: try workbook then csv
   try {
     return await loadXlsxPreview(url, sheetName);
   } catch {

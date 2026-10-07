@@ -6,10 +6,11 @@ import { cn } from "@/lib/cn";
 import { guessAttachmentKind, type AttachmentKind } from "@/lib/uploadToConvexStorage";
 import {
   fetchAsBlobUrl,
-  isLegacyBinaryOfficeName,
   loadDocxPreview,
   loadSpreadsheetPreview,
   loadTextPreview,
+  MAX_SHEET_COLS,
+  MAX_SHEET_ROWS,
   type SpreadsheetPreviewTable,
 } from "@/lib/library/richFilePreviewLoaders";
 
@@ -48,6 +49,18 @@ function OpenFallback({
   );
 }
 
+function spreadsheetCapMessage(table: SpreadsheetPreviewTable): string | null {
+  const parts: string[] = [];
+  if (table.truncatedRows) {
+    parts.push(`first ${MAX_SHEET_ROWS} rows`);
+  }
+  if (table.truncatedCols) {
+    parts.push(`first ${MAX_SHEET_COLS} columns`);
+  }
+  if (parts.length === 0) return null;
+  return `Showing ${parts.join(" and ")} for preview performance. Download the file to see the full sheet.`;
+}
+
 function SpreadsheetTable({
   table,
   sheetNames,
@@ -59,6 +72,7 @@ function SpreadsheetTable({
   activeSheet: string;
   onSheetChange: (name: string) => void;
 }) {
+  const capMessage = spreadsheetCapMessage(table);
   return (
     <div className="flex h-full min-h-0 flex-col">
       {sheetNames.length > 1 ? (
@@ -79,6 +93,14 @@ function SpreadsheetTable({
             </button>
           ))}
         </div>
+      ) : null}
+      {capMessage ? (
+        <p
+          className="shrink-0 border-b border-border/50 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground"
+          data-testid="rich-file-preview-sheet-cap"
+        >
+          {capMessage}
+        </p>
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-max min-w-full border-collapse text-left text-xs">
@@ -205,9 +227,6 @@ export function RichFilePreview({
         }
 
         if (kind === "spreadsheet") {
-          if (isLegacyBinaryOfficeName(fileName) && fileName.toLowerCase().endsWith(".xls")) {
-            // Attempt xlsx path; exceljs may reject legacy BIFF.
-          }
           setBusy(true);
           const table = await loadSpreadsheetPreview(url, fileName);
           if (!cancelled) {
@@ -380,7 +399,7 @@ export function RichFilePreview({
             url={url}
             message={
               err ??
-              "Spreadsheet preview is not available for this file. Try .xlsx or .csv."
+              "Spreadsheet preview is not available for this file. Download it, or re-save as .xlsx / .csv."
             }
           />
         </div>
