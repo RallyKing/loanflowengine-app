@@ -448,7 +448,7 @@ export function RichFilePreview({
     }
     return (
       <div
-        className={cn(className, viewport, "bg-background")}
+        className={cn(className, viewport, "overflow-hidden bg-background")}
         data-testid="rich-file-preview-spreadsheet"
       >
         {busy ? (
