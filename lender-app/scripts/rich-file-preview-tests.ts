@@ -151,17 +151,21 @@ test("parseWorkbookWithXlsx: clips very wide sheets before sheet_to_json", () =>
   assert.equal(table.truncatedRows, false);
 });
 
-await testAsync("CSV buffer path caps bytes and flags truncation", async () => {
-  const header = "a,b\n";
-  const row = "1,2\n";
-  const big = header + row.repeat(
-    Math.ceil((MAX_CSV_PREVIEW_CHARS + 10_000) / row.length),
-  );
-  const buf = new TextEncoder().encode(big).buffer;
-  assert.ok(buf.byteLength > MAX_CSV_PREVIEW_CHARS);
-  const table = await loadSpreadsheetPreviewFromBuffer(buf, "big.csv");
-  assert.equal(table.truncatedRows, true);
-  assert.ok(table.rows.length <= MAX_SHEET_ROWS);
+void (async () => {
+  await testAsync("CSV buffer path caps bytes and flags truncation", async () => {
+    const header = "a,b\n";
+    const row = "1,2\n";
+    const big = header + row.repeat(
+      Math.ceil((MAX_CSV_PREVIEW_CHARS + 10_000) / row.length),
+    );
+    const buf = new TextEncoder().encode(big).buffer;
+    assert.ok(buf.byteLength > MAX_CSV_PREVIEW_CHARS);
+    const table = await loadSpreadsheetPreviewFromBuffer(buf, "big.csv");
+    assert.equal(table.truncatedRows, true);
+    assert.ok(table.rows.length <= MAX_SHEET_ROWS);
+  });
+  console.log("All rich-file-preview tests passed.");
+})().catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
 });
-
-console.log("All rich-file-preview tests passed.");
