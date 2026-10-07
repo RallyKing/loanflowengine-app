@@ -35,6 +35,8 @@ const HUB_STATE_KEY = "dlc.pipeline.hub.state.v3";
 const HUB_VIEWS_KEY = "dlc.pipeline.hub.views.v1";
 const HUB_MOBILE_DISPLAY_KEY = "dlc.pipeline.hub.mobileDisplay.v1";
 export const HUB_PROJECTION_MODE_KEY = "dlc.pipeline.projectionMode.v1";
+/** Display-only stage section/column order on the pipeline hub (not stage definitions). */
+export const HUB_STAGE_ORDER_KEY = "dlc.pipeline.hub.stageOrder.v1";
 
 export type HubProjectionModePersisted =
   | "client"
@@ -44,6 +46,9 @@ export type HubProjectionModePersisted =
   | "referral"
   | "team"
   | "task";
+
+/** Funnel = early → late (default). Reverse = late → early for section/column layout only. */
+export type HubStageOrderDirection = "funnel" | "reverse";
 
 export function loadHubProjectionMode(): HubProjectionModePersisted | null {
   if (typeof window === "undefined") return null;
@@ -70,6 +75,26 @@ export function saveHubProjectionMode(mode: HubProjectionModePersisted): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(HUB_PROJECTION_MODE_KEY, mode);
+  } catch {
+    /* */
+  }
+}
+
+export function loadHubStageOrder(): HubStageOrderDirection | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(HUB_STAGE_ORDER_KEY);
+    if (raw === "funnel" || raw === "reverse") return raw;
+  } catch {
+    /* */
+  }
+  return null;
+}
+
+export function saveHubStageOrder(order: HubStageOrderDirection): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(HUB_STAGE_ORDER_KEY, order);
   } catch {
     /* */
   }

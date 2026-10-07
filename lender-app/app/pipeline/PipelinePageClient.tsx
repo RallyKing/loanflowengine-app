@@ -171,6 +171,7 @@ import {
   LogOut,
   SlidersHorizontal,
   ChevronDown,
+  ArrowDownUp,
 } from "lucide-react";
 import {
   buildPipelineListCsv,
@@ -203,13 +204,16 @@ import {
   loadHubMobileDisplay,
   loadHubProjectionMode,
   loadHubSavedViews,
+  loadHubStageOrder,
   saveHubProjectionMode,
+  saveHubStageOrder,
   newSavedViewId,
   parseMomentumFilterTokens,
   saveHubFilterSnapshot,
   saveHubMobileDisplay,
   saveHubSavedViews,
   type HubMobileDisplayMode,
+  type HubStageOrderDirection,
   type PipelineHubSavedView,
   type PipelineHubSortKey,
   type PipelineHubFilterSnapshot,
@@ -441,6 +445,21 @@ export function PipelinePageClient() {
     saveHubMobileDisplay(hubMobileDisplay);
   }, [hubMobileDisplay]);
 
+  const [stageOrder, setStageOrder] = useState<HubStageOrderDirection>("funnel");
+  const skipStageOrderPersist = useRef(true);
+  useLayoutEffect(() => {
+    const order = loadHubStageOrder();
+    if (order) setStageOrder(order);
+  }, []);
+  useEffect(() => {
+    if (skipStageOrderPersist.current) {
+      skipStageOrderPersist.current = false;
+      return;
+    }
+    saveHubStageOrder(stageOrder);
+  }, [stageOrder]);
+
+  const reverseStages = stageOrder === "reverse";
 
   const [hubViewsFiltersOpen, setHubViewsFiltersOpen] = useState(false);
 
@@ -883,8 +902,11 @@ export function PipelinePageClient() {
     [filtered, projectionSearch, sort, stageIndex],
   );
   const fileFlatGrouped = useMemo(
-    () => groupPipelineRowsByParentStage(fileFlatList, stageIndex),
-    [fileFlatList, stageIndex],
+    () =>
+      groupPipelineRowsByParentStage(fileFlatList, stageIndex, {
+        reverseStages,
+      }),
+    [fileFlatList, stageIndex, reverseStages],
   );
   const lenderFocusTree = useMemo(
     () =>
@@ -1112,6 +1134,7 @@ export function PipelinePageClient() {
     let n = hubFilterActiveCount;
     if (sort !== "updatedDesc") n += 1;
     if (!narrow && view !== "table") n += 1;
+    if (stageOrder === "reverse") n += 1;
     if (settings.tableDensity !== "analyst") n += 1;
     if (clientInvolvementFilters.clientId) n += 1;
     if (clientInvolvementFilters.relationshipType !== "any") n += 1;
@@ -1126,6 +1149,7 @@ export function PipelinePageClient() {
     sort,
     narrow,
     view,
+    stageOrder,
     settings.tableDensity,
     clientInvolvementFilters,
     capitalStackFilters,
@@ -1860,6 +1884,32 @@ export function PipelinePageClient() {
                 type="button"
                 variant="outline"
                 size="sm"
+                className={cn(
+                  "h-9 min-h-10 gap-1.5 px-2.5 text-xs font-medium",
+                  reverseStages && "border-primary/50 bg-primary/10 text-primary",
+                )}
+                aria-pressed={reverseStages}
+                data-testid="pipeline-hub-stage-order-toggle"
+                title={
+                  reverseStages
+                    ? "Stage sections: ending stages first. Click for starting stages first."
+                    : "Stage sections: starting stages first. Click for ending stages first."
+                }
+                onClick={() =>
+                  withOperationalScrollPreserved(() => {
+                    setStageOrder((prev) =>
+                      prev === "funnel" ? "reverse" : "funnel",
+                    );
+                  })
+                }
+              >
+                <ArrowDownUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                {reverseStages ? "End → start" : "Start → end"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
                 className="h-9 min-h-10 gap-1.5 px-2.5 text-xs font-medium"
                 disabled={!activeOrganizationId || !memberUserKey || autoArchiveSweepBusy}
                 onClick={() => void runAutoArchiveSweep()}
@@ -2123,6 +2173,33 @@ export function PipelinePageClient() {
                         ))}
                       </select>
                     </label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className={cn(
+                        "h-9 min-h-10 gap-1.5 px-2.5 text-xs font-medium",
+                        reverseStages &&
+                          "border-primary/50 bg-primary/10 text-primary",
+                      )}
+                      aria-pressed={reverseStages}
+                      data-testid="pipeline-hub-stage-order-toggle-panel"
+                      title={
+                        reverseStages
+                          ? "Stage layout: ending stages first"
+                          : "Stage layout: starting stages first"
+                      }
+                      onClick={() =>
+                        withOperationalScrollPreserved(() => {
+                          setStageOrder((prev) =>
+                            prev === "funnel" ? "reverse" : "funnel",
+                          );
+                        })
+                      }
+                    >
+                      <ArrowDownUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      Stages {reverseStages ? "end → start" : "start → end"}
+                    </Button>
                     <div
                       className={cn(
                         "inline-flex h-9 items-center rounded-dlc-md border border-border/50 bg-dlc-surface-high text-xs shadow-dlc-1",
@@ -2717,6 +2794,7 @@ export function PipelinePageClient() {
                   <PipelineHubProjectionView
                     mode={projectionMode}
                     stageIndex={stageIndex}
+                    reverseStages={reverseStages}
                     clientTree={clientFocusTree}
                     projectTree={projectFocusTree}
                     fileFlatGrouped={fileFlatGrouped}
@@ -2755,6 +2833,7 @@ export function PipelinePageClient() {
               rows={filtered}
               stageTree={stageIndex.tree}
               stageIndex={stageIndex}
+              reverseStages={reverseStages}
               hubFocusFileId={hubFocusFileId}
               selectFile={selectFile}
               runPatchPipeline={runPatchPipeline}

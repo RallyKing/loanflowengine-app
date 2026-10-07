@@ -42,13 +42,16 @@ export function resolveParentStageId(
 }
 
 /**
- * Partition a flat, pre-sorted file list into parent-stage sections (funnel order).
+ * Partition a flat, pre-sorted file list into parent-stage sections.
+ * Default order follows the org funnel (early → late). Pass `reverseStages`
+ * for display-only late → early section order — does not change stage data.
  * Empty parent stages are omitted. Rows without a resolvable active parent go to
  * `unassigned` (rendered last).
  */
 export function groupPipelineRowsByParentStage(
   rows: PipelineTablePreviewRow[],
   index: PipelineStageIndex,
+  options?: { reverseStages?: boolean },
 ): PipelineHubStageGroupedFileList {
   const buckets = new Map<
     Id<"organizationPipelineStages">,
@@ -68,8 +71,12 @@ export function groupPipelineRowsByParentStage(
     buckets.set(parentId, list);
   }
 
+  const orderedStages = options?.reverseStages
+    ? [...index.activeStages].reverse()
+    : index.activeStages;
+
   const groups: PipelineHubParentStageGroup[] = [];
-  for (const stage of index.activeStages) {
+  for (const stage of orderedStages) {
     const stageRows = buckets.get(stage._id);
     if (!stageRows?.length) continue;
     groups.push({
