@@ -5,11 +5,14 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { guessAttachmentKind, type AttachmentKind } from "@/lib/uploadToConvexStorage";
 import {
+  fetchArrayBuffer,
   fetchAsBlobUrl,
   isLegacyBinaryOfficeName,
   loadDocxPreview,
-  loadSpreadsheetPreview,
+  loadSpreadsheetPreviewFromBuffer,
   loadTextPreview,
+  MAX_SHEET_COLS,
+  MAX_SHEET_ROWS,
   type SpreadsheetPreviewTable,
 } from "@/lib/library/richFilePreviewLoaders";
 
@@ -48,6 +51,18 @@ function OpenFallback({
   );
 }
 
+function spreadsheetCapMessage(table: SpreadsheetPreviewTable): string | null {
+  const parts: string[] = [];
+  if (table.truncatedRows) {
+    parts.push(`first ${MAX_SHEET_ROWS} rows`);
+  }
+  if (table.truncatedCols) {
+    parts.push(`first ${MAX_SHEET_COLS} columns`);
+  }
+  if (parts.length === 0) return null;
+  return `Showing ${parts.join(" and ")} for preview performance. Download the file to see the full sheet.`;
+}
+
 function SpreadsheetTable({
   table,
   sheetNames,
@@ -59,10 +74,13 @@ function SpreadsheetTable({
   activeSheet: string;
   onSheetChange: (name: string) => void;
 }) {
+  const capMessage = spreadsheetCapMessage(table);
+  const colCount = Math.max(table.headers.length, 1);
+  const showRowGutter = table.headerMode === "letters";
   return (
     <div className="flex h-full min-h-0 flex-col">
       {sheetNames.length > 1 ? (
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 bg-background px-2 py-1.5">
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-muted/30 px-2 py-1.5">
           {sheetNames.map((name) => (
             <button
               key={name}
@@ -80,14 +98,35 @@ function SpreadsheetTable({
           ))}
         </div>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-max min-w-full border-collapse text-left text-xs">
-          <thead className="sticky top-0 z-[1] bg-muted/90 backdrop-blur-sm">
+      {capMessage ? (
+        <p
+          className="shrink-0 border-b border-border bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground"
+          data-testid="rich-file-preview-sheet-cap"
+        >
+          {capMessage}
+        </p>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-auto bg-white dark:bg-background">
+        <table
+          className="w-max min-w-full border-collapse border border-border text-left text-xs"
+          data-header-mode={table.headerMode}
+        >
+          <thead className="sticky top-0 z-[1]">
             <tr>
+              {showRowGutter ? (
+                <th
+                  className="sticky left-0 z-[2] min-w-[2.5rem] border border-border bg-muted px-1.5 py-1.5 text-center text-[10px] font-semibold text-muted-foreground"
+                  aria-label="Row"
+                />
+              ) : null}
               {table.headers.map((h, i) => (
                 <th
                   key={`h-${i}`}
-                  className="border border-border/50 px-2 py-1.5 font-semibold text-foreground whitespace-nowrap"
+                  className={cn(
+                    "min-w-[5.5rem] border border-border bg-muted px-2 py-1.5 font-semibold text-foreground whitespace-nowrap",
+                    table.headerMode === "letters" &&
+                      "text-center text-[11px] tracking-wide text-muted-foreground",
+                  )}
                 >
                   {h || `Col ${i + 1}`}
                 </th>
@@ -98,19 +137,27 @@ function SpreadsheetTable({
             {table.rows.length === 0 ? (
               <tr>
                 <td
-                  className="border border-border/40 px-2 py-4 text-muted-foreground"
-                  colSpan={Math.max(table.headers.length, 1)}
+                  className="border border-border px-2 py-4 text-muted-foreground"
+                  colSpan={colCount + (showRowGutter ? 1 : 0)}
                 >
                   Sheet is empty.
                 </td>
               </tr>
             ) : (
               table.rows.map((row, ri) => (
-                <tr key={`r-${ri}`} className="odd:bg-background even:bg-muted/20">
+                <tr key={`r-${ri}`} className="odd:bg-white even:bg-muted/25 dark:odd:bg-background">
+                  {showRowGutter ? (
+                    <th
+                      scope="row"
+                      className="sticky left-0 z-[1] min-w-[2.5rem] border border-border bg-muted/80 px-1.5 py-1 text-center text-[10px] font-medium text-muted-foreground"
+                    >
+                      {ri + 1}
+                    </th>
+                  ) : null}
                   {row.map((cell, ci) => (
                     <td
                       key={`c-${ri}-${ci}`}
-                      className="border border-border/40 px-2 py-1 align-top whitespace-pre-wrap max-w-[18rem]"
+                      className="min-w-[5.5rem] max-w-[18rem] border border-border px-2 py-1 align-top whitespace-pre-wrap text-foreground"
                     >
                       {cell}
                     </td>
@@ -140,6 +187,8 @@ export function RichFilePreview({
 }: RichFilePreviewProps) {
   const kind: AttachmentKind = guessAttachmentKind(contentType, fileName);
   const sheetNameRef = useRef<string>("");
+  /** Cached vault bytes so sheet-tab switches skip re-fetch (parse still sheet-scoped). */
+  const spreadsheetBufRef = useRef<ArrayBuffer | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -165,6 +214,7 @@ export function RichFilePreview({
     setDocxParas(null);
     setDocxTitle(undefined);
     setActiveSheet("");
+    spreadsheetBufRef.current = null;
 
     const fail = (message: string) => {
       if (cancelled) return;
@@ -205,11 +255,11 @@ export function RichFilePreview({
         }
 
         if (kind === "spreadsheet") {
-          if (isLegacyBinaryOfficeName(fileName) && fileName.toLowerCase().endsWith(".xls")) {
-            // Attempt xlsx path; exceljs may reject legacy BIFF.
-          }
           setBusy(true);
-          const table = await loadSpreadsheetPreview(url, fileName);
+          const buf = await fetchArrayBuffer(url);
+          if (cancelled) return;
+          spreadsheetBufRef.current = buf;
+          const table = await loadSpreadsheetPreviewFromBuffer(buf, fileName);
           if (!cancelled) {
             setSheet(table);
             setActiveSheet(table.sheetName);
@@ -219,7 +269,7 @@ export function RichFilePreview({
         }
 
         if (kind === "word") {
-          if (fileName.toLowerCase().endsWith(".doc") && !fileName.toLowerCase().endsWith(".docx")) {
+          if (isLegacyBinaryOfficeName(fileName)) {
             fail(
               "Legacy .doc preview is limited. Download the file or convert to .docx for in-app preview.",
             );
@@ -257,7 +307,17 @@ export function RichFilePreview({
     setBusy(true);
     void (async () => {
       try {
-        const table = await loadSpreadsheetPreview(url, fileName, activeSheet);
+        let buf = spreadsheetBufRef.current;
+        if (!buf) {
+          buf = await fetchArrayBuffer(url);
+          if (cancelled) return;
+          spreadsheetBufRef.current = buf;
+        }
+        const table = await loadSpreadsheetPreviewFromBuffer(
+          buf,
+          fileName,
+          activeSheet,
+        );
         if (!cancelled) setSheet(table);
       } catch (e) {
         if (!cancelled) {
@@ -380,7 +440,7 @@ export function RichFilePreview({
             url={url}
             message={
               err ??
-              "Spreadsheet preview is not available for this file. Try .xlsx or .csv."
+              "Spreadsheet preview is not available for this file. Download it, or re-save as .xlsx / .csv."
             }
           />
         </div>
@@ -388,7 +448,7 @@ export function RichFilePreview({
     }
     return (
       <div
-        className={cn(className, viewport, "bg-background")}
+        className={cn(className, viewport, "overflow-hidden bg-background")}
         data-testid="rich-file-preview-spreadsheet"
       >
         {busy ? (
