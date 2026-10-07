@@ -385,6 +385,8 @@ export type PipelineBoardViewProps = {
   rows: PipelineTablePreviewRow[];
   stageTree: PipelineStageDisplay[];
   stageIndex: StageIndex;
+  /** Display-only: reverse column order (late → early). */
+  reverseStages?: boolean;
   hubFocusFileId: Id<"pipeline"> | null;
   selectFile: (id: Id<"pipeline">) => void;
   runPatchPipeline: (args: {
@@ -399,6 +401,7 @@ export function PipelineBoardView({
   rows,
   stageTree,
   stageIndex,
+  reverseStages = false,
   hubFocusFileId,
   selectFile,
   runPatchPipeline,
@@ -417,6 +420,11 @@ export function PipelineBoardView({
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+
+  const orderedStageTree = useMemo(
+    () => (reverseStages ? [...stageTree].reverse() : stageTree),
+    [reverseStages, stageTree],
   );
 
   const byStage = useMemo(() => {
@@ -482,7 +490,7 @@ export function PipelineBoardView({
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       <div className="w-full overflow-x-auto touch-pan-x touch-scroll-x">
         <div className="flex min-h-0 min-w-max gap-3 p-3">
-          {stageTree.map(({ stage }) => {
+          {orderedStageTree.map(({ stage }) => {
             const stageKey = String(stage._id);
             const rowsForStage = byStage.columns.get(stageKey) ?? [];
             return (

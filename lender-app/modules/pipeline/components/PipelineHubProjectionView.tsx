@@ -88,6 +88,7 @@ function EntitySection({
   testId,
   fileRowProps,
   stageIndex,
+  reverseStages,
 }: {
   node: EntityFocusNode;
   icon: React.ComponentType<{ className?: string }>;
@@ -96,6 +97,7 @@ function EntitySection({
   testId: string;
   fileRowProps: FileRowProps;
   stageIndex: PipelineStageIndex;
+  reverseStages?: boolean;
 }) {
   const showNested = hubHierarchySectionVisible(expanded);
   const groupedLoans = useMemo(() => {
@@ -105,8 +107,9 @@ function EntitySection({
     return groupPipelineRowsByParentStage(
       node.loans.map((loan) => loan.row),
       stageIndex,
+      { reverseStages: reverseStages === true },
     );
-  }, [showNested, node.loans, stageIndex]);
+  }, [showNested, node.loans, stageIndex, reverseStages]);
 
   const renderEntityFileRow = (row: PipelineTablePreviewRow) => (
     <PipelineHubFileRow
@@ -429,10 +432,13 @@ export function PipelineHubProjectionView({
   onAddLoanFile,
   onFileDuplicated,
   stageIndex,
+  reverseStages = false,
   ...fileRowProps
 }: {
   mode: HubProjectionMode;
   stageIndex: PipelineStageIndex;
+  /** Display-only: reverse parent-stage sections (late → early). */
+  reverseStages?: boolean;
   clientTree: HubClientNode[];
   projectTree: HubProjectFocusNode[];
   fileFlatGrouped: PipelineHubStageGroupedFileList;
@@ -583,6 +589,7 @@ export function PipelineHubProjectionView({
             testId="pipeline-hub-lender"
             fileRowProps={enrichedFileRowProps}
             stageIndex={stageIndex}
+            reverseStages={reverseStages}
           />
         ))}
       </div>
@@ -602,6 +609,7 @@ export function PipelineHubProjectionView({
             testId="pipeline-hub-referral"
             fileRowProps={enrichedFileRowProps}
             stageIndex={stageIndex}
+            reverseStages={reverseStages}
           />
         ))}
       </div>
@@ -621,6 +629,7 @@ export function PipelineHubProjectionView({
             testId="pipeline-hub-team"
             fileRowProps={enrichedFileRowProps}
             stageIndex={stageIndex}
+            reverseStages={reverseStages}
           />
         ))}
       </div>
