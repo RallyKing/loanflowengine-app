@@ -71,9 +71,9 @@ test("csv is no longer plain text kind", () => {
   assert.notEqual(guessAttachmentKind(undefined, "data.csv"), "text");
 });
 
-test("legacy binary office names", () => {
+test("legacy binary office names (.doc only; .xls is previewable)", () => {
   assert.equal(isLegacyBinaryOfficeName("a.doc"), true);
-  assert.equal(isLegacyBinaryOfficeName("a.xls"), true);
+  assert.equal(isLegacyBinaryOfficeName("a.xls"), false);
   assert.equal(isLegacyBinaryOfficeName("a.docx"), false);
   assert.equal(isLegacyBinaryOfficeName("a.xlsx"), false);
 });
@@ -109,17 +109,21 @@ test("parseWorkbookWithXlsx: sheet tab selection", () => {
   assert.equal(table.rows[0]?.[0], "9");
 });
 
-test("parseWorkbookWithXlsx: caps rows and columns", () => {
+test("parseWorkbookWithXlsx: caps rows and columns without full materialize", () => {
   const header = Array.from({ length: MAX_SHEET_COLS + 5 }, (_, i) => `C${i}`);
   const body = Array.from({ length: MAX_SHEET_ROWS + 10 }, (_, r) =>
     header.map((_, c) => `${r}:${c}`),
   );
   const buf = workbookBuffer({ Big: [header, ...body] });
+  const started = Date.now();
   const table = parseWorkbookWithXlsx(XLSX, buf);
+  const elapsed = Date.now() - started;
   assert.equal(table.headers.length, MAX_SHEET_COLS);
   assert.equal(table.rows.length, MAX_SHEET_ROWS);
   assert.equal(table.truncatedRows, true);
   assert.equal(table.truncatedCols, true);
+  // Bounded sheetRows parse should stay snappy even for oversized sheets.
+  assert.ok(elapsed < 5_000, `parse took too long (${elapsed}ms)`);
 });
 
 console.log("All rich-file-preview tests passed.");

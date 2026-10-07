@@ -5,9 +5,10 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { guessAttachmentKind, type AttachmentKind } from "@/lib/uploadToConvexStorage";
 import {
+  fetchArrayBuffer,
   fetchAsBlobUrl,
   loadDocxPreview,
-  loadSpreadsheetPreview,
+  loadSpreadsheetPreviewFromBuffer,
   loadTextPreview,
   MAX_SHEET_COLS,
   MAX_SHEET_ROWS,
@@ -162,6 +163,8 @@ export function RichFilePreview({
 }: RichFilePreviewProps) {
   const kind: AttachmentKind = guessAttachmentKind(contentType, fileName);
   const sheetNameRef = useRef<string>("");
+  /** Cached vault bytes so sheet-tab switches do not re-fetch / re-parse the whole book. */
+  const spreadsheetBufRef = useRef<ArrayBuffer | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -187,6 +190,7 @@ export function RichFilePreview({
     setDocxParas(null);
     setDocxTitle(undefined);
     setActiveSheet("");
+    spreadsheetBufRef.current = null;
 
     const fail = (message: string) => {
       if (cancelled) return;
@@ -228,7 +232,10 @@ export function RichFilePreview({
 
         if (kind === "spreadsheet") {
           setBusy(true);
-          const table = await loadSpreadsheetPreview(url, fileName);
+          const buf = await fetchArrayBuffer(url);
+          if (cancelled) return;
+          spreadsheetBufRef.current = buf;
+          const table = await loadSpreadsheetPreviewFromBuffer(buf, fileName);
           if (!cancelled) {
             setSheet(table);
             setActiveSheet(table.sheetName);
@@ -276,7 +283,17 @@ export function RichFilePreview({
     setBusy(true);
     void (async () => {
       try {
-        const table = await loadSpreadsheetPreview(url, fileName, activeSheet);
+        let buf = spreadsheetBufRef.current;
+        if (!buf) {
+          buf = await fetchArrayBuffer(url);
+          if (cancelled) return;
+          spreadsheetBufRef.current = buf;
+        }
+        const table = await loadSpreadsheetPreviewFromBuffer(
+          buf,
+          fileName,
+          activeSheet,
+        );
         if (!cancelled) setSheet(table);
       } catch (e) {
         if (!cancelled) {

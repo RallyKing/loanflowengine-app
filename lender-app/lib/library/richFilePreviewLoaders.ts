@@ -9,9 +9,9 @@ export type SpreadsheetPreviewTable = {
   headers: string[];
   rows: string[][];
   /** True when the sheet had more data rows than the preview cap. */
-  truncatedRows?: boolean;
+  truncatedRows: boolean;
   /** True when the sheet had more columns than the preview cap. */
-  truncatedCols?: boolean;
+  truncatedCols: boolean;
 };
 
 export type DocxPreviewResult = {
@@ -37,18 +37,23 @@ function cellToDisplayString(value: unknown): string {
   return String(value);
 }
 
-function normalizeMatrix(aoa: unknown[][]): {
+function normalizeMatrix(
+  aoa: unknown[][],
+  opts?: { truncatedRows?: boolean; truncatedCols?: boolean },
+): {
   headers: string[];
   rows: string[][];
   truncatedRows: boolean;
   truncatedCols: boolean;
 } {
-  const truncatedRows = aoa.length > MAX_SHEET_ROWS + 1;
   const width = aoa.reduce(
     (max, row) => Math.max(max, Array.isArray(row) ? row.length : 0),
     0,
   );
-  const truncatedCols = width > MAX_SHEET_COLS;
+  const truncatedRows =
+    (opts?.truncatedRows ?? false) || aoa.length > MAX_SHEET_ROWS + 1;
+  const truncatedCols =
+    (opts?.truncatedCols ?? false) || width > MAX_SHEET_COLS;
   const colCount = Math.min(Math.max(width, 0), MAX_SHEET_COLS);
 
   const headerSource = (aoa[0] ?? []) as unknown[];
@@ -109,63 +114,96 @@ export async function loadCsvPreview(url: string): Promise<SpreadsheetPreviewTab
   };
 }
 
-/** Parse workbook bytes (OOXML .xlsx or BIFF .xls) into a capped table for preview. */
+/**
+ * Parse workbook bytes (OOXML .xlsx or BIFF .xls) into a capped table.
+ * Uses SheetJS `bookSheets` + `sheets` + `sheetRows` so large sheets are not fully materialized.
+ */
 export function parseWorkbookWithXlsx(
   XLSX: typeof import("xlsx"),
   buf: ArrayBuffer,
   sheetName?: string,
 ): SpreadsheetPreviewTable {
-  const wb = XLSX.read(buf, { type: "array", cellDates: true });
-  const sheetNames = wb.SheetNames ?? [];
+  const stub = XLSX.read(buf, { type: "array", bookSheets: true });
+  const sheetNames = stub.SheetNames ?? [];
   if (sheetNames.length === 0) {
     return {
       sheetName: "Sheet1",
       sheetNames: ["Sheet1"],
       headers: [],
       rows: [],
+      truncatedRows: false,
+      truncatedCols: false,
     };
   }
   const name =
     (sheetName && sheetNames.includes(sheetName) && sheetName) ||
     sheetNames[0]!;
+
+  // header + MAX body + 1 sentinel row to detect truncation without full parse
+  const rowBudget = MAX_SHEET_ROWS + 2;
+  const wb = XLSX.read(buf, {
+    type: "array",
+    cellDates: true,
+    sheets: [name],
+    sheetRows: rowBudget,
+  });
   const sheet = wb.Sheets[name];
   if (!sheet) {
     throw new Error(`Worksheet "${name}" was not found in this workbook.`);
   }
+
+  let truncatedColsFromRef = false;
+  if (sheet["!ref"]) {
+    const range = XLSX.utils.decode_range(sheet["!ref"]);
+    truncatedColsFromRef = range.e.c + 1 > MAX_SHEET_COLS;
+  }
+
   const aoa = XLSX.utils.sheet_to_json(sheet, {
     header: 1,
     defval: "",
     raw: false,
   }) as unknown[][];
-  const { headers, rows, truncatedRows, truncatedCols } = normalizeMatrix(
-    Array.isArray(aoa) ? aoa : [],
+  const matrix = Array.isArray(aoa) ? aoa : [];
+  const truncatedRows = matrix.length > MAX_SHEET_ROWS + 1;
+  const { headers, rows, truncatedRows: tr, truncatedCols: tc } = normalizeMatrix(
+    matrix.slice(0, MAX_SHEET_ROWS + 1),
+    {
+      truncatedRows,
+      truncatedCols: truncatedColsFromRef,
+    },
   );
+
   return {
     sheetName: name,
     sheetNames,
     headers,
     rows,
-    truncatedRows,
-    truncatedCols,
+    truncatedRows: tr,
+    truncatedCols: tc || truncatedColsFromRef,
   };
+}
+
+export async function loadXlsxPreviewFromBuffer(
+  buf: ArrayBuffer,
+  sheetName?: string,
+): Promise<SpreadsheetPreviewTable> {
+  const XLSX = await import("xlsx");
+  try {
+    return parseWorkbookWithXlsx(XLSX, buf, sheetName);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Could not parse this spreadsheet. Download the file or re-save as .xlsx / .csv. (${msg})`,
+    );
+  }
 }
 
 export async function loadXlsxPreview(
   url: string,
   sheetName?: string,
 ): Promise<SpreadsheetPreviewTable> {
-  const XLSX = await import("xlsx");
   const buf = await fetchArrayBuffer(url);
-  try {
-    return parseWorkbookWithXlsx(XLSX, buf, sheetName);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(
-      msg.includes("Unsupported") || msg.includes("Corrupt")
-        ? `Could not parse this spreadsheet (${msg}). Download the file or re-save as .xlsx / .csv.`
-        : `Could not parse this spreadsheet. ${msg}`,
-    );
-  }
+  return loadXlsxPreviewFromBuffer(buf, sheetName);
 }
 
 export async function loadSpreadsheetPreview(
@@ -178,15 +216,37 @@ export async function loadSpreadsheetPreview(
     return loadCsvPreview(url);
   }
   if (n.endsWith(".xlsx") || n.endsWith(".xls")) {
-    // SheetJS reads OOXML (.xlsx) and legacy BIFF (.xls) in the browser.
     return loadXlsxPreview(url, sheetName);
   }
-  // Content-type-only spreadsheet: try workbook then csv
   try {
     return await loadXlsxPreview(url, sheetName);
   } catch {
     return loadCsvPreview(url);
   }
+}
+
+export async function loadSpreadsheetPreviewFromBuffer(
+  buf: ArrayBuffer,
+  fileName: string,
+  sheetName?: string,
+): Promise<SpreadsheetPreviewTable> {
+  const n = fileName.toLowerCase();
+  if (n.endsWith(".csv")) {
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+    const Papa = (await import("papaparse")).default;
+    const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
+    const all = (parsed.data ?? []).filter((row) => Array.isArray(row));
+    const { headers, rows, truncatedRows, truncatedCols } = normalizeMatrix(all);
+    return {
+      sheetName: "CSV",
+      sheetNames: ["CSV"],
+      headers,
+      rows,
+      truncatedRows,
+      truncatedCols,
+    };
+  }
+  return loadXlsxPreviewFromBuffer(buf, sheetName);
 }
 
 function stripXmlTags(xml: string): string {
@@ -227,7 +287,7 @@ export async function loadDocxPreview(url: string): Promise<DocxPreviewResult> {
   return { title, paragraphs };
 }
 
+/** True for legacy Word binary (.doc). .xls is previewable via SheetJS. */
 export function isLegacyBinaryOfficeName(fileName: string): boolean {
-  const n = fileName.toLowerCase();
-  return n.endsWith(".doc") || n.endsWith(".xls");
+  return fileName.toLowerCase().endsWith(".doc") && !fileName.toLowerCase().endsWith(".docx");
 }
