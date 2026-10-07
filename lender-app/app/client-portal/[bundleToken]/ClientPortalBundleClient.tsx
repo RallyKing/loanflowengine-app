@@ -26,7 +26,7 @@ import { PortalPageComposition } from "@/components/portal/PortalPageSectionRend
 import type { PortalPageSectionInstance } from "@/lib/portalPageSections";
 import { defaultStatusSteps } from "@/lib/portalSectionConfig";
 
-/** Public bundle/token portal footer (copy only — keep in sync with empty-state wording). */
+/** Public bundle/token portal footer copy. */
 const CLIENT_PORTAL_FOOTER_COPY =
   "Direct upload portal - Submitted items will be reviewed";
 
