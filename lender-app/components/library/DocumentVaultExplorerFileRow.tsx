@@ -24,7 +24,6 @@ import {
   Download,
   Eye,
   EyeOff,
-  FileText,
   Flag,
   FolderInput,
   GripVertical,
@@ -46,6 +45,10 @@ import {
   isCreatedVaultHtmlDocument,
   isVaultImageDocument,
 } from "@/lib/library/vaultOutboundFileName";
+import {
+  VaultDocumentFileTitle,
+  VaultDocumentTypeIcon,
+} from "@/lib/library/vaultDocumentFilePresentation";
 
 function formatDate(ts: number | undefined) {
   if (ts == null) return "—";
@@ -239,10 +242,7 @@ export function DocumentVaultExplorerFileRow({
             className="flex min-w-0 flex-1 items-center gap-1 text-left"
             onClick={isEditing ? undefined : onSelect}
           >
-            <FileText
-              className="h-3 w-3 shrink-0 text-primary/70"
-              aria-hidden
-            />
+            <VaultDocumentTypeIcon row={row} className="h-3 w-3" />
             {isEditing ? (
               <input
                 type="text"
@@ -263,14 +263,16 @@ export function DocumentVaultExplorerFileRow({
                 autoFocus
               />
             ) : (
-              <span
+              <VaultDocumentFileTitle
+                row={row}
                 className={cn(
-                  "min-w-0 truncate text-[11px] font-medium text-foreground",
+                  "min-w-0 truncate text-[11px]",
                   isSelected && "text-primary",
                 )}
-              >
-                {row.title}
-              </span>
+                titleClassName="font-medium text-foreground"
+                typeClassName="text-[10px]"
+                data-testid={`document-vault-file-row-title-${row._id}`}
+              />
             )}
           </button>
 
@@ -486,10 +488,7 @@ export function DocumentVaultExplorerFileRow({
           />
         ) : null}
 
-        <FileText
-          className="h-3.5 w-3.5 shrink-0 text-primary/70"
-          aria-hidden
-        />
+        <VaultDocumentTypeIcon row={row} className="h-3.5 w-3.5" />
 
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {isEditing ? (
@@ -517,14 +516,16 @@ export function DocumentVaultExplorerFileRow({
               autoFocus
             />
           ) : (
-            <span
+            <VaultDocumentFileTitle
+              row={row}
               className={cn(
-                "min-w-0 truncate text-xs font-medium text-foreground",
+                "min-w-0 truncate text-xs",
                 isSelected && "text-primary",
               )}
-            >
-              {row.title}
-            </span>
+              titleClassName="font-medium text-foreground"
+              typeClassName="text-[10px]"
+              data-testid={`document-vault-file-row-title-${row._id}`}
+            />
           )}
 
           <span className="hidden shrink-0 text-[10px] tabular-nums text-muted-foreground sm:inline">

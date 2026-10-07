@@ -23,8 +23,11 @@ import { vaultDocumentDragId } from "@/lib/library/documentVaultDnD";
 import {
   isCreatedVaultHtmlDocument,
   isVaultImageDocument,
-  vaultDocumentOutboundFileName,
 } from "@/lib/library/vaultOutboundFileName";
+import {
+  VaultDocumentFileTitle,
+  VaultDocumentTypeIcon,
+} from "@/lib/library/vaultDocumentFilePresentation";
 import type { LibraryDocumentListRow } from "@/components/library/LibraryDocumentsList";
 import {
   AlertTriangle,
@@ -35,7 +38,6 @@ import {
   Clock,
   Crop,
   Eye,
-  FileText,
   Flag,
   FolderInput,
   GripVertical,
@@ -573,23 +575,14 @@ export function LibraryDocumentsVaultGrid({
                 </td>
                 <td className="max-w-[14rem] px-2 py-1.5">
                   <div className="flex min-w-0 items-center gap-1.5">
-                    <FileText
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
+                    <VaultDocumentTypeIcon row={d} className="h-3.5 w-3.5" />
+                    <VaultDocumentFileTitle
+                      row={d}
+                      className="min-w-0 truncate text-xs leading-tight"
+                      titleClassName="font-medium text-foreground"
+                      typeClassName="text-[10px]"
+                      data-testid={`document-vault-grid-title-${d._id}`}
                     />
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-medium leading-tight">
-                        {d.title}
-                      </div>
-                      {(() => {
-                        const outbound = vaultDocumentOutboundFileName(d);
-                        return outbound && outbound !== d.title ? (
-                          <div className="truncate text-[10px] text-muted-foreground">
-                            {outbound}
-                          </div>
-                        ) : null;
-                      })()}
-                    </div>
                   </div>
                 </td>
                 <td className="px-2 py-1.5">

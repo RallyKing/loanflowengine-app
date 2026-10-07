@@ -71,6 +71,7 @@ import { FolderNameDialog } from "@/components/pipeline/tabs/DocumentVaultFolder
 import { DocumentVaultExplorerFileRow } from "@/components/library/DocumentVaultExplorerFileRow";
 import { DocumentVaultExplorerFilterStrip } from "@/components/library/DocumentVaultExplorerFilterStrip";
 import { DocumentVaultExplorerStarButton } from "@/components/library/DocumentVaultExplorerStarButton";
+import { VaultDocumentTypeIcon } from "@/lib/library/vaultDocumentFilePresentation";
 import {
   explorerFilterEmptyMessage,
   filterExplorerDocuments,
@@ -709,10 +710,14 @@ function DocumentTreeRow({
           data-testid={`document-vault-tree-document-${doc._id}`}
           onClick={onSelect}
         >
-          <FileText
-            className="h-3 w-3 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
+          {row ? (
+            <VaultDocumentTypeIcon row={row} className="h-3 w-3" />
+          ) : (
+            <FileText
+              className="h-3 w-3 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+          )}
           {isEditing ? (
             <InlineEditInput
               value={editValue}
