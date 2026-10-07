@@ -45,7 +45,10 @@ function workbookBuffer(
   }
   const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
   const bytes = out instanceof Uint8Array ? out : new Uint8Array(out as number[]);
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
 }
 
 test("guessAttachmentKind: pdf / image / text", () => {
