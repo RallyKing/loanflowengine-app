@@ -75,10 +75,12 @@ function SpreadsheetTable({
   onSheetChange: (name: string) => void;
 }) {
   const capMessage = spreadsheetCapMessage(table);
+  const colCount = Math.max(table.headers.length, 1);
+  const showRowGutter = table.headerMode === "letters";
   return (
     <div className="flex h-full min-h-0 flex-col">
       {sheetNames.length > 1 ? (
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 bg-background px-2 py-1.5">
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-muted/30 px-2 py-1.5">
           {sheetNames.map((name) => (
             <button
               key={name}
@@ -98,20 +100,33 @@ function SpreadsheetTable({
       ) : null}
       {capMessage ? (
         <p
-          className="shrink-0 border-b border-border/50 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground"
+          className="shrink-0 border-b border-border bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground"
           data-testid="rich-file-preview-sheet-cap"
         >
           {capMessage}
         </p>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-max min-w-full border-collapse text-left text-xs">
-          <thead className="sticky top-0 z-[1] bg-muted/90 backdrop-blur-sm">
+      <div className="min-h-0 flex-1 overflow-auto bg-white dark:bg-background">
+        <table
+          className="w-max min-w-full border-collapse border border-border text-left text-xs"
+          data-header-mode={table.headerMode}
+        >
+          <thead className="sticky top-0 z-[1]">
             <tr>
+              {showRowGutter ? (
+                <th
+                  className="sticky left-0 z-[2] min-w-[2.5rem] border border-border bg-muted px-1.5 py-1.5 text-center text-[10px] font-semibold text-muted-foreground"
+                  aria-label="Row"
+                />
+              ) : null}
               {table.headers.map((h, i) => (
                 <th
                   key={`h-${i}`}
-                  className="border border-border/50 px-2 py-1.5 font-semibold text-foreground whitespace-nowrap"
+                  className={cn(
+                    "min-w-[5.5rem] border border-border bg-muted px-2 py-1.5 font-semibold text-foreground whitespace-nowrap",
+                    table.headerMode === "letters" &&
+                      "text-center text-[11px] tracking-wide text-muted-foreground",
+                  )}
                 >
                   {h || `Col ${i + 1}`}
                 </th>
@@ -122,19 +137,27 @@ function SpreadsheetTable({
             {table.rows.length === 0 ? (
               <tr>
                 <td
-                  className="border border-border/40 px-2 py-4 text-muted-foreground"
-                  colSpan={Math.max(table.headers.length, 1)}
+                  className="border border-border px-2 py-4 text-muted-foreground"
+                  colSpan={colCount + (showRowGutter ? 1 : 0)}
                 >
                   Sheet is empty.
                 </td>
               </tr>
             ) : (
               table.rows.map((row, ri) => (
-                <tr key={`r-${ri}`} className="odd:bg-background even:bg-muted/20">
+                <tr key={`r-${ri}`} className="odd:bg-white even:bg-muted/25 dark:odd:bg-background">
+                  {showRowGutter ? (
+                    <th
+                      scope="row"
+                      className="sticky left-0 z-[1] min-w-[2.5rem] border border-border bg-muted/80 px-1.5 py-1 text-center text-[10px] font-medium text-muted-foreground"
+                    >
+                      {ri + 1}
+                    </th>
+                  ) : null}
                   {row.map((cell, ci) => (
                     <td
                       key={`c-${ri}-${ci}`}
-                      className="border border-border/40 px-2 py-1 align-top whitespace-pre-wrap max-w-[18rem]"
+                      className="min-w-[5.5rem] max-w-[18rem] border border-border px-2 py-1 align-top whitespace-pre-wrap text-foreground"
                     >
                       {cell}
                     </td>

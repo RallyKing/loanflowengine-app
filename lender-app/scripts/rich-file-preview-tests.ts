@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
 import { guessAttachmentKind } from "../lib/uploadToConvexStorage";
 import {
+  excelColLabel,
   isLegacyBinaryOfficeName,
   loadSpreadsheetPreviewFromBuffer,
   MAX_CSV_PREVIEW_CHARS,
@@ -90,7 +91,13 @@ test("legacy binary office names (.doc only; .xls is previewable)", () => {
   assert.equal(isLegacyBinaryOfficeName("a.xlsx"), false);
 });
 
-test("parseWorkbookWithXlsx: first sheet grid", () => {
+test("excelColLabel", () => {
+  assert.equal(excelColLabel(0), "A");
+  assert.equal(excelColLabel(25), "Z");
+  assert.equal(excelColLabel(26), "AA");
+});
+
+test("parseWorkbookWithXlsx: letter headers + all rows as data", () => {
   const buf = workbookBuffer({
     Demo: [
       ["Name", "Amount"],
@@ -102,12 +109,35 @@ test("parseWorkbookWithXlsx: first sheet grid", () => {
   const table = parseWorkbookWithXlsx(XLSX, buf);
   assert.equal(table.sheetName, "Demo");
   assert.deepEqual(table.sheetNames, ["Demo", "Other"]);
-  assert.deepEqual(table.headers, ["Name", "Amount"]);
-  assert.equal(table.rows.length, 2);
-  assert.equal(table.rows[0]?.[0], "Alpha");
-  assert.equal(table.rows[1]?.[1], "20");
+  assert.equal(table.headerMode, "letters");
+  assert.deepEqual(table.headers, ["A", "B"]);
+  assert.equal(table.rows.length, 3);
+  assert.equal(table.rows[0]?.[0], "Name");
+  assert.equal(table.rows[1]?.[0], "Alpha");
+  assert.equal(table.rows[1]?.[1], "10");
   assert.equal(table.truncatedRows, false);
   assert.equal(table.truncatedCols, false);
+});
+
+test("parseWorkbookWithXlsx: title-only first row does not collapse columns", () => {
+  // Reproduces Balance Sheet.xlsx bug: company name in A1 only, amounts in col B.
+  const buf = workbookBuffer({
+    Sheet1: [
+      ["The Carol Cole Company"],
+      ["Parent Company : NuFACE"],
+      ["ASSETS", "1000"],
+      ["Cash", "250"],
+      ["Bank of America", "750"],
+    ],
+  });
+  const table = parseWorkbookWithXlsx(XLSX, buf);
+  assert.equal(table.headerMode, "letters");
+  assert.ok(table.headers.length >= 2, `expected ≥2 cols, got ${table.headers.length}`);
+  assert.deepEqual(table.headers.slice(0, 2), ["A", "B"]);
+  assert.equal(table.rows[0]?.[0], "The Carol Cole Company");
+  assert.equal(table.rows[2]?.[0], "ASSETS");
+  assert.equal(table.rows[2]?.[1], "1000");
+  assert.equal(table.rows[3]?.[1], "250");
 });
 
 test("parseWorkbookWithXlsx: sheet tab selection", () => {
@@ -117,8 +147,8 @@ test("parseWorkbookWithXlsx: sheet tab selection", () => {
   });
   const table = parseWorkbookWithXlsx(XLSX, buf, "Other");
   assert.equal(table.sheetName, "Other");
-  assert.equal(table.headers[0], "Z");
-  assert.equal(table.rows[0]?.[0], "9");
+  assert.equal(table.rows[0]?.[0], "Z");
+  assert.equal(table.rows[1]?.[0], "9");
 });
 
 test("parseWorkbookWithXlsx: caps rows and columns without full materialize", () => {
@@ -134,7 +164,6 @@ test("parseWorkbookWithXlsx: caps rows and columns without full materialize", ()
   assert.equal(table.rows.length, MAX_SHEET_ROWS);
   assert.equal(table.truncatedRows, true);
   assert.equal(table.truncatedCols, true);
-  // Bounded sheetRows parse should stay snappy even for oversized sheets.
   assert.ok(elapsed < 5_000, `parse took too long (${elapsed}ms)`);
 });
 
@@ -161,6 +190,7 @@ void (async () => {
     const buf = new TextEncoder().encode(big).buffer;
     assert.ok(buf.byteLength > MAX_CSV_PREVIEW_CHARS);
     const table = await loadSpreadsheetPreviewFromBuffer(buf, "big.csv");
+    assert.equal(table.headerMode, "firstRow");
     assert.equal(table.truncatedRows, true);
     assert.ok(table.rows.length <= MAX_SHEET_ROWS);
   });

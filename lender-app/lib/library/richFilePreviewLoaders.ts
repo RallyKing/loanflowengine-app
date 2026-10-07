@@ -12,6 +12,11 @@ export type SpreadsheetPreviewTable = {
   truncatedRows: boolean;
   /** True when the sheet had more columns than the preview cap. */
   truncatedCols: boolean;
+  /**
+   * `letters` — Excel-style A/B/C headers; every sheet row is data (default for .xlsx/.xls).
+   * `firstRow` — first AOA row is column headers (CSV).
+   */
+  headerMode: "letters" | "firstRow";
 };
 
 export type DocxPreviewResult = {
@@ -26,6 +31,17 @@ export const MAX_SHEET_COLS = 40;
 export const MAX_CSV_PREVIEW_CHARS = 120_000;
 const MAX_DOCX_PARAS = 800;
 
+/** 0 → A, 25 → Z, 26 → AA (Excel column labels). */
+export function excelColLabel(index: number): string {
+  let n = index;
+  let label = "";
+  while (n >= 0) {
+    label = String.fromCharCode(65 + (n % 26)) + label;
+    n = Math.floor(n / 26) - 1;
+  }
+  return label;
+}
+
 function cellToDisplayString(value: unknown): string {
   if (value == null) return "";
   if (value instanceof Date) {
@@ -39,40 +55,64 @@ function cellToDisplayString(value: unknown): string {
   return String(value);
 }
 
+function padRow(row: unknown[], colCount: number): string[] {
+  return Array.from({ length: colCount }, (_, i) =>
+    cellToDisplayString(row[i]),
+  );
+}
+
 function normalizeMatrix(
   aoa: unknown[][],
-  opts: { truncatedRows: boolean; truncatedCols: boolean },
+  opts: {
+    truncatedRows: boolean;
+    truncatedCols: boolean;
+    /** CSV: first row is headers. Workbooks: Excel letters + all rows as data. */
+    firstRowIsHeader: boolean;
+    /** Prefer this width when known from sheet `!ref` (avoids title-row collapse). */
+    forcedColCount?: number;
+  },
 ): {
   headers: string[];
   rows: string[][];
   truncatedRows: boolean;
   truncatedCols: boolean;
+  headerMode: "letters" | "firstRow";
 } {
-  const width = aoa.reduce(
+  const scannedWidth = aoa.reduce(
     (max, row) => Math.max(max, Array.isArray(row) ? row.length : 0),
     0,
   );
+  const width = Math.max(scannedWidth, opts.forcedColCount ?? 0);
   const colCount = Math.min(Math.max(width, 0), MAX_SHEET_COLS);
 
-  const headerSource = (aoa[0] ?? []) as unknown[];
-  const headers = Array.from({ length: colCount }, (_, i) => {
-    const raw = cellToDisplayString(headerSource[i]).trim();
-    return raw || `Col ${i + 1}`;
-  });
+  if (opts.firstRowIsHeader) {
+    const headerSource = (aoa[0] ?? []) as unknown[];
+    const headers = Array.from({ length: colCount }, (_, i) => {
+      const raw = cellToDisplayString(headerSource[i]).trim();
+      return raw || excelColLabel(i);
+    });
+    const body = aoa.slice(1, MAX_SHEET_ROWS + 1);
+    return {
+      headers,
+      rows: body.map((row) => padRow(Array.isArray(row) ? row : [], colCount)),
+      truncatedRows: opts.truncatedRows,
+      truncatedCols: opts.truncatedCols,
+      headerMode: "firstRow",
+    };
+  }
 
-  const body = aoa.slice(1, MAX_SHEET_ROWS + 1);
-  const rows = body.map((row) => {
-    const src = Array.isArray(row) ? row : [];
-    return Array.from({ length: colCount }, (_, i) =>
-      cellToDisplayString(src[i]),
-    );
-  });
-
+  // Workbooks: never treat row 1 as exclusive headers — title-only first rows
+  // used to collapse the grid to a single column (Balance Sheet.xlsx bug).
+  const headers = Array.from({ length: colCount }, (_, i) => excelColLabel(i));
+  const rows = aoa
+    .slice(0, MAX_SHEET_ROWS)
+    .map((row) => padRow(Array.isArray(row) ? row : [], colCount));
   return {
     headers,
     rows,
     truncatedRows: opts.truncatedRows,
     truncatedCols: opts.truncatedCols,
+    headerMode: "letters",
   };
 }
 
@@ -93,17 +133,15 @@ async function loadCsvFromText(
   const truncatedRows = truncatedInput || all.length > MAX_SHEET_ROWS + 1;
   const width = all.reduce((max, row) => Math.max(max, row.length), 0);
   const truncatedCols = width > MAX_SHEET_COLS;
-  const { headers, rows } = normalizeMatrix(all.slice(0, MAX_SHEET_ROWS + 1), {
+  const normalized = normalizeMatrix(all.slice(0, MAX_SHEET_ROWS + 1), {
     truncatedRows,
     truncatedCols,
+    firstRowIsHeader: true,
   });
   return {
     sheetName: "CSV",
     sheetNames: ["CSV"],
-    headers,
-    rows,
-    truncatedRows,
-    truncatedCols,
+    ...normalized,
   };
 }
 
@@ -156,9 +194,6 @@ export function parseWorkbookWithXlsx(
   buf: ArrayBuffer,
   sheetName?: string,
 ): SpreadsheetPreviewTable {
-  // header + MAX body + 1 sentinel row to detect row truncation
-  const rowBudget = MAX_SHEET_ROWS + 2;
-
   // Names-only pass is cheap; then parse only the active sheet body.
   const stub = XLSX.read(buf, { type: "array", bookSheets: true });
   const sheetNames = stub.SheetNames ?? [];
@@ -170,17 +205,20 @@ export function parseWorkbookWithXlsx(
       rows: [],
       truncatedRows: false,
       truncatedCols: false,
+      headerMode: "letters",
     };
   }
   const name =
     (sheetName && sheetNames.includes(sheetName) && sheetName) ||
     sheetNames[0]!;
 
+  // All rows are data (no exclusive header row) + 1 sentinel for truncation.
+  const dataRowBudget = MAX_SHEET_ROWS + 1;
   const wb = XLSX.read(buf, {
     type: "array",
     cellDates: true,
     sheets: [name],
-    sheetRows: rowBudget,
+    sheetRows: dataRowBudget,
   });
   const sheet = wb.Sheets[name];
   if (!sheet) {
@@ -189,12 +227,13 @@ export function parseWorkbookWithXlsx(
 
   let truncatedRows = false;
   let truncatedCols = false;
+  let forcedColCount = 0;
   if (sheet["!ref"]) {
     const range = XLSX.utils.decode_range(sheet["!ref"]);
-    // sheetRows already clipped e.r; compare against budget to detect more rows existed.
-    truncatedRows = range.e.r + 1 >= rowBudget;
+    truncatedRows = range.e.r + 1 >= dataRowBudget;
     truncatedCols = range.e.c + 1 > MAX_SHEET_COLS;
-    range.e.r = Math.min(range.e.r, MAX_SHEET_ROWS);
+    forcedColCount = Math.min(range.e.c + 1, MAX_SHEET_COLS);
+    range.e.r = Math.min(range.e.r, MAX_SHEET_ROWS - 1);
     range.e.c = Math.min(range.e.c, MAX_SHEET_COLS - 1);
     sheet["!ref"] = XLSX.utils.encode_range(range);
   }
@@ -205,20 +244,19 @@ export function parseWorkbookWithXlsx(
     raw: false,
   }) as unknown[][];
   const matrix = Array.isArray(aoa) ? aoa : [];
-  if (matrix.length > MAX_SHEET_ROWS + 1) truncatedRows = true;
+  if (matrix.length > MAX_SHEET_ROWS) truncatedRows = true;
 
-  const { headers, rows } = normalizeMatrix(matrix, {
+  const normalized = normalizeMatrix(matrix, {
     truncatedRows,
     truncatedCols,
+    firstRowIsHeader: false,
+    forcedColCount,
   });
 
   return {
     sheetName: name,
     sheetNames,
-    headers,
-    rows,
-    truncatedRows,
-    truncatedCols,
+    ...normalized,
   };
 }
 
