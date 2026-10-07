@@ -126,4 +126,17 @@ test("parseWorkbookWithXlsx: caps rows and columns without full materialize", ()
   assert.ok(elapsed < 5_000, `parse took too long (${elapsed}ms)`);
 });
 
+test("parseWorkbookWithXlsx: clips very wide sheets before sheet_to_json", () => {
+  const wideHeader = Array.from({ length: 400 }, (_, i) => `C${i}`);
+  const wideBody = Array.from({ length: 20 }, (_, r) =>
+    wideHeader.map((_, c) => `${r}:${c}`),
+  );
+  const buf = workbookBuffer({ Wide: [wideHeader, ...wideBody] });
+  const table = parseWorkbookWithXlsx(XLSX, buf);
+  assert.equal(table.headers.length, MAX_SHEET_COLS);
+  assert.equal(table.rows[0]?.length, MAX_SHEET_COLS);
+  assert.equal(table.truncatedCols, true);
+  assert.equal(table.truncatedRows, false);
+});
+
 console.log("All rich-file-preview tests passed.");

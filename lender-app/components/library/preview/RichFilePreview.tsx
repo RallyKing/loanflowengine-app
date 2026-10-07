@@ -163,7 +163,7 @@ export function RichFilePreview({
 }: RichFilePreviewProps) {
   const kind: AttachmentKind = guessAttachmentKind(contentType, fileName);
   const sheetNameRef = useRef<string>("");
-  /** Cached vault bytes so sheet-tab switches do not re-fetch / re-parse the whole book. */
+  /** Cached vault bytes so sheet-tab switches skip re-fetch (parse still sheet-scoped). */
   const spreadsheetBufRef = useRef<ArrayBuffer | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);

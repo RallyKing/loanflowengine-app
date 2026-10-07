@@ -22,6 +22,8 @@ export type DocxPreviewResult = {
 /** Preview caps — keep UI responsive for large workbooks. */
 export const MAX_SHEET_ROWS = 500;
 export const MAX_SHEET_COLS = 40;
+/** Match prior text-preview budget so CSV cannot decode an entire 80MB vault object. */
+export const MAX_CSV_PREVIEW_CHARS = 120_000;
 const MAX_DOCX_PARAS = 800;
 
 function cellToDisplayString(value: unknown): string {
@@ -39,7 +41,7 @@ function cellToDisplayString(value: unknown): string {
 
 function normalizeMatrix(
   aoa: unknown[][],
-  opts?: { truncatedRows?: boolean; truncatedCols?: boolean },
+  opts: { truncatedRows: boolean; truncatedCols: boolean },
 ): {
   headers: string[];
   rows: string[][];
@@ -50,10 +52,6 @@ function normalizeMatrix(
     (max, row) => Math.max(max, Array.isArray(row) ? row.length : 0),
     0,
   );
-  const truncatedRows =
-    (opts?.truncatedRows ?? false) || aoa.length > MAX_SHEET_ROWS + 1;
-  const truncatedCols =
-    (opts?.truncatedCols ?? false) || width > MAX_SHEET_COLS;
   const colCount = Math.min(Math.max(width, 0), MAX_SHEET_COLS);
 
   const headerSource = (aoa[0] ?? []) as unknown[];
@@ -70,7 +68,37 @@ function normalizeMatrix(
     );
   });
 
-  return { headers, rows, truncatedRows, truncatedCols };
+  return {
+    headers,
+    rows,
+    truncatedRows: opts.truncatedRows,
+    truncatedCols: opts.truncatedCols,
+  };
+}
+
+async function loadCsvFromText(text: string): Promise<SpreadsheetPreviewTable> {
+  const Papa = (await import("papaparse")).default;
+  const truncatedInput = text.length > MAX_CSV_PREVIEW_CHARS;
+  const capped = truncatedInput ? text.slice(0, MAX_CSV_PREVIEW_CHARS) : text;
+  const parsed = Papa.parse<string[]>(capped, {
+    skipEmptyLines: true,
+  });
+  const all = (parsed.data ?? []).filter((row) => Array.isArray(row));
+  const truncatedRows = truncatedInput || all.length > MAX_SHEET_ROWS + 1;
+  const width = all.reduce((max, row) => Math.max(max, row.length), 0);
+  const truncatedCols = width > MAX_SHEET_COLS;
+  const { headers, rows } = normalizeMatrix(all.slice(0, MAX_SHEET_ROWS + 1), {
+    truncatedRows,
+    truncatedCols,
+  });
+  return {
+    sheetName: "CSV",
+    sheetNames: ["CSV"],
+    headers,
+    rows,
+    truncatedRows,
+    truncatedCols,
+  };
 }
 
 export async function fetchArrayBuffer(url: string): Promise<ArrayBuffer> {
@@ -93,36 +121,33 @@ export async function loadTextPreview(url: string): Promise<string> {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to load text (${res.status})`);
   const t = await res.text();
-  return t.length > 120_000 ? `${t.slice(0, 120_000)}\n\n…` : t;
+  return t.length > MAX_CSV_PREVIEW_CHARS
+    ? `${t.slice(0, MAX_CSV_PREVIEW_CHARS)}\n\n…`
+    : t;
 }
 
 export async function loadCsvPreview(url: string): Promise<SpreadsheetPreviewTable> {
-  const Papa = (await import("papaparse")).default;
-  const text = await loadTextPreview(url);
-  const parsed = Papa.parse<string[]>(text, {
-    skipEmptyLines: true,
-  });
-  const all = (parsed.data ?? []).filter((row) => Array.isArray(row));
-  const { headers, rows, truncatedRows, truncatedCols } = normalizeMatrix(all);
-  return {
-    sheetName: "CSV",
-    sheetNames: ["CSV"],
-    headers,
-    rows,
-    truncatedRows,
-    truncatedCols,
-  };
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to load CSV (${res.status})`);
+  const text = await res.text();
+  return loadCsvFromText(text);
 }
 
 /**
  * Parse workbook bytes (OOXML .xlsx or BIFF .xls) into a capped table.
- * Uses SheetJS `bookSheets` + `sheets` + `sheetRows` so large sheets are not fully materialized.
+ * One SheetJS read with `sheetRows`; clips `!ref` before `sheet_to_json` so wide
+ * sheets do not materialize thousands of columns. `SheetNames` stays complete with
+ * `sheets` filtering, so tab labels remain available.
  */
 export function parseWorkbookWithXlsx(
   XLSX: typeof import("xlsx"),
   buf: ArrayBuffer,
   sheetName?: string,
 ): SpreadsheetPreviewTable {
+  // header + MAX body + 1 sentinel row to detect row truncation
+  const rowBudget = MAX_SHEET_ROWS + 2;
+
+  // Names-only pass is cheap; then parse only the active sheet body.
   const stub = XLSX.read(buf, { type: "array", bookSheets: true });
   const sheetNames = stub.SheetNames ?? [];
   if (sheetNames.length === 0) {
@@ -139,8 +164,6 @@ export function parseWorkbookWithXlsx(
     (sheetName && sheetNames.includes(sheetName) && sheetName) ||
     sheetNames[0]!;
 
-  // header + MAX body + 1 sentinel row to detect truncation without full parse
-  const rowBudget = MAX_SHEET_ROWS + 2;
   const wb = XLSX.read(buf, {
     type: "array",
     cellDates: true,
@@ -152,10 +175,16 @@ export function parseWorkbookWithXlsx(
     throw new Error(`Worksheet "${name}" was not found in this workbook.`);
   }
 
-  let truncatedColsFromRef = false;
+  let truncatedRows = false;
+  let truncatedCols = false;
   if (sheet["!ref"]) {
     const range = XLSX.utils.decode_range(sheet["!ref"]);
-    truncatedColsFromRef = range.e.c + 1 > MAX_SHEET_COLS;
+    // sheetRows already clipped e.r; compare against budget to detect more rows existed.
+    truncatedRows = range.e.r + 1 >= rowBudget;
+    truncatedCols = range.e.c + 1 > MAX_SHEET_COLS;
+    range.e.r = Math.min(range.e.r, MAX_SHEET_ROWS);
+    range.e.c = Math.min(range.e.c, MAX_SHEET_COLS - 1);
+    sheet["!ref"] = XLSX.utils.encode_range(range);
   }
 
   const aoa = XLSX.utils.sheet_to_json(sheet, {
@@ -164,22 +193,20 @@ export function parseWorkbookWithXlsx(
     raw: false,
   }) as unknown[][];
   const matrix = Array.isArray(aoa) ? aoa : [];
-  const truncatedRows = matrix.length > MAX_SHEET_ROWS + 1;
-  const { headers, rows, truncatedRows: tr, truncatedCols: tc } = normalizeMatrix(
-    matrix.slice(0, MAX_SHEET_ROWS + 1),
-    {
-      truncatedRows,
-      truncatedCols: truncatedColsFromRef,
-    },
-  );
+  if (matrix.length > MAX_SHEET_ROWS + 1) truncatedRows = true;
+
+  const { headers, rows } = normalizeMatrix(matrix, {
+    truncatedRows,
+    truncatedCols,
+  });
 
   return {
     sheetName: name,
     sheetNames,
     headers,
     rows,
-    truncatedRows: tr,
-    truncatedCols: tc || truncatedColsFromRef,
+    truncatedRows,
+    truncatedCols,
   };
 }
 
@@ -211,18 +238,8 @@ export async function loadSpreadsheetPreview(
   fileName: string,
   sheetName?: string,
 ): Promise<SpreadsheetPreviewTable> {
-  const n = fileName.toLowerCase();
-  if (n.endsWith(".csv")) {
-    return loadCsvPreview(url);
-  }
-  if (n.endsWith(".xlsx") || n.endsWith(".xls")) {
-    return loadXlsxPreview(url, sheetName);
-  }
-  try {
-    return await loadXlsxPreview(url, sheetName);
-  } catch {
-    return loadCsvPreview(url);
-  }
+  const buf = await fetchArrayBuffer(url);
+  return loadSpreadsheetPreviewFromBuffer(buf, fileName, sheetName);
 }
 
 export async function loadSpreadsheetPreviewFromBuffer(
@@ -232,21 +249,22 @@ export async function loadSpreadsheetPreviewFromBuffer(
 ): Promise<SpreadsheetPreviewTable> {
   const n = fileName.toLowerCase();
   if (n.endsWith(".csv")) {
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-    const Papa = (await import("papaparse")).default;
-    const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
-    const all = (parsed.data ?? []).filter((row) => Array.isArray(row));
-    const { headers, rows, truncatedRows, truncatedCols } = normalizeMatrix(all);
-    return {
-      sheetName: "CSV",
-      sheetNames: ["CSV"],
-      headers,
-      rows,
-      truncatedRows,
-      truncatedCols,
-    };
+    const bytes = new Uint8Array(buf);
+    const slice = bytes.subarray(0, MAX_CSV_PREVIEW_CHARS);
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(slice);
+    return loadCsvFromText(text);
   }
-  return loadXlsxPreviewFromBuffer(buf, sheetName);
+  if (n.endsWith(".xlsx") || n.endsWith(".xls")) {
+    return loadXlsxPreviewFromBuffer(buf, sheetName);
+  }
+  try {
+    return await loadXlsxPreviewFromBuffer(buf, sheetName);
+  } catch {
+    const bytes = new Uint8Array(buf);
+    const slice = bytes.subarray(0, MAX_CSV_PREVIEW_CHARS);
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(slice);
+    return loadCsvFromText(text);
+  }
 }
 
 function stripXmlTags(xml: string): string {
