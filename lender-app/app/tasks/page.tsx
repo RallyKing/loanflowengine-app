@@ -2233,6 +2233,7 @@ function TasksPageInner() {
           <TaskNotificationsBell
             userKey={actorUserKey}
             onOpenTask={(id) => setOpenTaskId(id)}
+            className="shrink-0"
           />
         ) : null}
       </div>
