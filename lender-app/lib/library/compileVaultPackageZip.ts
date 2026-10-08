@@ -1,4 +1,3 @@
-import JSZip from "jszip";
 import type { VaultDownloadItem } from "@/lib/library/downloadVaultDocumentsZip";
 
 function dedupeZipPath(path: string, used: Set<string>): string {
@@ -29,6 +28,7 @@ export async function compileVaultPackageZip(
   items: VaultDownloadItem[],
 ): Promise<Blob> {
   if (items.length === 0) throw new Error("No files to compile.");
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const usedPaths = new Set<string>();
 

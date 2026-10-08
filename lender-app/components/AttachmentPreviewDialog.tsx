@@ -3,7 +3,7 @@
 import { ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { OverlayShell } from "@/components/ui/OverlayShell";
-import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
+import { RichFilePreviewLazy as RichFilePreview } from "@/components/library/preview/RichFilePreviewLazy";
 
 export type AttachmentPreviewRow = {
   fileName: string;

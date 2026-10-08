@@ -19,7 +19,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { LenderDeliveryBlockPanel } from "@/components/library/LenderDeliveryBlockPanel";
-import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
+import { RichFilePreviewLazy as RichFilePreview } from "@/components/library/preview/RichFilePreviewLazy";
 import { cn } from "@/lib/cn";
 import type { FolderTreeNode } from "@/lib/library/documentVaultFolders";
 import { downloadVaultDocumentsZip } from "@/lib/library/downloadVaultDocumentsZip";

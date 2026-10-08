@@ -13,7 +13,7 @@ import type { LibraryDocumentsProof } from "@/components/LibraryDocumentsPanel";
 import {
   type AnnotationToolMode,
 } from "@/components/library/DocumentAnnotationLayer";
-import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
+import { RichFilePreviewLazy as RichFilePreview } from "@/components/library/preview/RichFilePreviewLazy";
 import {
   DocumentManipulationToolbar,
   type MergeCandidate,
