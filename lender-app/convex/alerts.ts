@@ -450,13 +450,31 @@ export const getPreferences = query({
   },
 });
 
-export const setPreferences = mutation({
+const alertCategoryArg = v.union(
+  v.literal("file_snooze_due"),
+  v.literal("task_due"),
+);
+const alertChannelArg = v.union(v.literal("inApp"), v.literal("push"));
+
+function prefsDocFromResolved(resolved: AlertPreferencesResolved) {
+  return {
+    fileSnoozeDueInApp: resolved.file_snooze_due.inApp,
+    fileSnoozeDuePush: resolved.file_snooze_due.push,
+    taskDueInApp: resolved.task_due.inApp,
+    taskDuePush: resolved.task_due.push,
+  };
+}
+
+/**
+ * Upsert one category/channel preference. Storage stays flat on the document;
+ * the public API matches the nested AlertCategory domain model.
+ */
+export const upsertPreferences = mutation({
   args: {
     userKey: v.string(),
-    fileSnoozeDueInApp: v.optional(v.boolean()),
-    fileSnoozeDuePush: v.optional(v.boolean()),
-    taskDueInApp: v.optional(v.boolean()),
-    taskDuePush: v.optional(v.boolean()),
+    category: alertCategoryArg,
+    channel: alertChannelArg,
+    enabled: v.boolean(),
     ...memberUserKeyArg,
   },
   handler: async (ctx, args) => {
@@ -469,33 +487,29 @@ export const setPreferences = mutation({
       .query("alertPreferences")
       .withIndex("by_userKey", (q) => q.eq("userKey", k))
       .first();
-    const now = Date.now();
-    const next = {
-      fileSnoozeDueInApp:
-        args.fileSnoozeDueInApp ??
-        existing?.fileSnoozeDueInApp ??
-        DEFAULT_ALERT_PREFERENCES.file_snooze_due.inApp,
-      fileSnoozeDuePush:
-        args.fileSnoozeDuePush ??
-        existing?.fileSnoozeDuePush ??
-        DEFAULT_ALERT_PREFERENCES.file_snooze_due.push,
-      taskDueInApp:
-        args.taskDueInApp ??
-        existing?.taskDueInApp ??
-        DEFAULT_ALERT_PREFERENCES.task_due.inApp,
-      taskDuePush:
-        args.taskDuePush ??
-        existing?.taskDuePush ??
-        DEFAULT_ALERT_PREFERENCES.task_due.push,
-      updatedAt: now,
+    const current = prefsFromDoc(existing);
+    if (current[args.category][args.channel] === args.enabled) {
+      return { ok: true as const, id: existing?._id ?? null };
+    }
+    const nextResolved: AlertPreferencesResolved = {
+      ...current,
+      [args.category]: {
+        ...current[args.category],
+        [args.channel]: args.enabled,
+      },
     };
+    const next = prefsDocFromResolved(nextResolved);
     if (existing) {
-      await ctx.db.patch(existing._id, next);
+      await ctx.db.patch(existing._id, {
+        ...next,
+        updatedAt: Date.now(),
+      });
       return { ok: true as const, id: existing._id };
     }
     const id = await ctx.db.insert("alertPreferences", {
       userKey: k,
       ...next,
+      updatedAt: Date.now(),
     });
     return { ok: true as const, id };
   },

@@ -59,6 +59,7 @@ import {
   SettingsJumpNav,
   SettingsSectionCard,
 } from "@/components/settings/SettingsHubChrome";
+import { SettingsRemindersSection } from "@/components/settings/SettingsRemindersSection";
 import { SettingsDisplaySection } from "@/components/settings/SettingsDisplaySection";
 import { SettingsWorkflowSection } from "@/components/settings/SettingsWorkflowSection";
 import { ActionSuiteModal } from "@/components/ui/ActionSuite";
@@ -641,6 +642,8 @@ export function SettingsPageClient() {
               </div>
             )}
           </SettingsSectionCard>
+
+          <SettingsRemindersSection />
 
           <SettingsSectionCard
             id="webhooks"
