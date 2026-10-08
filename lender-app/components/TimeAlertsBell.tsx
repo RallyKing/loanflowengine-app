@@ -92,10 +92,12 @@ function TimeAlertsBellInner({
   const { isLoaded: authLoaded, isSignedIn, userId } = useAuth();
   const jwtReady = useConvexJwtReady();
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
-  /** Prefer session userKey; avoid browser accountId while signed in (auth mismatch). */
-  const k =
-    sessionKey ||
-    (isSignedIn ? "" : (userKey?.trim() ?? ""));
+  /**
+   * Same key resolution as UserNotificationsBell / ProductUpdatesBell so the
+   * chrome control stays mounted whenever Updates/Alerts are. Prefer session
+   * userId; fall back to the AppChrome `userKey` prop.
+   */
+  const k = sessionKey || (userKey?.trim() ?? "");
   const { activeOrganizationId } = useOrgPermissions();
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0, width: 384 });
@@ -105,15 +107,20 @@ function TimeAlertsBellInner({
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  /** Skip until Convex JWT is attached — same Unauthorized race as Settings reminders. */
-  const ready = authLoaded && isSignedIn && k.length > 0 && jwtReady;
+  /** Mount the Reminders control for signed-in chrome — never gate UI on JWT. */
+  const chromeVisible = authLoaded && isSignedIn && k.length > 0;
+  /**
+   * Skip Convex reads until JWT is attached (Unauthorized race). Soft-handled
+   * via useQueries; must not hide the bell (PR #63 regression).
+   */
+  const queryReady = chromeVisible && jwtReady;
 
   /**
    * Badge always subscribes to unread count. List only while the panel is open
    * (shell cost — no always-on listForUser). Args stay clock-free.
    */
   const alertQueries = useMemo((): RequestForQueries => {
-    if (!ready) return {};
+    if (!queryReady) return {};
     const base = {
       userKey: k,
       memberUserKey: k,
@@ -136,11 +143,11 @@ function TimeAlertsBellInner({
       };
     }
     return req;
-  }, [ready, k, activeOrganizationId, showHidden, open]);
+  }, [queryReady, k, activeOrganizationId, showHidden, open]);
 
   const alertResults = useQueries(alertQueries);
-  const unreadRaw = ready ? alertResults.unread : undefined;
-  const itemsRaw = ready ? alertResults.items : undefined;
+  const unreadRaw = queryReady ? alertResults.unread : undefined;
+  const itemsRaw = queryReady ? alertResults.items : undefined;
 
   const queryError =
     unreadRaw instanceof Error
@@ -200,7 +207,7 @@ function TimeAlertsBellInner({
     setSelected(new Set());
   }, [visibleIdsKey, filter, showHidden]);
 
-  if (!ready) return null;
+  if (!chromeVisible) return null;
 
   const badgeCount = unreadPayload?.count ?? 0;
   const badgeCapped = unreadPayload?.capped === true || badgeCount > 99;
@@ -268,10 +275,11 @@ function TimeAlertsBellInner({
   };
 
   const loading =
-    ready &&
     open &&
     !queryError &&
-    (allItems === undefined || unreadPayload === undefined);
+    (!queryReady ||
+      allItems === undefined ||
+      unreadPayload === undefined);
   // Panel children are evaluated even when PortalOverlayPanel returns null
   // (open=false). List query is skipped while closed, so visibleItems is
   // undefined — never call .map without a defined array.
