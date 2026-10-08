@@ -34,6 +34,11 @@ import {
   planPfsAssociations,
 } from "../lib/pfs/pfsFormAssociation";
 import {
+  clearVaultFileTaskDueAlert,
+  syncVaultFileTaskDueAlert,
+} from "./alertSchedule";
+import { requireAuthenticatedCaller } from "./callerAuth";
+import {
   findSimplePlInstance,
   normalizeSimplePlInstances,
   simplePlDealPatchFromInstances,
@@ -379,6 +384,15 @@ export const createWithConfig = mutation({
       updatedAt: now,
     });
 
+    if (pipeline.organizationId && args.memberUserKey?.trim()) {
+      const actor = await requireAuthenticatedCaller(ctx, args.memberUserKey);
+      await syncVaultFileTaskDueAlert(ctx, {
+        fileTaskId: id,
+        userKey: actor,
+        orgId: pipeline.organizationId,
+      });
+    }
+
     return { ok: true as const, fileTaskId: id };
   },
 });
@@ -502,6 +516,15 @@ export const updateTaskConfig = mutation({
       await syncTaskPortalVisibilityToChildren(ctx, task, portalVisible);
     }
 
+    if (pipeline.organizationId && args.memberUserKey?.trim()) {
+      const actor = await requireAuthenticatedCaller(ctx, args.memberUserKey);
+      await syncVaultFileTaskDueAlert(ctx, {
+        fileTaskId: args.fileTaskId,
+        userKey: actor,
+        orgId: pipeline.organizationId,
+      });
+    }
+
     return { ok: true as const, fileTaskId: args.fileTaskId };
   },
 });
@@ -534,6 +557,16 @@ export const toggleStatus = mutation({
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
     const oldStatus = task.status;
     await ctx.db.patch(fileTaskId, { status, updatedAt: Date.now() });
+    if (pipeline.organizationId && memberUserKey?.trim()) {
+      const actor = await requireAuthenticatedCaller(ctx, memberUserKey);
+      await syncVaultFileTaskDueAlert(ctx, {
+        fileTaskId,
+        userKey: actor,
+        orgId: pipeline.organizationId,
+      });
+    } else if (status === "complete") {
+      await clearVaultFileTaskDueAlert(ctx, fileTaskId);
+    }
     if (oldStatus !== status) {
       await scheduleWebhookQueueEvent(ctx, {
         organizationId: pipeline.organizationId,
@@ -719,6 +752,7 @@ export const deleteFileTask = mutation({
     const task = await loadTaskOrThrow(ctx, fileTaskId);
     const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
+    await clearVaultFileTaskDueAlert(ctx, fileTaskId);
 
     const mode = strategy ?? "unassign_contents";
     const now = Date.now();
@@ -834,6 +868,7 @@ export const acceptFileTaskReview = mutation({
       rejectionNote: undefined,
       updatedAt: Date.now(),
     });
+    await clearVaultFileTaskDueAlert(ctx, fileTaskId);
     await recordBrokerVaultReview(ctx, {
       pipeline,
       task,
@@ -1153,6 +1188,7 @@ export const archiveFileTask = mutation({
     const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
     await ctx.db.patch(fileTaskId, { isArchived: true, updatedAt: Date.now() });
+    await clearVaultFileTaskDueAlert(ctx, fileTaskId);
     return { ok: true as const };
   },
 });
@@ -1167,6 +1203,14 @@ export const restoreFileTask = mutation({
     const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
     await ctx.db.patch(fileTaskId, { isArchived: false, updatedAt: Date.now() });
+    if (pipeline.organizationId && memberUserKey?.trim()) {
+      const actor = await requireAuthenticatedCaller(ctx, memberUserKey);
+      await syncVaultFileTaskDueAlert(ctx, {
+        fileTaskId,
+        userKey: actor,
+        orgId: pipeline.organizationId,
+      });
+    }
     return { ok: true as const };
   },
 });

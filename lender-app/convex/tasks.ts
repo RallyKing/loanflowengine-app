@@ -6,6 +6,10 @@ import { notifyTaskAssigneeChange } from "./taskNotifications";
 import { newMentionHandlesOnly } from "../lib/mentions";
 import { dispatchUserNotification } from "./notifications";
 import {
+  clearHubTaskDueAlert,
+  syncHubTaskDueAlert,
+} from "./alertSchedule";
+import {
   pipelineDealName,
   scheduleWebhookQueueEvent,
   webhookVaultContext,
@@ -652,6 +656,11 @@ export const create = mutation({
     await syncIndexedGraphTaskEdge(ctx, id, {
       actor: actorUserKey ?? actor,
     });
+    await syncHubTaskDueAlert(ctx, {
+      taskId: id,
+      userKey: actor,
+      orgId: organizationId,
+    });
     return { id };
   },
 });
@@ -866,6 +875,11 @@ export const update = mutation({
       actor: actorUserKey ?? actor,
     });
     await refreshTaskGlobalSearchText(ctx, id);
+    await syncHubTaskDueAlert(ctx, {
+      taskId: id,
+      userKey: actor,
+      orgId: organizationId,
+    });
     return { id };
   },
 });
@@ -1209,6 +1223,11 @@ export const patch = mutation({
     await ctx.db.patch(id, patchObj);
     const updated = await ctx.db.get(id);
     if (updated) {
+      await syncHubTaskDueAlert(ctx, {
+        taskId: id,
+        userKey: actor,
+        orgId: organizationId,
+      });
       await syncIndexedGraphTaskEdge(ctx, id, {
         previousFileId: existing.relatedFileId,
         actor: actorUserKey ?? actor,
@@ -2016,6 +2035,7 @@ export const remove = mutation({
     await removeAllLibraryLinksForTasks(ctx, subtreeIds);
 
     for (const taskId of subtreeIds) {
+      await clearHubTaskDueAlert(ctx, taskId);
       await removeAllFileTaskEdgesForTask(ctx, taskId);
     }
 
@@ -2100,6 +2120,7 @@ export const complete = mutation({
       completedAt: now,
       updatedAt: now,
     });
+    await clearHubTaskDueAlert(ctx, id);
     await refreshTaskGlobalSearchText(ctx, id);
 
     await appendTaskFeed(
@@ -2154,6 +2175,11 @@ export const complete = mutation({
       await syncIndexedGraphTaskEdge(ctx, nextId, {
         previousFileId: t.relatedFileId,
         actor: actorUserKey ?? actor,
+      });
+      await syncHubTaskDueAlert(ctx, {
+        taskId: nextId,
+        userKey: actor,
+        orgId: organizationId,
       });
     }
     return { id, nextId };

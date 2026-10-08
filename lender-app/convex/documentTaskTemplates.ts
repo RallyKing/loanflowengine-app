@@ -24,6 +24,8 @@ import {
   validateClientTemplateAttachments,
   type ClientTemplateAttachment,
 } from "./clientTemplateAttachments";
+import { syncVaultFileTaskDueAlert } from "./alertSchedule";
+import { requireAuthenticatedCaller } from "./callerAuth";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -328,6 +330,10 @@ export const injectTemplates = mutation({
     }
 
     const key = memberUserKey?.trim() || "__system__";
+    const alertActor =
+      pipeline.organizationId && memberUserKey?.trim()
+        ? await requireAuthenticatedCaller(ctx, memberUserKey)
+        : null;
     const now = Date.now();
     let sortOrder = await nextFileTaskSortOrder(ctx, pipelineFileId);
     const createdIds: Id<"documentVaultFileTasks">[] = [];
@@ -369,6 +375,13 @@ export const injectTemplates = mutation({
         updatedAt: now,
       });
       createdIds.push(id);
+      if (alertActor && pipeline.organizationId) {
+        await syncVaultFileTaskDueAlert(ctx, {
+          fileTaskId: id,
+          userKey: alertActor,
+          orgId: pipeline.organizationId,
+        });
+      }
 
       const folderRows = normalizeFolderTemplateRows(template.folderTemplate);
       if (

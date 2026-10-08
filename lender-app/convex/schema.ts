@@ -1928,6 +1928,14 @@ export default defineSchema({
     snoozedUntil: v.optional(v.union(v.string(), v.number())),
 
     /**
+     * Time Alerts — one-shot scheduler for `file_snooze_due` (see `convex/alerts.ts`).
+     * Cancel + reschedule when snooze changes; never a polling pump.
+     */
+    snoozeAlertJobId: v.optional(v.id("_scheduled_functions")),
+    snoozeAlertUserKey: v.optional(v.string()),
+    snoozeAlertFireAt: v.optional(v.number()),
+
+    /**
      * Auto-archive on inactivity (separate from snooze). When set, if
      * `pipeline.updatedAt` (fallback `createdAt`) is older than this many
      * whole days, a scheduled sweep archives the file via the same soft-archive
@@ -2337,6 +2345,13 @@ export default defineSchema({
     relatedFileId: v.optional(v.id("pipeline")),
     /** Linked CRM contact (standalone contacts table). */
     relatedContactId: v.optional(v.id("contacts")),
+
+    /**
+     * Time Alerts — one-shot scheduler for hub `task_due` (see `convex/alerts.ts`).
+     */
+    dueAlertJobId: v.optional(v.id("_scheduled_functions")),
+    dueAlertUserKey: v.optional(v.string()),
+    dueAlertFireAt: v.optional(v.number()),
 
     /**
      * Multi-user scaffolding — see `pipeline.assigneeId` for the same
@@ -3117,6 +3132,12 @@ export default defineSchema({
     isArchived: v.optional(v.boolean()),
     /** Unix ms due date for broker/client visibility. */
     dueDate: v.optional(v.number()),
+    /**
+     * Time Alerts — one-shot scheduler for vault file-task `task_due`.
+     */
+    dueAlertJobId: v.optional(v.id("_scheduled_functions")),
+    dueAlertUserKey: v.optional(v.string()),
+    dueAlertFireAt: v.optional(v.number()),
     /** Task urgency — shown as row badge. */
     priority: v.optional(
       v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
@@ -5535,6 +5556,58 @@ export default defineSchema({
   productReleaseReadReceipts: defineTable({
     userKey: v.string(),
     lastReadPublishedAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userKey", ["userKey"]),
+
+  /**
+   * Time Alerts inbox — separate from `userNotifications` / activity feed.
+   * Fired by one-shot `scheduler.runAt` (see `convex/alerts.ts`).
+   */
+  alerts: defineTable({
+    /** Account id — same convention as `userNotifications.userKey`. */
+    userKey: v.string(),
+    orgId: v.id("organizations"),
+    category: v.union(
+      v.literal("file_snooze_due"),
+      v.literal("task_due"),
+    ),
+    title: v.string(),
+    body: v.optional(v.string()),
+    entityType: v.union(
+      v.literal("pipeline"),
+      v.literal("task"),
+      v.literal("documentVaultFileTask"),
+    ),
+    entityId: v.string(),
+    deepLinkPath: v.string(),
+    fireAt: v.number(),
+    createdAt: v.number(),
+    /** Absent / undefined ⇒ unread (indexed with `by_user_unread`). */
+    readAt: v.optional(v.number()),
+    dismissedAt: v.optional(v.number()),
+    /**
+     * Optional per-alert mute until instant (UI snooze of the alert itself).
+     * Hidden from default list while `> now` (client filters with triage clock).
+     */
+    hiddenUntil: v.optional(v.number()),
+    /** Unique per user + category + entity + fireAt. */
+    dedupeKey: v.string(),
+  })
+    .index("by_user_unread", ["userKey", "readAt", "fireAt"])
+    .index("by_user_created", ["userKey", "createdAt"])
+    .index("by_dedupeKey", ["userKey", "dedupeKey"])
+    .index("by_user_org_created", ["userKey", "orgId", "createdAt"]),
+
+  /**
+   * Per-user Time Alerts channel prefs. Defaults (when row missing):
+   * inApp on, push off for every category.
+   */
+  alertPreferences: defineTable({
+    userKey: v.string(),
+    fileSnoozeDueInApp: v.boolean(),
+    fileSnoozeDuePush: v.boolean(),
+    taskDueInApp: v.boolean(),
+    taskDuePush: v.boolean(),
     updatedAt: v.number(),
   }).index("by_userKey", ["userKey"]),
 });
