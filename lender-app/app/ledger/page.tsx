@@ -890,10 +890,10 @@ export default function LedgerPage() {
             </thead>
             <tbody>
               {loading &&
-                Array.from({ length: 6 }, (_, i) => (
-                  <tr key={i} aria-hidden>
+                Array.from({ length: 8 }, (_, i) => (
+                  <tr key={`ledger-skel-${i}`} aria-hidden>
                     <td colSpan={11} className="px-3 py-1.5">
-                      <OperationalSkeletonRow />
+                      <OperationalSkeletonRow data-testid={i === 0 ? "ledger-table-loading" : undefined} />
                     </td>
                   </tr>
                 ))}
