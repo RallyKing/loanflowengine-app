@@ -111,8 +111,11 @@ export function SettingsRemindersSection() {
           memberUserKey: userKey,
           delayMs: 5000,
         });
+        const secs = Math.max(1, Math.round(result.delayMs / 1000));
         setTestMessage(
-          `Test reminder scheduled — check the Reminders bell in about ${Math.round(result.delayMs / 1000)}s.`,
+          result.alreadyPending
+            ? `A test reminder is already scheduled — check the Reminders bell in about ${secs}s.`
+            : `Test reminder scheduled — check the Reminders bell in about ${secs}s.`,
         );
       } catch (e) {
         setTestMessage(

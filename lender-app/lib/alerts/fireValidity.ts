@@ -22,9 +22,7 @@ export function isFileSnoozeAlertStillValid(args: {
 }): boolean {
   const stored = parseSnoozedUntilMs(args.snoozedUntil);
   if (stored == null) return false;
-  // ISO ↔ ms round-trips are exact; allow a few seconds for scheduler lag /
-  // legacy number↔string rewrites without treating a rescheduled snooze as valid.
-  const skew = args.skewMs ?? 5_000;
+  const skew = args.skewMs ?? 1000;
   return Math.abs(stored - args.expectedFireAt) <= skew;
 }
 

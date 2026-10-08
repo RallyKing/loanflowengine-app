@@ -92,7 +92,10 @@ function TimeAlertsBellInner({
   const { isLoaded: authLoaded, isSignedIn, userId } = useAuth();
   const jwtReady = useConvexJwtReady();
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
-  const k = sessionKey || (userKey?.trim() ?? "");
+  /** Prefer session userKey; avoid browser accountId while signed in (auth mismatch). */
+  const k =
+    sessionKey ||
+    (isSignedIn ? "" : (userKey?.trim() ?? ""));
   const { activeOrganizationId } = useOrgPermissions();
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0, width: 384 });
