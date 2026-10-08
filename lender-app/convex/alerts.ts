@@ -34,10 +34,9 @@ import {
   resolveHubTaskScheduleAlertFireAt,
 } from "../lib/alerts/fireValidity";
 import {
-  scheduleHubTaskDueAlert,
-  scheduleHubTaskScheduleAlert,
   schedulePipelineSnoozeAlert,
   scheduleVaultFileTaskDueAlert,
+  syncHubTaskAlerts,
 } from "./alertSchedule";
 
 const UNREAD_BADGE_CAP = 100;
@@ -233,6 +232,62 @@ export const fireFileSnoozeDue = internalMutation({
   },
 });
 
+async function fireHubTaskAlert(
+  ctx: MutationCtx,
+  args: {
+    path: "due" | "scheduled";
+    taskId: Id<"tasks">;
+    userKey: string;
+    orgId: Id<"organizations">;
+    fireAt: number;
+    dedupeKey: string;
+    title: string;
+    deepLinkPath: string;
+    body?: string;
+  },
+): Promise<{
+  inserted: boolean;
+  reason: "missing" | "stale" | "user_mismatch" | "ok" | "skipped";
+}> {
+  const row = await ctx.db.get(args.taskId);
+  if (!row) return { inserted: false, reason: "missing" };
+  const stillValid =
+    args.path === "due"
+      ? isHubTaskDueAlertStillValid({
+          dueDate: row.dueDate,
+          reminderAt: row.reminderAt,
+          expectedFireAt: args.fireAt,
+          status: row.status,
+        })
+      : isHubTaskScheduleAlertStillValid({
+          scheduledTriggerTime: row.scheduledTriggerTime,
+          expectedFireAt: args.fireAt,
+          status: row.status,
+        });
+  if (!stillValid) return { inserted: false, reason: "stale" };
+  const storedUserKey =
+    args.path === "due" ? row.dueAlertUserKey : row.scheduleAlertUserKey;
+  if (storedUserKey && storedUserKey.trim() !== args.userKey.trim()) {
+    return { inserted: false, reason: "user_mismatch" };
+  }
+  const id = await insertAlertIdempotent(ctx, {
+    userKey: args.userKey,
+    orgId: args.orgId,
+    category: args.path === "due" ? "task_due" : "task_scheduled",
+    title: args.title,
+    body: args.body,
+    entityType: "task",
+    entityId: String(args.taskId),
+    deepLinkPath: args.deepLinkPath,
+    fireAt: args.fireAt,
+    dedupeKey: args.dedupeKey,
+  });
+  return {
+    inserted: id != null,
+    reason: id != null ? "ok" : "skipped",
+  };
+}
+
 export const fireTaskDue = internalMutation({
   args: {
     kind: v.union(v.literal("hub_task"), v.literal("vault_file_task")),
@@ -251,40 +306,17 @@ export const fireTaskDue = internalMutation({
       if (!args.taskId) {
         return { inserted: false as const, reason: "missing" as const };
       }
-      const row = await ctx.db.get(args.taskId);
-      if (!row) return { inserted: false as const, reason: "missing" as const };
-      if (
-        !isHubTaskDueAlertStillValid({
-          dueDate: row.dueDate,
-          reminderAt: row.reminderAt,
-          expectedFireAt: args.fireAt,
-          status: row.status,
-        })
-      ) {
-        return { inserted: false as const, reason: "stale" as const };
-      }
-      if (
-        row.dueAlertUserKey &&
-        row.dueAlertUserKey.trim() !== args.userKey.trim()
-      ) {
-        return { inserted: false as const, reason: "user_mismatch" as const };
-      }
-      const id = await insertAlertIdempotent(ctx, {
+      return await fireHubTaskAlert(ctx, {
+        path: "due",
+        taskId: args.taskId,
         userKey: args.userKey,
         orgId: args.orgId,
-        category: "task_due",
-        title: args.title,
-        body: args.body,
-        entityType: "task",
-        entityId: String(args.taskId),
-        deepLinkPath: args.deepLinkPath,
         fireAt: args.fireAt,
         dedupeKey: args.dedupeKey,
+        title: args.title,
+        deepLinkPath: args.deepLinkPath,
+        body: args.body,
       });
-      return {
-        inserted: id != null,
-        reason: id != null ? ("ok" as const) : ("skipped" as const),
-      };
     }
 
     if (!args.fileTaskId) {
@@ -339,39 +371,17 @@ export const fireTaskScheduled = internalMutation({
     body: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.taskId);
-    if (!row) return { inserted: false as const, reason: "missing" as const };
-    if (
-      !isHubTaskScheduleAlertStillValid({
-        scheduledTriggerTime: row.scheduledTriggerTime,
-        expectedFireAt: args.fireAt,
-        status: row.status,
-      })
-    ) {
-      return { inserted: false as const, reason: "stale" as const };
-    }
-    if (
-      row.scheduleAlertUserKey &&
-      row.scheduleAlertUserKey.trim() !== args.userKey.trim()
-    ) {
-      return { inserted: false as const, reason: "user_mismatch" as const };
-    }
-    const id = await insertAlertIdempotent(ctx, {
+    return await fireHubTaskAlert(ctx, {
+      path: "scheduled",
+      taskId: args.taskId,
       userKey: args.userKey,
       orgId: args.orgId,
-      category: "task_scheduled",
-      title: args.title,
-      body: args.body,
-      entityType: "task",
-      entityId: String(args.taskId),
-      deepLinkPath: args.deepLinkPath,
       fireAt: args.fireAt,
       dedupeKey: args.dedupeKey,
+      title: args.title,
+      deepLinkPath: args.deepLinkPath,
+      body: args.body,
     });
-    return {
-      inserted: id != null,
-      reason: id != null ? ("ok" as const) : ("skipped" as const),
-    };
   },
 });
 
@@ -790,8 +800,8 @@ export const backfillAlertSchedulesPage = internalMutation({
     }
 
     if (args.phase === "hub_tasks") {
-      // Paginate all tasks (not by_dueDate): classic due/reminder and triage
-      // scheduledTriggerTime use separate one-shot jobs.
+      // Paginate all tasks (not by_dueDate): sync clears/reschedules both
+      // classic due/reminder and triage scheduledTriggerTime one-shots.
       const { page, isDone, continueCursor } = await ctx.db
         .query("tasks")
         .order("asc")
@@ -813,7 +823,12 @@ export const backfillAlertSchedulesPage = internalMutation({
         const scheduleFireAt = resolveHubTaskScheduleAlertFireAt({
           scheduledTriggerTime: row.scheduledTriggerTime,
         });
-        if (dueFireAt == null && scheduleFireAt == null) {
+        const needsWork =
+          dueFireAt != null ||
+          scheduleFireAt != null ||
+          row.dueAlertJobId != null ||
+          row.scheduleAlertJobId != null;
+        if (!needsWork) {
           skipped += 1;
           continue;
         }
@@ -828,53 +843,12 @@ export const backfillAlertSchedulesPage = internalMutation({
           skipped += 1;
           continue;
         }
-        let didSchedule = false;
-        // Re-sync due path when missing, or when a PR#65 job was keyed off
-        // scheduledTriggerTime alone (dueFireAt null but dueAlertJobId set).
-        if (
-          dueFireAt != null &&
-          (row.dueAlertJobId == null ||
-            row.dueAlertFireAt !== dueFireAt ||
-            row.dueAlertUserKey !== userKey)
-        ) {
-          await scheduleHubTaskDueAlert(ctx, {
-            taskId: row._id,
-            userKey,
-            orgId: row.organizationId,
-            dueDate: row.dueDate,
-            reminderAt: row.reminderAt,
-            title: row.title,
-          });
-          didSchedule = true;
-        } else if (dueFireAt == null && row.dueAlertJobId != null) {
-          // Clear stale due job that only covered triage schedule.
-          await scheduleHubTaskDueAlert(ctx, {
-            taskId: row._id,
-            userKey,
-            orgId: row.organizationId,
-            dueDate: row.dueDate,
-            reminderAt: row.reminderAt,
-            title: row.title,
-          });
-          didSchedule = true;
-        }
-        if (
-          scheduleFireAt != null &&
-          (row.scheduleAlertJobId == null ||
-            row.scheduleAlertFireAt !== scheduleFireAt ||
-            row.scheduleAlertUserKey !== userKey)
-        ) {
-          await scheduleHubTaskScheduleAlert(ctx, {
-            taskId: row._id,
-            userKey,
-            orgId: row.organizationId,
-            scheduledTriggerTime: row.scheduledTriggerTime,
-            title: row.title,
-          });
-          didSchedule = true;
-        }
-        if (didSchedule) scheduled += 1;
-        else skipped += 1;
+        await syncHubTaskAlerts(ctx, {
+          taskId: row._id,
+          userKey,
+          orgId: row.organizationId,
+        });
+        scheduled += 1;
       }
       return {
         phase: args.phase as BackfillPhase,

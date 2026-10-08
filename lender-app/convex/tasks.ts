@@ -7,7 +7,7 @@ import { newMentionHandlesOnly } from "../lib/mentions";
 import { dispatchUserNotification } from "./notifications";
 import {
   clearHubTaskAlerts,
-  syncHubTaskDueAlert,
+  syncHubTaskAlerts,
 } from "./alertSchedule";
 import {
   pipelineDealName,
@@ -656,7 +656,7 @@ export const create = mutation({
     await syncIndexedGraphTaskEdge(ctx, id, {
       actor: actorUserKey ?? actor,
     });
-    await syncHubTaskDueAlert(ctx, {
+    await syncHubTaskAlerts(ctx, {
       taskId: id,
       userKey: actor,
       orgId: organizationId,
@@ -875,7 +875,7 @@ export const update = mutation({
       actor: actorUserKey ?? actor,
     });
     await refreshTaskGlobalSearchText(ctx, id);
-    await syncHubTaskDueAlert(ctx, {
+    await syncHubTaskAlerts(ctx, {
       taskId: id,
       userKey: actor,
       orgId: organizationId,
@@ -1223,7 +1223,7 @@ export const patch = mutation({
     await ctx.db.patch(id, patchObj);
     const updated = await ctx.db.get(id);
     if (updated) {
-      await syncHubTaskDueAlert(ctx, {
+      await syncHubTaskAlerts(ctx, {
         taskId: id,
         userKey: actor,
         orgId: organizationId,
@@ -2176,7 +2176,7 @@ export const complete = mutation({
         previousFileId: t.relatedFileId,
         actor: actorUserKey ?? actor,
       });
-      await syncHubTaskDueAlert(ctx, {
+      await syncHubTaskAlerts(ctx, {
         taskId: nextId,
         userKey: actor,
         orgId: organizationId,
