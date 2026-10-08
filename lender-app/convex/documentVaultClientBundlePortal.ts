@@ -283,12 +283,16 @@ export const getBundleByToken = query({
       : {};
     // Selective bundles only need the listed task docs; all_outstanding still
     // scans the file's vault tasks so newly outstanding portal tasks appear.
+    // Read-time: reject any id that is not on this pipeline (defense in depth).
     const allPipelineTasks =
       row.mode === "all_outstanding"
         ? await loadPipelineVaultTasks(ctx, row.pipelineFileId)
         : (
             await Promise.all(row.fileTaskIds.map((id) => ctx.db.get(id)))
-          ).filter((t): t is Doc<"documentVaultFileTasks"> => t != null);
+          ).filter(
+            (t): t is Doc<"documentVaultFileTasks"> =>
+              t != null && t.pipelineFileId === row.pipelineFileId,
+          );
     const scopedTaskIds = resolveBundleFileTaskIds(row, allPipelineTasks);
 
     const pushTask = async (task: Doc<"documentVaultFileTasks">) => {

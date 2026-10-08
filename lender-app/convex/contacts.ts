@@ -383,18 +383,26 @@ export const list = query({
       limit != null && Number.isFinite(limit) && limit > 0
         ? Math.min(Math.floor(limit), 5000)
         : undefined;
+    const roleFilter = contactRoleIdFilter?.trim();
+    /**
+     * Bound the org hose even when callers omit `limit` (pipeline referral
+     * dropdown). Role filters need a wider scan than the return cap so we do
+     * not starve matches that are older than the newest N contacts.
+     */
+    const CONTACTS_LIST_ORG_CAP = 5_000;
+    const scanCap =
+      roleFilter && rowCap != null
+        ? CONTACTS_LIST_ORG_CAP
+        : (rowCap ?? CONTACTS_LIST_ORG_CAP);
     const contactQuery = ctx.db
       .query("contacts")
       .withIndex("by_organization_updatedAt", (q) =>
         q.eq("organizationId", organizationId),
       )
       .order("desc");
-    let rows =
-      rowCap != null
-        ? await contactQuery.take(rowCap)
-        : await contactQuery.collect();
+    // bounded: CONTACTS_LIST_ORG_CAP / caller limit
+    let rows = await contactQuery.take(scanCap);
 
-    const roleFilter = contactRoleIdFilter?.trim();
     if (roleFilter) {
       const matched: typeof rows = [];
       for (const r of rows) {
@@ -410,6 +418,9 @@ export const list = query({
         }
       }
       rows = matched;
+      if (rowCap != null && rows.length > rowCap) {
+        rows = rows.slice(0, rowCap);
+      }
     }
     const primaryMap = await batchPrimaryEntitiesForContacts(
       ctx,

@@ -537,23 +537,18 @@ async function fetchAllContactRegistryItems(
   const { organizationId, globalAdmin } = filters;
   let rows: Doc<"contacts">[];
 
+  // Always org-index when listing an org hub — never take(N) on the global
+  // contacts stream then filter (starves the active org on multi-tenant DBs).
+  // bounded: LIST_ALL_STREAM_CAP
+  rows = await ctx.db
+    .query("contacts")
+    .withIndex("by_organization_updatedAt", (idx) =>
+      idx.eq("organizationId", organizationId),
+    )
+    .order("desc")
+    .take(LIST_ALL_STREAM_CAP);
   if (globalAdmin) {
-    // bounded: LIST_ALL_STREAM_CAP — same merge budget as lenders stream
-    rows = await ctx.db
-      .query("contacts")
-      .withIndex("by_updatedAt")
-      .order("desc")
-      .take(LIST_ALL_STREAM_CAP);
     rows = filterContactsByOrgScope(rows, organizationId);
-  } else {
-    // bounded: LIST_ALL_STREAM_CAP — org-indexed newest-first hose
-    rows = await ctx.db
-      .query("contacts")
-      .withIndex("by_organization_updatedAt", (idx) =>
-        idx.eq("organizationId", organizationId),
-      )
-      .order("desc")
-      .take(LIST_ALL_STREAM_CAP);
   }
 
   return rows
