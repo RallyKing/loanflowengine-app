@@ -26,16 +26,42 @@ export function isFileSnoozeAlertStillValid(args: {
   return Math.abs(stored - args.expectedFireAt) <= skew;
 }
 
+/**
+ * Earliest alert-worthy timestamp for a hub task.
+ * In-file triage schedules use `scheduledTriggerTime` (not `dueDate`);
+ * classic hub due dates use `dueDate`; optional `reminderAt` also counts.
+ */
+export function resolveHubTaskAlertFireAt(fields: {
+  dueDate?: number | null;
+  scheduledTriggerTime?: number | null;
+  reminderAt?: number | null;
+}): number | null {
+  const times: number[] = [];
+  for (const raw of [
+    fields.dueDate,
+    fields.scheduledTriggerTime,
+    fields.reminderAt,
+  ]) {
+    if (raw == null || !Number.isFinite(raw) || raw <= 0) continue;
+    times.push(Math.trunc(raw));
+  }
+  if (times.length === 0) return null;
+  return Math.min(...times);
+}
+
 export function isHubTaskDueAlertStillValid(args: {
-  dueDate: number | null | undefined;
+  dueDate?: number | null;
+  scheduledTriggerTime?: number | null;
+  reminderAt?: number | null;
   expectedFireAt: number;
   status: string;
   skewMs?: number;
 }): boolean {
-  if (args.dueDate == null || !Number.isFinite(args.dueDate)) return false;
   if (args.status === "done" || args.status === "archived") return false;
+  const fireAt = resolveHubTaskAlertFireAt(args);
+  if (fireAt == null) return false;
   const skew = args.skewMs ?? 1000;
-  return Math.abs(args.dueDate - args.expectedFireAt) <= skew;
+  return Math.abs(fireAt - args.expectedFireAt) <= skew;
 }
 
 export function isVaultFileTaskDueAlertStillValid(args: {

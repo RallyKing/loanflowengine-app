@@ -16,6 +16,7 @@ import {
   isHubTaskDueAlertStillValid,
   isVaultFileTaskDueAlertStillValid,
   parseSnoozedUntilMs,
+  resolveHubTaskAlertFireAt,
   shouldScheduleOneShot,
 } from "../lib/alerts/fireValidity";
 import {
@@ -111,6 +112,42 @@ function testValidity() {
       status: "done",
     }),
     false,
+  );
+  // In-file triage schedule (no classic dueDate) must still validate.
+  assert.equal(
+    resolveHubTaskAlertFireAt({
+      dueDate: null,
+      scheduledTriggerTime: fireAt,
+      reminderAt: null,
+    }),
+    fireAt,
+  );
+  assert.equal(
+    isHubTaskDueAlertStillValid({
+      scheduledTriggerTime: fireAt,
+      expectedFireAt: fireAt,
+      status: "todo",
+    }),
+    true,
+  );
+  assert.equal(
+    isHubTaskDueAlertStillValid({
+      dueDate: null,
+      scheduledTriggerTime: null,
+      reminderAt: null,
+      expectedFireAt: fireAt,
+      status: "todo",
+    }),
+    false,
+  );
+  // Earliest of due / schedule / reminder wins.
+  assert.equal(
+    resolveHubTaskAlertFireAt({
+      dueDate: fireAt + 60_000,
+      scheduledTriggerTime: fireAt,
+      reminderAt: fireAt + 120_000,
+    }),
+    fireAt,
   );
   assert.equal(
     isVaultFileTaskDueAlertStillValid({
