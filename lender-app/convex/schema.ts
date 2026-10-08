@@ -2582,6 +2582,8 @@ export default defineSchema({
      */
     dedupeKey: v.optional(v.string()),
     emailDispatchedAt: v.optional(v.number()),
+    /** Web Push delivery stamp (dedupe; one push fan-out per notification row). */
+    pushDispatchedAt: v.optional(v.number()),
     /** In-app silencing until instant (ms). */
     snoozedUntil: v.optional(v.number()),
   })
