@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { AlarmClock, BellRing, ListTodo, Moon } from "lucide-react";
 import { useAuth } from "@/lib/sessionUiClient";
 import { api } from "@/convex/_generated/api";
-import type { Doc, Id } from "@/convex/_generated/dataModel";
+import type { Doc } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { PortalOverlayPanel } from "@/components/ui/PortalOverlayPanel";
 import { cn } from "@/lib/cn";
@@ -33,8 +33,6 @@ const FILTER_TABS: { id: FilterTab; label: string }[] = [
 type TimeAlertsBellProps = {
   /** Optional explicit user key; when absent, the signed-in session userKey is used. */
   userKey?: string;
-  /** When set (e.g. on Tasks page), opens the task drawer instead of navigating. */
-  onOpenTask?: (id: Id<"tasks">) => void;
   className?: string;
 };
 
@@ -84,7 +82,6 @@ export function TimeAlertsBell(props: TimeAlertsBellProps) {
 
 function TimeAlertsBellInner({
   userKey,
-  onOpenTask,
   className,
 }: TimeAlertsBellProps) {
   const router = useRouter();
@@ -104,9 +101,8 @@ function TimeAlertsBellInner({
   const ready = authLoaded && isSignedIn && k.length > 0;
 
   /**
-   * Stable args for `unreadCountForUser` + `listForUser` (no Date.now()).
-   * `useQueries` (not bare `useQuery`) so server errors surface as Error values
-   * for the panel empty/loading/error states — same pattern as UserNotificationsBell.
+   * Badge always subscribes to unread count. List only while the panel is open
+   * (shell cost — no always-on listForUser). Args stay clock-free.
    */
   const alertQueries = useMemo((): RequestForQueries => {
     if (!ready) return {};
@@ -115,21 +111,24 @@ function TimeAlertsBellInner({
       memberUserKey: k,
       ...(activeOrganizationId ? { orgId: activeOrganizationId } : {}),
     };
-    return {
+    const req: RequestForQueries = {
       unread: {
         query: api.alerts.unreadCountForUser,
         args: base,
       },
-      items: {
+    };
+    if (open) {
+      req.items = {
         query: api.alerts.listForUser,
         args: {
           ...base,
           limit: LIST_LIMIT,
           includeDismissed: showHidden,
         },
-      },
-    };
-  }, [ready, k, activeOrganizationId, showHidden]);
+      };
+    }
+    return req;
+  }, [ready, k, activeOrganizationId, showHidden, open]);
 
   const alertResults = useQueries(alertQueries);
   const unreadRaw = ready ? alertResults.unread : undefined;
@@ -212,11 +211,7 @@ function TimeAlertsBellInner({
     if (row.readAt == null) {
       await markRead({ id: row._id, memberUserKey: k });
     }
-    if (row.entityType === "task" && onOpenTask) {
-      onOpenTask(row.entityId as Id<"tasks">);
-      setOpen(false);
-      return;
-    }
+    // Task deep links use `/tasks?task=` — Tasks page opens the drawer from searchParams.
     const path = row.deepLinkPath?.trim() ?? "";
     if (path && isInternalAppPath(path)) {
       router.push(path);
@@ -265,8 +260,11 @@ function TimeAlertsBellInner({
   };
 
   const loading =
-    ready && !queryError && (allItems === undefined || unreadPayload === undefined);
-  const empty = visibleItems != null && visibleItems.length === 0;
+    ready &&
+    open &&
+    !queryError &&
+    (allItems === undefined || unreadPayload === undefined);
+  const empty = open && visibleItems != null && visibleItems.length === 0;
 
   return (
     <div

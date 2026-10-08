@@ -71,7 +71,6 @@ import {
   type InlineSelectOption,
 } from "@/components/inline";
 import { TaskNotificationsBell } from "@/components/TaskNotificationsBell";
-import { TimeAlertsBell } from "@/components/TimeAlertsBell";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 const TaskDrawer = dynamic(
@@ -2231,16 +2230,10 @@ function TasksPageInner() {
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-lg font-semibold md:text-xl">Tasks</h1>
         {actorUserKey ? (
-          <div className="flex shrink-0 items-center gap-1.5">
-            <TimeAlertsBell
-              userKey={actorUserKey}
-              onOpenTask={(id) => setOpenTaskId(id)}
-            />
-            <TaskNotificationsBell
-              userKey={actorUserKey}
-              onOpenTask={(id) => setOpenTaskId(id)}
-            />
-          </div>
+          <TaskNotificationsBell
+            userKey={actorUserKey}
+            onOpenTask={(id) => setOpenTaskId(id)}
+          />
         ) : null}
       </div>
 
