@@ -7,7 +7,7 @@ import { newMentionHandlesOnly } from "../lib/mentions";
 import { dispatchUserNotification } from "./notifications";
 import {
   clearHubTaskDueAlert,
-  scheduleHubTaskDueAlert,
+  syncHubTaskDueAlert,
 } from "./alertSchedule";
 import {
   pipelineDealName,
@@ -656,20 +656,11 @@ export const create = mutation({
     await syncIndexedGraphTaskEdge(ctx, id, {
       actor: actorUserKey ?? actor,
     });
-    if (
-      rest.dueDate != null &&
-      Number.isFinite(rest.dueDate) &&
-      rest.status !== "done" &&
-      rest.status !== "archived"
-    ) {
-      await scheduleHubTaskDueAlert(ctx, {
-        taskId: id,
-        userKey: actorUserKey ?? actor,
-        orgId: organizationId,
-        dueDate: rest.dueDate,
-        title: rest.title,
-      });
-    }
+    await syncHubTaskDueAlert(ctx, {
+      taskId: id,
+      userKey: actor,
+      orgId: organizationId,
+    });
     return { id };
   },
 });
@@ -884,17 +875,11 @@ export const update = mutation({
       actor: actorUserKey ?? actor,
     });
     await refreshTaskGlobalSearchText(ctx, id);
-    if (rest.status === "done" || rest.status === "archived") {
-      await clearHubTaskDueAlert(ctx, id);
-    } else if (rest.dueDate !== existing.dueDate || existing.status !== rest.status) {
-      await scheduleHubTaskDueAlert(ctx, {
-        taskId: id,
-        userKey: actor,
-        orgId: organizationId,
-        dueDate: rest.dueDate,
-        title: rest.title,
-      });
-    }
+    await syncHubTaskDueAlert(ctx, {
+      taskId: id,
+      userKey: actor,
+      orgId: organizationId,
+    });
     return { id };
   },
 });
@@ -1238,30 +1223,11 @@ export const patch = mutation({
     await ctx.db.patch(id, patchObj);
     const updated = await ctx.db.get(id);
     if (updated) {
-      const dueChanged = rest.dueDate !== undefined;
-      const statusChanged = rest.status !== undefined && existing.status !== rest.status;
-      if (
-        dueChanged ||
-        statusChanged ||
-        updated.status === "done" ||
-        updated.status === "archived"
-      ) {
-        if (updated.status === "done" || updated.status === "archived") {
-          await clearHubTaskDueAlert(ctx, id);
-        } else if (
-          dueChanged ||
-          (statusChanged &&
-            (existing.status === "done" || existing.status === "archived"))
-        ) {
-          await scheduleHubTaskDueAlert(ctx, {
-            taskId: id,
-            userKey: actorUserKey ?? actor,
-            orgId: organizationId,
-            dueDate: updated.dueDate,
-            title: updated.title,
-          });
-        }
-      }
+      await syncHubTaskDueAlert(ctx, {
+        taskId: id,
+        userKey: actor,
+        orgId: organizationId,
+      });
       await syncIndexedGraphTaskEdge(ctx, id, {
         previousFileId: existing.relatedFileId,
         actor: actorUserKey ?? actor,
@@ -2210,12 +2176,10 @@ export const complete = mutation({
         previousFileId: t.relatedFileId,
         actor: actorUserKey ?? actor,
       });
-      await scheduleHubTaskDueAlert(ctx, {
+      await syncHubTaskDueAlert(ctx, {
         taskId: nextId,
-        userKey: actorUserKey ?? actor,
+        userKey: actor,
         orgId: organizationId,
-        dueDate: nextDue,
-        title: t.title,
       });
     }
     return { id, nextId };

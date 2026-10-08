@@ -24,7 +24,8 @@ import {
   validateClientTemplateAttachments,
   type ClientTemplateAttachment,
 } from "./clientTemplateAttachments";
-import { scheduleVaultFileTaskDueAlert } from "./alertSchedule";
+import { syncVaultFileTaskDueAlert } from "./alertSchedule";
+import { requireAuthenticatedCaller } from "./callerAuth";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -329,6 +330,10 @@ export const injectTemplates = mutation({
     }
 
     const key = memberUserKey?.trim() || "__system__";
+    const alertActor =
+      pipeline.organizationId && memberUserKey?.trim()
+        ? await requireAuthenticatedCaller(ctx, memberUserKey)
+        : null;
     const now = Date.now();
     let sortOrder = await nextFileTaskSortOrder(ctx, pipelineFileId);
     const createdIds: Id<"documentVaultFileTasks">[] = [];
@@ -370,19 +375,11 @@ export const injectTemplates = mutation({
         updatedAt: now,
       });
       createdIds.push(id);
-      const injectedDue = resolveTemplateDueDate(template, now);
-      if (
-        injectedDue != null &&
-        Number.isFinite(injectedDue) &&
-        key !== "__system__" &&
-        pipeline.organizationId
-      ) {
-        await scheduleVaultFileTaskDueAlert(ctx, {
+      if (alertActor && pipeline.organizationId) {
+        await syncVaultFileTaskDueAlert(ctx, {
           fileTaskId: id,
-          userKey: key,
+          userKey: alertActor,
           orgId: pipeline.organizationId,
-          dueDate: injectedDue,
-          title: template.title,
         });
       }
 

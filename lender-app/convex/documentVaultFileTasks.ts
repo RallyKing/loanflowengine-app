@@ -35,8 +35,9 @@ import {
 } from "../lib/pfs/pfsFormAssociation";
 import {
   clearVaultFileTaskDueAlert,
-  scheduleVaultFileTaskDueAlert,
+  syncVaultFileTaskDueAlert,
 } from "./alertSchedule";
+import { requireAuthenticatedCaller } from "./callerAuth";
 import {
   findSimplePlInstance,
   normalizeSimplePlInstances,
@@ -383,18 +384,12 @@ export const createWithConfig = mutation({
       updatedAt: now,
     });
 
-    if (
-      args.dueDate != null &&
-      Number.isFinite(args.dueDate) &&
-      pipeline.organizationId &&
-      key !== "__system__"
-    ) {
-      await scheduleVaultFileTaskDueAlert(ctx, {
+    if (pipeline.organizationId && args.memberUserKey?.trim()) {
+      const actor = await requireAuthenticatedCaller(ctx, args.memberUserKey);
+      await syncVaultFileTaskDueAlert(ctx, {
         fileTaskId: id,
-        userKey: key,
+        userKey: actor,
         orgId: pipeline.organizationId,
-        dueDate: args.dueDate,
-        title: normalizeTitle(args.title),
       });
     }
 
@@ -521,15 +516,12 @@ export const updateTaskConfig = mutation({
       await syncTaskPortalVisibilityToChildren(ctx, task, portalVisible);
     }
 
-    if (args.dueDate !== undefined && pipeline.organizationId) {
-      const actor = args.memberUserKey?.trim() || task.createdByUserKey;
-      const nextDue = args.dueDate === null ? undefined : args.dueDate;
-      await scheduleVaultFileTaskDueAlert(ctx, {
+    if (pipeline.organizationId && args.memberUserKey?.trim()) {
+      const actor = await requireAuthenticatedCaller(ctx, args.memberUserKey);
+      await syncVaultFileTaskDueAlert(ctx, {
         fileTaskId: args.fileTaskId,
         userKey: actor,
         orgId: pipeline.organizationId,
-        dueDate: nextDue,
-        title: typeof patch.title === "string" ? patch.title : task.title,
       });
     }
 
@@ -565,21 +557,15 @@ export const toggleStatus = mutation({
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
     const oldStatus = task.status;
     await ctx.db.patch(fileTaskId, { status, updatedAt: Date.now() });
-    if (status === "complete") {
-      await clearVaultFileTaskDueAlert(ctx, fileTaskId);
-    } else if (
-      oldStatus === "complete" &&
-      task.dueDate != null &&
-      pipeline.organizationId
-    ) {
-      const actor = memberUserKey?.trim() || task.createdByUserKey;
-      await scheduleVaultFileTaskDueAlert(ctx, {
+    if (pipeline.organizationId && memberUserKey?.trim()) {
+      const actor = await requireAuthenticatedCaller(ctx, memberUserKey);
+      await syncVaultFileTaskDueAlert(ctx, {
         fileTaskId,
         userKey: actor,
         orgId: pipeline.organizationId,
-        dueDate: task.dueDate,
-        title: task.title,
       });
+    } else if (status === "complete") {
+      await clearVaultFileTaskDueAlert(ctx, fileTaskId);
     }
     if (oldStatus !== status) {
       await scheduleWebhookQueueEvent(ctx, {
@@ -1217,18 +1203,12 @@ export const restoreFileTask = mutation({
     const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
     await ctx.db.patch(fileTaskId, { isArchived: false, updatedAt: Date.now() });
-    if (
-      task.dueDate != null &&
-      task.status !== "complete" &&
-      pipeline.organizationId
-    ) {
-      const actor = memberUserKey?.trim() || task.createdByUserKey;
-      await scheduleVaultFileTaskDueAlert(ctx, {
+    if (pipeline.organizationId && memberUserKey?.trim()) {
+      const actor = await requireAuthenticatedCaller(ctx, memberUserKey);
+      await syncVaultFileTaskDueAlert(ctx, {
         fileTaskId,
         userKey: actor,
         orgId: pipeline.organizationId,
-        dueDate: task.dueDate,
-        title: task.title,
       });
     }
     return { ok: true as const };

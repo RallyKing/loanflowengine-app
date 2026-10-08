@@ -12,7 +12,6 @@ import {
 } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internal } from "./_generated/api";
 import { requireAuthenticatedCaller } from "./callerAuth";
 import {
   DEFAULT_ALERT_PREFERENCES,
@@ -22,11 +21,7 @@ import {
   type AlertCategory,
   type AlertPreferencesResolved,
 } from "../lib/alerts/alertCategories";
-import { buildAlertDedupeKey } from "../lib/alerts/dedupe";
-import {
-  assertInternalAppPath,
-  fileSnoozeDeepLink,
-} from "../lib/alerts/internalPath";
+import { assertInternalAppPath } from "../lib/alerts/internalPath";
 import {
   isFileSnoozeAlertStillValid,
   isHubTaskDueAlertStillValid,
@@ -570,26 +565,15 @@ export const backfillAlertSchedulesPage = internalMutation({
           skipped += 1;
           continue;
         }
-        if (fireAt > now) {
-          await schedulePipelineSnoozeAlert(ctx, {
-            pipelineId: row._id,
-            userKey,
-            orgId: row.organizationId,
-            snoozedUntil: row.snoozedUntil,
-            fileLabel: row.fileName,
-          });
-          scheduled += 1;
-        } else {
-          // Already-past snooze: one immediate fire (idempotent via dedupeKey).
-          await schedulePipelineSnoozeAlertPastImmediate(ctx, {
-            pipelineId: row._id,
-            userKey,
-            orgId: row.organizationId,
-            fireAt,
-            fileLabel: row.fileName,
-          });
-          scheduled += 1;
-        }
+        // Future or past — one-shot path (past → runAt now; dedupeKey prevents re-fire).
+        await schedulePipelineSnoozeAlert(ctx, {
+          pipelineId: row._id,
+          userKey,
+          orgId: row.organizationId,
+          snoozedUntil: row.snoozedUntil,
+          fileLabel: row.fileName,
+        });
+        scheduled += 1;
       }
       return {
         phase: args.phase as BackfillPhase,
@@ -707,60 +691,3 @@ export const backfillAlertSchedulesPage = internalMutation({
   },
 });
 
-/** Past snooze backfill helper — schedules fire at `now` once. */
-async function schedulePipelineSnoozeAlertPastImmediate(
-  ctx: MutationCtx,
-  args: {
-    pipelineId: Id<"pipeline">;
-    userKey: string;
-    orgId: Id<"organizations">;
-    fireAt: number;
-    fileLabel?: string;
-  },
-): Promise<void> {
-  const userKey = args.userKey.trim();
-  if (!userKey) return;
-  const row = await ctx.db.get(args.pipelineId);
-  if (!row) return;
-  if (row.snoozeAlertJobId) {
-    try {
-      await ctx.scheduler.cancel(row.snoozeAlertJobId);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const entityId = String(args.pipelineId);
-  const dedupeKey = buildAlertDedupeKey({
-    userKey,
-    category: "file_snooze_due",
-    entityType: "pipeline",
-    entityId,
-    fireAt: args.fireAt,
-  });
-  const title = args.fileLabel?.trim()
-    ? `Snooze ended: ${args.fileLabel.trim()}`
-    : "Pipeline file snooze ended";
-  const deepLinkPath = fileSnoozeDeepLink(entityId);
-  const runAt = Date.now();
-
-  const jobId = await ctx.scheduler.runAt(
-    runAt,
-    internal.alerts.fireFileSnoozeDue,
-    {
-      pipelineId: args.pipelineId,
-      userKey,
-      orgId: args.orgId,
-      fireAt: args.fireAt,
-      dedupeKey,
-      title,
-      deepLinkPath,
-    },
-  );
-
-  await ctx.db.patch(args.pipelineId, {
-    snoozeAlertJobId: jobId,
-    snoozeAlertUserKey: userKey,
-    snoozeAlertFireAt: args.fireAt,
-  });
-}

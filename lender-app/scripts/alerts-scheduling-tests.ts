@@ -32,6 +32,8 @@ function testInternalPaths() {
   assert.equal(isInternalAppPath("https://evil.com"), false);
   assert.equal(isInternalAppPath("http://x"), false);
   assert.equal(isInternalAppPath("javascript:alert(1)"), false);
+  assert.equal(isInternalAppPath("/%2f%2fevil.com"), false);
+  assert.equal(isInternalAppPath("/tasks\\x"), false);
   assert.throws(() => assertInternalAppPath("https://x"));
   assert.equal(fileSnoozeDeepLink("fid"), "/pipeline/fid");
   assert.equal(hubTaskDeepLink("tid"), "/tasks?task=tid");

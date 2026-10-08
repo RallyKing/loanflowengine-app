@@ -7,7 +7,10 @@ import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { buildAlertDedupeKey } from "../lib/alerts/dedupe";
-import { parseSnoozedUntilMs } from "../lib/alerts/fireValidity";
+import {
+  parseSnoozedUntilMs,
+  shouldScheduleOneShot,
+} from "../lib/alerts/fireValidity";
 import {
   fileSnoozeDeepLink,
   hubTaskDeepLink,
@@ -64,11 +67,14 @@ export async function schedulePipelineSnoozeAlert(
     return;
   }
   const now = Date.now();
-  if (fireAt <= now) {
-    // Cleared / past — no future wake alert (backfill handles past once).
+  const plan = shouldScheduleOneShot({ fireAt, now });
+  if (!plan) {
     await clearPipelineSnoozeAlert(ctx, args.pipelineId);
     return;
   }
+  // Live snooze writes are always future (mutation clears past). Backfill may
+  // pass past fireAt — schedule immediate runAt(now) once (dedupeKey holds).
+  const runAt = plan.kind === "future" ? fireAt : now;
 
   const row = await ctx.db.get(args.pipelineId);
   if (!row) return;
@@ -95,7 +101,7 @@ export async function schedulePipelineSnoozeAlert(
   const deepLinkPath = fileSnoozeDeepLink(entityId);
 
   const jobId = await ctx.scheduler.runAt(
-    fireAt,
+    runAt,
     internal.alerts.fireFileSnoozeDue,
     {
       pipelineId: args.pipelineId,
@@ -282,5 +288,56 @@ export async function scheduleVaultFileTaskDueAlert(
     dueAlertJobId: jobId,
     dueAlertUserKey: userKey,
     dueAlertFireAt: fireAt,
+  });
+}
+
+/**
+ * Load hub task and schedule or clear due alert from current row state.
+ * Call after create/update/complete/delete mutations (authenticated userKey only).
+ */
+export async function syncHubTaskDueAlert(
+  ctx: MutationCtx,
+  args: {
+    taskId: Id<"tasks">;
+    userKey: string;
+    orgId: Id<"organizations">;
+  },
+): Promise<void> {
+  const row = await ctx.db.get(args.taskId);
+  if (!row) {
+    await clearHubTaskDueAlert(ctx, args.taskId);
+    return;
+  }
+  await scheduleHubTaskDueAlert(ctx, {
+    taskId: args.taskId,
+    userKey: args.userKey,
+    orgId: args.orgId,
+    dueDate: row.dueDate,
+    title: row.title,
+  });
+}
+
+/**
+ * Load vault file-task and schedule or clear due alert from current row state.
+ */
+export async function syncVaultFileTaskDueAlert(
+  ctx: MutationCtx,
+  args: {
+    fileTaskId: Id<"documentVaultFileTasks">;
+    userKey: string;
+    orgId: Id<"organizations">;
+  },
+): Promise<void> {
+  const row = await ctx.db.get(args.fileTaskId);
+  if (!row) {
+    await clearVaultFileTaskDueAlert(ctx, args.fileTaskId);
+    return;
+  }
+  await scheduleVaultFileTaskDueAlert(ctx, {
+    fileTaskId: args.fileTaskId,
+    userKey: args.userKey,
+    orgId: args.orgId,
+    dueDate: row.dueDate,
+    title: row.title,
   });
 }
