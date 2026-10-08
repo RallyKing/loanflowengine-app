@@ -12,6 +12,7 @@ import {
 } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { requireAuthenticatedCaller } from "./callerAuth";
 import {
   DEFAULT_ALERT_PREFERENCES,
@@ -187,6 +188,14 @@ export const fireFileSnoozeDue = internalMutation({
         expectedFireAt: args.fireAt,
       })
     ) {
+      console.warn(
+        "[alerts] fireFileSnoozeDue stale",
+        JSON.stringify({
+          pipelineId: args.pipelineId,
+          expectedFireAt: args.fireAt,
+          snoozedUntil: row.snoozedUntil ?? null,
+        }),
+      );
       return { inserted: false as const, reason: "stale" as const };
     }
     if (
@@ -447,6 +456,59 @@ export const getPreferences = query({
     if (!k) return DEFAULT_ALERT_PREFERENCES;
     await assertCallerOwnsUserKey(ctx, k, memberUserKey);
     return await loadAlertPrefs(ctx, k);
+  },
+});
+
+/**
+ * One-shot self-test: schedule an in-app reminder that fires after `delayMs`
+ * (clamped 2s–60s). Used to verify scheduler → fire → Reminders bell without
+ * waiting for end-of-day file snooze.
+ */
+export const scheduleSelfTestReminder = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    delayMs: v.optional(v.number()),
+    ...memberUserKeyArg,
+  },
+  handler: async (ctx, args) => {
+    const k = await requireAuthenticatedCaller(ctx, args.memberUserKey);
+    const delay = Math.min(Math.max(args.delayMs ?? 5000, 2000), 60_000);
+    const fireAt = Date.now() + delay;
+    const dedupeKey = `self_test:${k}:${fireAt}`;
+    await ctx.scheduler.runAt(fireAt, internal.alerts.fireSelfTestReminder, {
+      userKey: k,
+      orgId: args.orgId,
+      fireAt,
+      dedupeKey,
+    });
+    return { ok: true as const, fireAt, delayMs: delay };
+  },
+});
+
+export const fireSelfTestReminder = internalMutation({
+  args: {
+    userKey: v.string(),
+    orgId: v.id("organizations"),
+    fireAt: v.number(),
+    dedupeKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const id = await insertAlertIdempotent(ctx, {
+      userKey: args.userKey,
+      orgId: args.orgId,
+      category: "task_due",
+      title: "Test reminder",
+      body: "Self-test from Reminder preferences — the Reminders bell is working.",
+      entityType: "task",
+      entityId: `self_test:${args.fireAt}`,
+      deepLinkPath: "/settings#reminders",
+      fireAt: args.fireAt,
+      dedupeKey: args.dedupeKey,
+    });
+    return {
+      inserted: id != null,
+      reason: id != null ? ("ok" as const) : ("skipped" as const),
+    };
   },
 });
 

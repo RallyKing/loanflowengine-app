@@ -2918,14 +2918,21 @@ export const snooze = mutation({
     await ctx.db.patch(id, {
       snoozedUntil: stored,
     });
-    if (row.organizationId) {
+    const orgId = row.organizationId;
+    if (orgId) {
       await schedulePipelineSnoozeAlert(ctx, {
         pipelineId: id,
         userKey: actor,
-        orgId: row.organizationId,
+        orgId,
         snoozedUntil: stored,
         fileLabel: row.fileName,
       });
+    } else {
+      // Snooze still hides the file; without org we cannot write an alerts row.
+      console.error(
+        "[alerts] snooze saved without schedule — pipeline missing organizationId",
+        JSON.stringify({ pipelineId: id }),
+      );
     }
     return { id, snoozedUntil: stored };
   },
