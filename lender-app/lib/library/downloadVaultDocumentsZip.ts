@@ -1,4 +1,3 @@
-import JSZip from "jszip";
 import type { Id } from "@/convex/_generated/dataModel";
 import { downloadBlob } from "@/lib/export/downloadClient";
 
@@ -74,6 +73,7 @@ export async function downloadRemoteFilesZip(
   onProgress?: (progress: ZipDownloadProgress) => void,
 ): Promise<void> {
   if (items.length === 0) throw new Error("No files to download.");
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const usedPaths = new Set<string>();
   const total = items.length;

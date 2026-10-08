@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { FileText, Loader2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -13,7 +14,26 @@ import type { LibraryDocumentsProof } from "@/components/LibraryDocumentsPanel";
 import {
   type AnnotationToolMode,
 } from "@/components/library/DocumentAnnotationLayer";
-import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
+
+const RichFilePreview = dynamic(
+  () =>
+    import("@/components/library/preview/RichFilePreview").then((m) => ({
+      default: m.RichFilePreview,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="flex min-h-[12rem] items-center justify-center gap-2 text-sm text-muted-foreground"
+        role="status"
+        aria-live="polite"
+      >
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        Loading preview…
+      </div>
+    ),
+  },
+);
 import {
   DocumentManipulationToolbar,
   type MergeCandidate,

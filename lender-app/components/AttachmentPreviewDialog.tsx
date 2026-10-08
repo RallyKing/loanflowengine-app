@@ -1,9 +1,29 @@
 "use client";
 
-import { ExternalLink, X } from "lucide-react";
+import dynamic from "next/dynamic";
+import { ExternalLink, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { OverlayShell } from "@/components/ui/OverlayShell";
-import { RichFilePreview } from "@/components/library/preview/RichFilePreview";
+
+const RichFilePreview = dynamic(
+  () =>
+    import("@/components/library/preview/RichFilePreview").then((m) => ({
+      default: m.RichFilePreview,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="flex min-h-[10rem] items-center justify-center gap-2 text-sm text-muted-foreground"
+        role="status"
+        aria-live="polite"
+      >
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        Loading preview…
+      </div>
+    ),
+  },
+);
 
 export type AttachmentPreviewRow = {
   fileName: string;
