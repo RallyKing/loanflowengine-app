@@ -6,6 +6,10 @@ import { notifyTaskAssigneeChange } from "./taskNotifications";
 import { newMentionHandlesOnly } from "../lib/mentions";
 import { dispatchUserNotification } from "./notifications";
 import {
+  clearHubTaskDueAlert,
+  scheduleHubTaskDueAlert,
+} from "./alertSchedule";
+import {
   pipelineDealName,
   scheduleWebhookQueueEvent,
   webhookVaultContext,
@@ -652,6 +656,20 @@ export const create = mutation({
     await syncIndexedGraphTaskEdge(ctx, id, {
       actor: actorUserKey ?? actor,
     });
+    if (
+      rest.dueDate != null &&
+      Number.isFinite(rest.dueDate) &&
+      rest.status !== "done" &&
+      rest.status !== "archived"
+    ) {
+      await scheduleHubTaskDueAlert(ctx, {
+        taskId: id,
+        userKey: actorUserKey ?? actor,
+        orgId: organizationId,
+        dueDate: rest.dueDate,
+        title: rest.title,
+      });
+    }
     return { id };
   },
 });
@@ -866,6 +884,17 @@ export const update = mutation({
       actor: actorUserKey ?? actor,
     });
     await refreshTaskGlobalSearchText(ctx, id);
+    if (rest.status === "done" || rest.status === "archived") {
+      await clearHubTaskDueAlert(ctx, id);
+    } else if (rest.dueDate !== existing.dueDate || existing.status !== rest.status) {
+      await scheduleHubTaskDueAlert(ctx, {
+        taskId: id,
+        userKey: actor,
+        orgId: organizationId,
+        dueDate: rest.dueDate,
+        title: rest.title,
+      });
+    }
     return { id };
   },
 });
@@ -1209,6 +1238,30 @@ export const patch = mutation({
     await ctx.db.patch(id, patchObj);
     const updated = await ctx.db.get(id);
     if (updated) {
+      const dueChanged = rest.dueDate !== undefined;
+      const statusChanged = rest.status !== undefined && existing.status !== rest.status;
+      if (
+        dueChanged ||
+        statusChanged ||
+        updated.status === "done" ||
+        updated.status === "archived"
+      ) {
+        if (updated.status === "done" || updated.status === "archived") {
+          await clearHubTaskDueAlert(ctx, id);
+        } else if (
+          dueChanged ||
+          (statusChanged &&
+            (existing.status === "done" || existing.status === "archived"))
+        ) {
+          await scheduleHubTaskDueAlert(ctx, {
+            taskId: id,
+            userKey: actorUserKey ?? actor,
+            orgId: organizationId,
+            dueDate: updated.dueDate,
+            title: updated.title,
+          });
+        }
+      }
       await syncIndexedGraphTaskEdge(ctx, id, {
         previousFileId: existing.relatedFileId,
         actor: actorUserKey ?? actor,
@@ -2016,6 +2069,7 @@ export const remove = mutation({
     await removeAllLibraryLinksForTasks(ctx, subtreeIds);
 
     for (const taskId of subtreeIds) {
+      await clearHubTaskDueAlert(ctx, taskId);
       await removeAllFileTaskEdgesForTask(ctx, taskId);
     }
 
@@ -2100,6 +2154,7 @@ export const complete = mutation({
       completedAt: now,
       updatedAt: now,
     });
+    await clearHubTaskDueAlert(ctx, id);
     await refreshTaskGlobalSearchText(ctx, id);
 
     await appendTaskFeed(
@@ -2154,6 +2209,13 @@ export const complete = mutation({
       await syncIndexedGraphTaskEdge(ctx, nextId, {
         previousFileId: t.relatedFileId,
         actor: actorUserKey ?? actor,
+      });
+      await scheduleHubTaskDueAlert(ctx, {
+        taskId: nextId,
+        userKey: actorUserKey ?? actor,
+        orgId: organizationId,
+        dueDate: nextDue,
+        title: t.title,
       });
     }
     return { id, nextId };

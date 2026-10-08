@@ -24,6 +24,7 @@ import {
   validateClientTemplateAttachments,
   type ClientTemplateAttachment,
 } from "./clientTemplateAttachments";
+import { scheduleVaultFileTaskDueAlert } from "./alertSchedule";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -369,6 +370,21 @@ export const injectTemplates = mutation({
         updatedAt: now,
       });
       createdIds.push(id);
+      const injectedDue = resolveTemplateDueDate(template, now);
+      if (
+        injectedDue != null &&
+        Number.isFinite(injectedDue) &&
+        key !== "__system__" &&
+        pipeline.organizationId
+      ) {
+        await scheduleVaultFileTaskDueAlert(ctx, {
+          fileTaskId: id,
+          userKey: key,
+          orgId: pipeline.organizationId,
+          dueDate: injectedDue,
+          title: template.title,
+        });
+      }
 
       const folderRows = normalizeFolderTemplateRows(template.folderTemplate);
       if (

@@ -34,6 +34,10 @@ import {
   planPfsAssociations,
 } from "../lib/pfs/pfsFormAssociation";
 import {
+  clearVaultFileTaskDueAlert,
+  scheduleVaultFileTaskDueAlert,
+} from "./alertSchedule";
+import {
   findSimplePlInstance,
   normalizeSimplePlInstances,
   simplePlDealPatchFromInstances,
@@ -379,6 +383,21 @@ export const createWithConfig = mutation({
       updatedAt: now,
     });
 
+    if (
+      args.dueDate != null &&
+      Number.isFinite(args.dueDate) &&
+      pipeline.organizationId &&
+      key !== "__system__"
+    ) {
+      await scheduleVaultFileTaskDueAlert(ctx, {
+        fileTaskId: id,
+        userKey: key,
+        orgId: pipeline.organizationId,
+        dueDate: args.dueDate,
+        title: normalizeTitle(args.title),
+      });
+    }
+
     return { ok: true as const, fileTaskId: id };
   },
 });
@@ -502,6 +521,18 @@ export const updateTaskConfig = mutation({
       await syncTaskPortalVisibilityToChildren(ctx, task, portalVisible);
     }
 
+    if (args.dueDate !== undefined && pipeline.organizationId) {
+      const actor = args.memberUserKey?.trim() || task.createdByUserKey;
+      const nextDue = args.dueDate === null ? undefined : args.dueDate;
+      await scheduleVaultFileTaskDueAlert(ctx, {
+        fileTaskId: args.fileTaskId,
+        userKey: actor,
+        orgId: pipeline.organizationId,
+        dueDate: nextDue,
+        title: typeof patch.title === "string" ? patch.title : task.title,
+      });
+    }
+
     return { ok: true as const, fileTaskId: args.fileTaskId };
   },
 });
@@ -534,6 +565,22 @@ export const toggleStatus = mutation({
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
     const oldStatus = task.status;
     await ctx.db.patch(fileTaskId, { status, updatedAt: Date.now() });
+    if (status === "complete") {
+      await clearVaultFileTaskDueAlert(ctx, fileTaskId);
+    } else if (
+      oldStatus === "complete" &&
+      task.dueDate != null &&
+      pipeline.organizationId
+    ) {
+      const actor = memberUserKey?.trim() || task.createdByUserKey;
+      await scheduleVaultFileTaskDueAlert(ctx, {
+        fileTaskId,
+        userKey: actor,
+        orgId: pipeline.organizationId,
+        dueDate: task.dueDate,
+        title: task.title,
+      });
+    }
     if (oldStatus !== status) {
       await scheduleWebhookQueueEvent(ctx, {
         organizationId: pipeline.organizationId,
@@ -719,6 +766,7 @@ export const deleteFileTask = mutation({
     const task = await loadTaskOrThrow(ctx, fileTaskId);
     const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
+    await clearVaultFileTaskDueAlert(ctx, fileTaskId);
 
     const mode = strategy ?? "unassign_contents";
     const now = Date.now();
@@ -834,6 +882,7 @@ export const acceptFileTaskReview = mutation({
       rejectionNote: undefined,
       updatedAt: Date.now(),
     });
+    await clearVaultFileTaskDueAlert(ctx, fileTaskId);
     await recordBrokerVaultReview(ctx, {
       pipeline,
       task,
@@ -1153,6 +1202,7 @@ export const archiveFileTask = mutation({
     const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
     await ctx.db.patch(fileTaskId, { isArchived: true, updatedAt: Date.now() });
+    await clearVaultFileTaskDueAlert(ctx, fileTaskId);
     return { ok: true as const };
   },
 });
@@ -1167,6 +1217,20 @@ export const restoreFileTask = mutation({
     const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
     await assertCanMutatePipelineRow(ctx, pipeline, memberUserKey);
     await ctx.db.patch(fileTaskId, { isArchived: false, updatedAt: Date.now() });
+    if (
+      task.dueDate != null &&
+      task.status !== "complete" &&
+      pipeline.organizationId
+    ) {
+      const actor = memberUserKey?.trim() || task.createdByUserKey;
+      await scheduleVaultFileTaskDueAlert(ctx, {
+        fileTaskId,
+        userKey: actor,
+        orgId: pipeline.organizationId,
+        dueDate: task.dueDate,
+        title: task.title,
+      });
+    }
     return { ok: true as const };
   },
 });

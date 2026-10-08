@@ -35,6 +35,10 @@ import {
   normalizeAutoArchiveInactivityDays,
 } from "../lib/pipelineAutoArchive";
 import { applyPipelineSoftArchive } from "./pipelineArchiveApply";
+import {
+  clearPipelineSnoozeAlert,
+  schedulePipelineSnoozeAlert,
+} from "./alertSchedule";
 import { resolvePipelineTableFundingAmount } from "../lib/pipeline/resolvePipelineTableFundingAmount";
 import { resolvePrimaryTableLender } from "../lib/pipeline/resolvePrimaryTableLender";
 import { buildPipelineDealPartySearchBlob } from "../lib/pipeline/pipelineDealPartySearch";
@@ -70,6 +74,7 @@ import { runUserSimpleWorkflows } from "./userSimpleWorkflowExecutor";
 import { newMentionHandlesOnly } from "../lib/mentions";
 import { collectPipelineWatcherUserKeys } from "./notificationRecipients";
 import { dispatchUserNotification } from "./notifications";
+import { requireAuthenticatedCaller } from "./callerAuth";
 import {
   assertCanMutatePipelineRow,
   assertLenderAttachableToPipeline,
@@ -2882,10 +2887,18 @@ export const snooze = mutation({
     snoozedUntil: v.union(v.number(), v.string()),
     ...preferencesAccountIdArg,
   },
-  handler: async (ctx, { id, snoozedUntil, preferencesAccountId }) => {
+  handler: async (
+    ctx,
+    { id, snoozedUntil, preferencesAccountId, memberUserKey },
+  ) => {
     const row = await ctx.db.get(id);
     if (!row) throw new Error("Pipeline not found");
-    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    const actorArg = resolvePipelineActorKey({
+      preferencesAccountId,
+      memberUserKey,
+    });
+    await assertCanMutatePipelineRow(ctx, row, actorArg);
+    const actor = await requireAuthenticatedCaller(ctx, actorArg);
     const ms =
       typeof snoozedUntil === "number"
         ? snoozedUntil
@@ -2898,12 +2911,22 @@ export const snooze = mutation({
       await ctx.db.patch(id, {
         snoozedUntil: undefined,
       });
+      await clearPipelineSnoozeAlert(ctx, id);
       return { id, snoozedUntil: null as null };
     }
     const stored = new Date(ms).toISOString();
     await ctx.db.patch(id, {
       snoozedUntil: stored,
     });
+    if (row.organizationId) {
+      await schedulePipelineSnoozeAlert(ctx, {
+        pipelineId: id,
+        userKey: actor,
+        orgId: row.organizationId,
+        snoozedUntil: stored,
+        fileLabel: row.fileName,
+      });
+    }
     return { id, snoozedUntil: stored };
   },
 });
@@ -2913,14 +2936,19 @@ export const snooze = mutation({
  */
 export const unsnooze = mutation({
   args: { id: v.id("pipeline"), ...preferencesAccountIdArg },
-  handler: async (ctx, { id, preferencesAccountId }) => {
+  handler: async (ctx, { id, preferencesAccountId, memberUserKey }) => {
     const row = await ctx.db.get(id);
     if (!row) throw new Error("Pipeline not found");
-    await assertCanMutatePipelineRow(ctx, row, preferencesAccountId);
+    const actorArg = resolvePipelineActorKey({
+      preferencesAccountId,
+      memberUserKey,
+    });
+    await assertCanMutatePipelineRow(ctx, row, actorArg);
     if (row.snoozedUntil == null) return { id, snoozedUntil: null };
     await ctx.db.patch(id, {
       snoozedUntil: undefined,
     });
+    await clearPipelineSnoozeAlert(ctx, id);
     return { id, snoozedUntil: null };
   },
 });
