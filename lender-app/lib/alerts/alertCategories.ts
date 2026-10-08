@@ -1,4 +1,8 @@
-export const ALERT_CATEGORIES = ["file_snooze_due", "task_due"] as const;
+export const ALERT_CATEGORIES = [
+  "file_snooze_due",
+  "task_due",
+  "task_scheduled",
+] as const;
 
 export type AlertCategory = (typeof ALERT_CATEGORIES)[number];
 
@@ -13,6 +17,7 @@ export type AlertPreferencesResolved = Record<AlertCategory, AlertChannelPrefs>;
 export const DEFAULT_ALERT_PREFERENCES: AlertPreferencesResolved = {
   file_snooze_due: { inApp: true, push: false },
   task_due: { inApp: true, push: false },
+  task_scheduled: { inApp: true, push: false },
 };
 
 export function isAlertCategory(value: string): value is AlertCategory {
@@ -25,6 +30,7 @@ export function resolveAlertPreferences(
   const out: AlertPreferencesResolved = {
     file_snooze_due: { ...DEFAULT_ALERT_PREFERENCES.file_snooze_due },
     task_due: { ...DEFAULT_ALERT_PREFERENCES.task_due },
+    task_scheduled: { ...DEFAULT_ALERT_PREFERENCES.task_scheduled },
   };
   if (!stored) return out;
   for (const cat of ALERT_CATEGORIES) {

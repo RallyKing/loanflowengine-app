@@ -30,8 +30,12 @@ const CATEGORY_COPY: Record<
     hint: "When a snoozed pipeline file comes due again.",
   },
   task_due: {
-    label: "Task due",
-    hint: "When a hub or vault file task is due.",
+    label: "Task due / reminder",
+    hint: "When a hub or vault file task due date or reminder time is reached.",
+  },
+  task_scheduled: {
+    label: "Task schedule",
+    hint: "When an in-file triage scheduled trigger time is reached.",
   },
 };
 

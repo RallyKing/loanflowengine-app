@@ -6,7 +6,7 @@ import { notifyTaskAssigneeChange } from "./taskNotifications";
 import { newMentionHandlesOnly } from "../lib/mentions";
 import { dispatchUserNotification } from "./notifications";
 import {
-  clearHubTaskDueAlert,
+  clearHubTaskAlerts,
   syncHubTaskDueAlert,
 } from "./alertSchedule";
 import {
@@ -2035,7 +2035,7 @@ export const remove = mutation({
     await removeAllLibraryLinksForTasks(ctx, subtreeIds);
 
     for (const taskId of subtreeIds) {
-      await clearHubTaskDueAlert(ctx, taskId);
+      await clearHubTaskAlerts(ctx, taskId);
       await removeAllFileTaskEdgesForTask(ctx, taskId);
     }
 
@@ -2120,7 +2120,7 @@ export const complete = mutation({
       completedAt: now,
       updatedAt: now,
     });
-    await clearHubTaskDueAlert(ctx, id);
+    await clearHubTaskAlerts(ctx, id);
     await refreshTaskGlobalSearchText(ctx, id);
 
     await appendTaskFeed(

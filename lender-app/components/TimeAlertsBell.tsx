@@ -45,6 +45,8 @@ function categoryIcon(category: AlertRow["category"]) {
       return Moon;
     case "task_due":
       return ListTodo;
+    case "task_scheduled":
+      return AlarmClock;
     default: {
       const _exhaustive: never = category;
       return _exhaustive;
@@ -176,7 +178,9 @@ function TimeAlertsBellInner({
         case "snooze":
           return row.category === "file_snooze_due";
         case "tasks":
-          return row.category === "task_due";
+          return (
+            row.category === "task_due" || row.category === "task_scheduled"
+          );
         case "all":
           return true;
         default: {

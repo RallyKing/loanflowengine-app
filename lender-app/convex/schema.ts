@@ -2347,11 +2347,20 @@ export default defineSchema({
     relatedContactId: v.optional(v.id("contacts")),
 
     /**
-     * Time Alerts — one-shot scheduler for hub `task_due` (see `convex/alerts.ts`).
+     * Time Alerts — one-shot scheduler for hub `task_due` (dueDate / reminderAt).
+     * See `convex/alerts.ts` / `alertSchedule.ts`.
      */
     dueAlertJobId: v.optional(v.id("_scheduled_functions")),
     dueAlertUserKey: v.optional(v.string()),
     dueAlertFireAt: v.optional(v.number()),
+
+    /**
+     * Time Alerts — one-shot scheduler for hub `task_scheduled`
+     * (`scheduledTriggerTime` triage schedule). Separate job from due/reminder.
+     */
+    scheduleAlertJobId: v.optional(v.id("_scheduled_functions")),
+    scheduleAlertUserKey: v.optional(v.string()),
+    scheduleAlertFireAt: v.optional(v.number()),
 
     /**
      * Multi-user scaffolding — see `pipeline.assigneeId` for the same
@@ -5595,6 +5604,7 @@ export default defineSchema({
     category: v.union(
       v.literal("file_snooze_due"),
       v.literal("task_due"),
+      v.literal("task_scheduled"),
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -5633,6 +5643,9 @@ export default defineSchema({
     fileSnoozeDuePush: v.boolean(),
     taskDueInApp: v.boolean(),
     taskDuePush: v.boolean(),
+    /** Optional until prefs row is rewritten — defaults match task_due. */
+    taskScheduledInApp: v.optional(v.boolean()),
+    taskScheduledPush: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userKey", ["userKey"]),
 

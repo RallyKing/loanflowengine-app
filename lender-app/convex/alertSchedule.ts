@@ -9,7 +9,8 @@ import { internal } from "./_generated/api";
 import { buildAlertDedupeKey } from "../lib/alerts/dedupe";
 import {
   parseSnoozedUntilMs,
-  resolveHubTaskAlertFireAt,
+  resolveHubTaskDueAlertFireAt,
+  resolveHubTaskScheduleAlertFireAt,
   shouldScheduleOneShot,
 } from "../lib/alerts/fireValidity";
 import {
@@ -142,6 +143,35 @@ export async function clearHubTaskDueAlert(
   }
 }
 
+export async function clearHubTaskScheduleAlert(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+): Promise<void> {
+  const row = await ctx.db.get(taskId);
+  if (!row) return;
+  await cancelJob(ctx, row.scheduleAlertJobId);
+  if (
+    row.scheduleAlertJobId != null ||
+    row.scheduleAlertUserKey != null ||
+    row.scheduleAlertFireAt != null
+  ) {
+    await ctx.db.patch(taskId, {
+      scheduleAlertJobId: undefined,
+      scheduleAlertUserKey: undefined,
+      scheduleAlertFireAt: undefined,
+    });
+  }
+}
+
+/** Clear both classic due/reminder and triage schedule one-shots. */
+export async function clearHubTaskAlerts(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+): Promise<void> {
+  await clearHubTaskDueAlert(ctx, taskId);
+  await clearHubTaskScheduleAlert(ctx, taskId);
+}
+
 export async function scheduleHubTaskDueAlert(
   ctx: MutationCtx,
   args: {
@@ -149,16 +179,14 @@ export async function scheduleHubTaskDueAlert(
     userKey: string;
     orgId: Id<"organizations">;
     dueDate?: number | null;
-    scheduledTriggerTime?: number | null;
     reminderAt?: number | null;
     title?: string;
   },
 ): Promise<void> {
   const userKey = args.userKey.trim();
   if (!userKey) return;
-  const fireAt = resolveHubTaskAlertFireAt({
+  const fireAt = resolveHubTaskDueAlertFireAt({
     dueDate: args.dueDate,
-    scheduledTriggerTime: args.scheduledTriggerTime,
     reminderAt: args.reminderAt,
   });
   if (fireAt == null) {
@@ -214,6 +242,80 @@ export async function scheduleHubTaskDueAlert(
     dueAlertJobId: jobId,
     dueAlertUserKey: userKey,
     dueAlertFireAt: fireAt,
+  });
+}
+
+/**
+ * One-shot for in-file triage `scheduledTriggerTime` — distinct category/title
+ * from classic dueDate / reminderAt (`task_due`).
+ */
+export async function scheduleHubTaskScheduleAlert(
+  ctx: MutationCtx,
+  args: {
+    taskId: Id<"tasks">;
+    userKey: string;
+    orgId: Id<"organizations">;
+    scheduledTriggerTime?: number | null;
+    title?: string;
+  },
+): Promise<void> {
+  const userKey = args.userKey.trim();
+  if (!userKey) return;
+  const fireAt = resolveHubTaskScheduleAlertFireAt({
+    scheduledTriggerTime: args.scheduledTriggerTime,
+  });
+  if (fireAt == null) {
+    await clearHubTaskScheduleAlert(ctx, args.taskId);
+    return;
+  }
+  const row = await ctx.db.get(args.taskId);
+  if (!row) return;
+  if (row.status === "done" || row.status === "archived") {
+    await clearHubTaskScheduleAlert(ctx, args.taskId);
+    return;
+  }
+
+  if (
+    row.scheduleAlertJobId &&
+    row.scheduleAlertFireAt === fireAt &&
+    row.scheduleAlertUserKey === userKey
+  ) {
+    return;
+  }
+  await cancelJob(ctx, row.scheduleAlertJobId);
+
+  const now = Date.now();
+  const runAt = fireAt > now ? fireAt : now;
+  const entityId = String(args.taskId);
+  const dedupeKey = buildAlertDedupeKey({
+    userKey,
+    category: "task_scheduled",
+    entityType: "task",
+    entityId,
+    fireAt,
+  });
+  const label = args.title?.trim() || row.title.trim() || "Task";
+  const title = `Scheduled: ${label}`;
+  const deepLinkPath = hubTaskDeepLink(entityId);
+
+  const jobId = await ctx.scheduler.runAt(
+    runAt,
+    internal.alerts.fireTaskScheduled,
+    {
+      taskId: args.taskId,
+      userKey,
+      orgId: args.orgId,
+      fireAt,
+      dedupeKey,
+      title,
+      deepLinkPath,
+    },
+  );
+
+  await ctx.db.patch(args.taskId, {
+    scheduleAlertJobId: jobId,
+    scheduleAlertUserKey: userKey,
+    scheduleAlertFireAt: fireAt,
   });
 }
 
@@ -303,7 +405,7 @@ export async function scheduleVaultFileTaskDueAlert(
 }
 
 /**
- * Load hub task and schedule or clear due alert from current row state.
+ * Load hub task and schedule or clear due + schedule alerts from current row.
  * Call after create/update/complete/delete mutations (authenticated userKey only).
  */
 export async function syncHubTaskDueAlert(
@@ -316,7 +418,7 @@ export async function syncHubTaskDueAlert(
 ): Promise<void> {
   const row = await ctx.db.get(args.taskId);
   if (!row) {
-    await clearHubTaskDueAlert(ctx, args.taskId);
+    await clearHubTaskAlerts(ctx, args.taskId);
     return;
   }
   await scheduleHubTaskDueAlert(ctx, {
@@ -324,8 +426,14 @@ export async function syncHubTaskDueAlert(
     userKey: args.userKey,
     orgId: args.orgId,
     dueDate: row.dueDate,
-    scheduledTriggerTime: row.scheduledTriggerTime,
     reminderAt: row.reminderAt,
+    title: row.title,
+  });
+  await scheduleHubTaskScheduleAlert(ctx, {
+    taskId: args.taskId,
+    userKey: args.userKey,
+    orgId: args.orgId,
+    scheduledTriggerTime: row.scheduledTriggerTime,
     title: row.title,
   });
 }

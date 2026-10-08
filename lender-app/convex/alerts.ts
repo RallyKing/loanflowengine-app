@@ -27,12 +27,15 @@ import { assertInternalAppPath } from "../lib/alerts/internalPath";
 import {
   isFileSnoozeAlertStillValid,
   isHubTaskDueAlertStillValid,
+  isHubTaskScheduleAlertStillValid,
   isVaultFileTaskDueAlertStillValid,
   parseSnoozedUntilMs,
-  resolveHubTaskAlertFireAt,
+  resolveHubTaskDueAlertFireAt,
+  resolveHubTaskScheduleAlertFireAt,
 } from "../lib/alerts/fireValidity";
 import {
   scheduleHubTaskDueAlert,
+  scheduleHubTaskScheduleAlert,
   schedulePipelineSnoozeAlert,
   scheduleVaultFileTaskDueAlert,
 } from "./alertSchedule";
@@ -71,6 +74,10 @@ function prefsFromDoc(
     task_due: {
       inApp: row.taskDueInApp,
       push: row.taskDuePush,
+    },
+    task_scheduled: {
+      inApp: row.taskScheduledInApp ?? true,
+      push: row.taskScheduledPush ?? false,
     },
   });
 }
@@ -249,7 +256,6 @@ export const fireTaskDue = internalMutation({
       if (
         !isHubTaskDueAlertStillValid({
           dueDate: row.dueDate,
-          scheduledTriggerTime: row.scheduledTriggerTime,
           reminderAt: row.reminderAt,
           expectedFireAt: args.fireAt,
           status: row.status,
@@ -310,6 +316,54 @@ export const fireTaskDue = internalMutation({
       body: args.body,
       entityType: "documentVaultFileTask",
       entityId: String(args.fileTaskId),
+      deepLinkPath: args.deepLinkPath,
+      fireAt: args.fireAt,
+      dedupeKey: args.dedupeKey,
+    });
+    return {
+      inserted: id != null,
+      reason: id != null ? ("ok" as const) : ("skipped" as const),
+    };
+  },
+});
+
+export const fireTaskScheduled = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    userKey: v.string(),
+    orgId: v.id("organizations"),
+    fireAt: v.number(),
+    dedupeKey: v.string(),
+    title: v.string(),
+    deepLinkPath: v.string(),
+    body: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.taskId);
+    if (!row) return { inserted: false as const, reason: "missing" as const };
+    if (
+      !isHubTaskScheduleAlertStillValid({
+        scheduledTriggerTime: row.scheduledTriggerTime,
+        expectedFireAt: args.fireAt,
+        status: row.status,
+      })
+    ) {
+      return { inserted: false as const, reason: "stale" as const };
+    }
+    if (
+      row.scheduleAlertUserKey &&
+      row.scheduleAlertUserKey.trim() !== args.userKey.trim()
+    ) {
+      return { inserted: false as const, reason: "user_mismatch" as const };
+    }
+    const id = await insertAlertIdempotent(ctx, {
+      userKey: args.userKey,
+      orgId: args.orgId,
+      category: "task_scheduled",
+      title: args.title,
+      body: args.body,
+      entityType: "task",
+      entityId: String(args.taskId),
       deepLinkPath: args.deepLinkPath,
       fireAt: args.fireAt,
       dedupeKey: args.dedupeKey,
@@ -587,6 +641,7 @@ export const fireSelfTestReminder = internalMutation({
 const alertCategoryArg = v.union(
   v.literal("file_snooze_due"),
   v.literal("task_due"),
+  v.literal("task_scheduled"),
 );
 const alertChannelArg = v.union(v.literal("inApp"), v.literal("push"));
 
@@ -596,6 +651,8 @@ function prefsDocFromResolved(resolved: AlertPreferencesResolved) {
     fileSnoozeDuePush: resolved.file_snooze_due.push,
     taskDueInApp: resolved.task_due.inApp,
     taskDuePush: resolved.task_due.push,
+    taskScheduledInApp: resolved.task_scheduled.inApp,
+    taskScheduledPush: resolved.task_scheduled.push,
   };
 }
 
@@ -733,23 +790,14 @@ export const backfillAlertSchedulesPage = internalMutation({
     }
 
     if (args.phase === "hub_tasks") {
-      // Paginate all tasks (not by_dueDate): in-file triage schedules use
-      // scheduledTriggerTime / reminderAt without a classic dueDate.
+      // Paginate all tasks (not by_dueDate): classic due/reminder and triage
+      // scheduledTriggerTime use separate one-shot jobs.
       const { page, isDone, continueCursor } = await ctx.db
         .query("tasks")
         .order("asc")
         .paginate({ numItems: pageSize, cursor: startCursor });
       examined = page.length;
       for (const row of page) {
-        const fireAt = resolveHubTaskAlertFireAt({
-          dueDate: row.dueDate,
-          scheduledTriggerTime: row.scheduledTriggerTime,
-          reminderAt: row.reminderAt,
-        });
-        if (fireAt == null) {
-          skipped += 1;
-          continue;
-        }
         if (!row.organizationId) {
           skipped += 1;
           continue;
@@ -758,11 +806,19 @@ export const backfillAlertSchedulesPage = internalMutation({
           skipped += 1;
           continue;
         }
-        if (row.dueAlertJobId != null) {
+        const dueFireAt = resolveHubTaskDueAlertFireAt({
+          dueDate: row.dueDate,
+          reminderAt: row.reminderAt,
+        });
+        const scheduleFireAt = resolveHubTaskScheduleAlertFireAt({
+          scheduledTriggerTime: row.scheduledTriggerTime,
+        });
+        if (dueFireAt == null && scheduleFireAt == null) {
           skipped += 1;
           continue;
         }
         const userKey = (
+          row.scheduleAlertUserKey ??
           row.dueAlertUserKey ??
           row.ownerUserId ??
           row.assigneeId ??
@@ -772,16 +828,53 @@ export const backfillAlertSchedulesPage = internalMutation({
           skipped += 1;
           continue;
         }
-        await scheduleHubTaskDueAlert(ctx, {
-          taskId: row._id,
-          userKey,
-          orgId: row.organizationId,
-          dueDate: row.dueDate,
-          scheduledTriggerTime: row.scheduledTriggerTime,
-          reminderAt: row.reminderAt,
-          title: row.title,
-        });
-        scheduled += 1;
+        let didSchedule = false;
+        // Re-sync due path when missing, or when a PR#65 job was keyed off
+        // scheduledTriggerTime alone (dueFireAt null but dueAlertJobId set).
+        if (
+          dueFireAt != null &&
+          (row.dueAlertJobId == null ||
+            row.dueAlertFireAt !== dueFireAt ||
+            row.dueAlertUserKey !== userKey)
+        ) {
+          await scheduleHubTaskDueAlert(ctx, {
+            taskId: row._id,
+            userKey,
+            orgId: row.organizationId,
+            dueDate: row.dueDate,
+            reminderAt: row.reminderAt,
+            title: row.title,
+          });
+          didSchedule = true;
+        } else if (dueFireAt == null && row.dueAlertJobId != null) {
+          // Clear stale due job that only covered triage schedule.
+          await scheduleHubTaskDueAlert(ctx, {
+            taskId: row._id,
+            userKey,
+            orgId: row.organizationId,
+            dueDate: row.dueDate,
+            reminderAt: row.reminderAt,
+            title: row.title,
+          });
+          didSchedule = true;
+        }
+        if (
+          scheduleFireAt != null &&
+          (row.scheduleAlertJobId == null ||
+            row.scheduleAlertFireAt !== scheduleFireAt ||
+            row.scheduleAlertUserKey !== userKey)
+        ) {
+          await scheduleHubTaskScheduleAlert(ctx, {
+            taskId: row._id,
+            userKey,
+            orgId: row.organizationId,
+            scheduledTriggerTime: row.scheduledTriggerTime,
+            title: row.title,
+          });
+          didSchedule = true;
+        }
+        if (didSchedule) scheduled += 1;
+        else skipped += 1;
       }
       return {
         phase: args.phase as BackfillPhase,
