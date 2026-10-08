@@ -450,55 +450,85 @@ export const getPreferences = query({
   },
 });
 
-export const setPreferences = mutation({
+const alertPreferenceArgs = {
+  userKey: v.string(),
+  fileSnoozeDueInApp: v.optional(v.boolean()),
+  fileSnoozeDuePush: v.optional(v.boolean()),
+  taskDueInApp: v.optional(v.boolean()),
+  taskDuePush: v.optional(v.boolean()),
+  ...memberUserKeyArg,
+};
+
+async function upsertAlertPreferencesHandler(
+  ctx: MutationCtx,
   args: {
-    userKey: v.string(),
-    fileSnoozeDueInApp: v.optional(v.boolean()),
-    fileSnoozeDuePush: v.optional(v.boolean()),
-    taskDueInApp: v.optional(v.boolean()),
-    taskDuePush: v.optional(v.boolean()),
-    ...memberUserKeyArg,
+    userKey: string;
+    fileSnoozeDueInApp?: boolean;
+    fileSnoozeDuePush?: boolean;
+    taskDueInApp?: boolean;
+    taskDuePush?: boolean;
+    memberUserKey?: string;
   },
-  handler: async (ctx, args) => {
-    const k = await assertCallerOwnsUserKey(
-      ctx,
-      args.userKey,
-      args.memberUserKey,
-    );
-    const existing = await ctx.db
-      .query("alertPreferences")
-      .withIndex("by_userKey", (q) => q.eq("userKey", k))
-      .first();
-    const now = Date.now();
-    const next = {
-      fileSnoozeDueInApp:
-        args.fileSnoozeDueInApp ??
-        existing?.fileSnoozeDueInApp ??
-        DEFAULT_ALERT_PREFERENCES.file_snooze_due.inApp,
-      fileSnoozeDuePush:
-        args.fileSnoozeDuePush ??
-        existing?.fileSnoozeDuePush ??
-        DEFAULT_ALERT_PREFERENCES.file_snooze_due.push,
-      taskDueInApp:
-        args.taskDueInApp ??
-        existing?.taskDueInApp ??
-        DEFAULT_ALERT_PREFERENCES.task_due.inApp,
-      taskDuePush:
-        args.taskDuePush ??
-        existing?.taskDuePush ??
-        DEFAULT_ALERT_PREFERENCES.task_due.push,
-      updatedAt: now,
-    };
-    if (existing) {
-      await ctx.db.patch(existing._id, next);
+) {
+  const k = await assertCallerOwnsUserKey(
+    ctx,
+    args.userKey,
+    args.memberUserKey,
+  );
+  const existing = await ctx.db
+    .query("alertPreferences")
+    .withIndex("by_userKey", (q) => q.eq("userKey", k))
+    .first();
+  const next = {
+    fileSnoozeDueInApp:
+      args.fileSnoozeDueInApp ??
+      existing?.fileSnoozeDueInApp ??
+      DEFAULT_ALERT_PREFERENCES.file_snooze_due.inApp,
+    fileSnoozeDuePush:
+      args.fileSnoozeDuePush ??
+      existing?.fileSnoozeDuePush ??
+      DEFAULT_ALERT_PREFERENCES.file_snooze_due.push,
+    taskDueInApp:
+      args.taskDueInApp ??
+      existing?.taskDueInApp ??
+      DEFAULT_ALERT_PREFERENCES.task_due.inApp,
+    taskDuePush:
+      args.taskDuePush ??
+      existing?.taskDuePush ??
+      DEFAULT_ALERT_PREFERENCES.task_due.push,
+  };
+  if (existing) {
+    if (
+      existing.fileSnoozeDueInApp === next.fileSnoozeDueInApp &&
+      existing.fileSnoozeDuePush === next.fileSnoozeDuePush &&
+      existing.taskDueInApp === next.taskDueInApp &&
+      existing.taskDuePush === next.taskDuePush
+    ) {
       return { ok: true as const, id: existing._id };
     }
-    const id = await ctx.db.insert("alertPreferences", {
-      userKey: k,
+    await ctx.db.patch(existing._id, {
       ...next,
+      updatedAt: Date.now(),
     });
-    return { ok: true as const, id };
-  },
+    return { ok: true as const, id: existing._id };
+  }
+  const id = await ctx.db.insert("alertPreferences", {
+    userKey: k,
+    ...next,
+    updatedAt: Date.now(),
+  });
+  return { ok: true as const, id };
+}
+
+/** @deprecated Prefer `upsertPreferences` — same handler. */
+export const setPreferences = mutation({
+  args: alertPreferenceArgs,
+  handler: upsertAlertPreferencesHandler,
+});
+
+export const upsertPreferences = mutation({
+  args: alertPreferenceArgs,
+  handler: upsertAlertPreferencesHandler,
 });
 
 // ---------- Bounded backfill (operator / one-shot; no self-reschedule pump) ----------

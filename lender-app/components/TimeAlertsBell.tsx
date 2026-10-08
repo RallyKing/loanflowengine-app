@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQueries, type RequestForQueries } from "convex/react";
 import { useRouter } from "next/navigation";
 import { AlarmClock, BellRing, ListTodo, Moon } from "lucide-react";
@@ -16,6 +17,7 @@ import {
 } from "@/components/providers/TriageClockProvider";
 import { formatRelativeTimestamp } from "@/lib/formatRelativeTimestamp";
 import { isInternalAppPath } from "@/lib/alerts/internalPath";
+import { settingsHref } from "@/lib/settingsRegistry";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 
 type AlertRow = Doc<"alerts">;
@@ -495,7 +497,15 @@ function TimeAlertsBellInner({
 
         <p className="mt-2 border-t border-border pt-2 text-[10px] text-muted-foreground">
           File snooze and task due reminders. Notification Alerts stay in the
-          Alerts bell. Preferences land in Settings later.
+          Alerts bell.{" "}
+          <Link
+            href={settingsHref("alerts")}
+            className="font-medium text-primary underline-offset-2 hover:underline"
+            data-testid="time-alerts-settings-link"
+            onClick={() => setOpen(false)}
+          >
+            Reminder preferences
+          </Link>
         </p>
       </PortalOverlayPanel>
     </div>

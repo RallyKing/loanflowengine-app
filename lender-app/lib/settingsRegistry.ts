@@ -42,6 +42,7 @@ export const SETTINGS_SECTION_IDS = [
   "billing",
   "domains",
   "notifications",
+  "alerts",
   "webhooks",
   "aiProviders",
   "data",
@@ -215,6 +216,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     description: "In-app alerts, optional email, and @mention / deadline behavior.",
   },
   {
+    id: "alerts",
+    label: "Alerts",
+    shortLabel: "Alerts",
+    description:
+      "File snooze and task due reminder channels (in-app and stored push prefs).",
+  },
+  {
     id: "webhooks",
     label: "Webhooks",
     shortLabel: "Webhooks",
@@ -331,8 +339,8 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategoryMeta[] = [
     id: "communications",
     label: "Communications",
     description:
-      "Thin Settings link to Automations (message templates) plus notification preferences.",
-    sectionIds: ["messageTemplates", "notifications"],
+      "Thin Settings link to Automations (message templates) plus notification and reminder preferences.",
+    sectionIds: ["messageTemplates", "notifications", "alerts"],
   },
   {
     id: "integrations",
