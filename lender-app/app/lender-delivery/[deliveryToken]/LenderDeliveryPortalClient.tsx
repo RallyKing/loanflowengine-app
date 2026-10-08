@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
 import { useMutation, useQuery } from "convex/react";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -20,27 +19,8 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { LenderDeliveryBlockPanel } from "@/components/library/LenderDeliveryBlockPanel";
+import { RichFilePreviewLazy as RichFilePreview } from "@/components/library/preview/RichFilePreviewLazy";
 import { cn } from "@/lib/cn";
-
-const RichFilePreview = dynamic(
-  () =>
-    import("@/components/library/preview/RichFilePreview").then((m) => ({
-      default: m.RichFilePreview,
-    })),
-  {
-    ssr: false,
-    loading: () => (
-      <div
-        className="flex min-h-[12rem] items-center justify-center gap-2 text-sm text-muted-foreground"
-        role="status"
-        aria-live="polite"
-      >
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-        Loading preview…
-      </div>
-    ),
-  },
-);
 import type { FolderTreeNode } from "@/lib/library/documentVaultFolders";
 import { downloadVaultDocumentsZip } from "@/lib/library/downloadVaultDocumentsZip";
 import {
