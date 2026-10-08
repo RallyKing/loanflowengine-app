@@ -457,9 +457,6 @@ export async function syncHubTaskAlerts(
   });
 }
 
-/** @deprecated Use syncHubTaskAlerts — syncs due/reminder and schedule paths. */
-export const syncHubTaskDueAlert = syncHubTaskAlerts;
-
 /**
  * Load vault file-task and schedule or clear due alert from current row state.
  */
