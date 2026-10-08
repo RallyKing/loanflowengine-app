@@ -520,9 +520,7 @@ export function ContactsDataTable({
       <div
         className={cn(OP_WORKSPACE_ISLAND, "min-h-[28rem] p-4")}
         data-testid="contacts-table-loading"
-        role="status"
         aria-busy="true"
-        aria-label="Loading contacts"
       >
         <div className="mb-3 h-9 max-w-md animate-pulse rounded-dlc-md border border-border/40 bg-dlc-surface-low/40" />
         <OperationalSkeletonList rows={12} gapClassName="space-y-1.5" />

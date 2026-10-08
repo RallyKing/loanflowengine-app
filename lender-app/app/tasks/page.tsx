@@ -2311,9 +2311,7 @@ function TasksPageInner() {
       {listLoading && (
         <div
           className="space-y-3"
-          role="status"
           aria-busy="true"
-          aria-label="Loading tasks"
           data-testid="tasks-list-loading"
         >
           <div className="h-9 max-w-sm animate-pulse rounded-dlc-md border border-border/50 bg-dlc-surface-low/50" />

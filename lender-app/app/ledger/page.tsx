@@ -861,6 +861,8 @@ export default function LedgerPage() {
               settings.tableDensity,
               "w-full min-w-[1180px] text-sm"
             )}
+            aria-busy={loading || undefined}
+            aria-label={loading ? "Loading fundings" : undefined}
           >
             <thead className="sticky top-0 z-[1] border-b border-border/80 bg-muted text-left text-xs font-semibold uppercase tracking-wider text-foreground/80">
               <tr>
