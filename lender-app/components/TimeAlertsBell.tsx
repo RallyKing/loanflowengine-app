@@ -264,7 +264,11 @@ function TimeAlertsBellInner({
     open &&
     !queryError &&
     (allItems === undefined || unreadPayload === undefined);
-  const empty = open && visibleItems != null && visibleItems.length === 0;
+  // Panel children are evaluated even when PortalOverlayPanel returns null
+  // (open=false). List query is skipped while closed, so visibleItems is
+  // undefined — never call .map without a defined array.
+  const listRows = visibleItems ?? [];
+  const empty = open && !loading && !queryError && listRows.length === 0;
 
   return (
     <div
@@ -399,13 +403,13 @@ function TimeAlertsBellInner({
             <p className="text-xs text-muted-foreground" aria-live="polite">
               Loading reminders…
             </p>
-          ) : empty ? (
+          ) : empty || listRows.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              No reminders in this view.
+              {open ? "No reminders in this view." : null}
             </p>
           ) : (
             <ul className="space-y-1" aria-label="Reminder list">
-              {visibleItems!.map((row) => {
+              {listRows.map((row) => {
                 const Icon = categoryIcon(row.category);
                 const unread = row.readAt == null;
                 const hidden = isCurrentlyHidden(row, nowBucket);
