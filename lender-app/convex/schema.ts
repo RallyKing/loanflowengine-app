@@ -2566,6 +2566,8 @@ export default defineSchema({
     libraryDocumentId: v.optional(v.id("libraryDocuments")),
     /** Document Vault file-task that triggered the alert (client submission, etc.). */
     documentVaultFileTaskId: v.optional(v.id("documentVaultFileTasks")),
+    /** Quiet-window client-upload review package awaiting broker approval. */
+    clientUploadReviewId: v.optional(v.id("clientUploadReviews")),
     collaborationThreadId: v.optional(v.id("collaborationThreads")),
     /** Correlation to structured `collaborationActivityEvents` row when applicable. */
     collaborationEventId: v.optional(v.id("collaborationActivityEvents")),
@@ -2582,6 +2584,8 @@ export default defineSchema({
      */
     dedupeKey: v.optional(v.string()),
     emailDispatchedAt: v.optional(v.number()),
+    /** Web Push delivery stamp (dedupe; one push fan-out per notification row). */
+    pushDispatchedAt: v.optional(v.number()),
     /** In-app silencing until instant (ms). */
     snoozedUntil: v.optional(v.number()),
   })
@@ -2589,6 +2593,27 @@ export default defineSchema({
     .index("by_task", ["taskId"])
     .index("by_file", ["fileId"])
     .index("by_user_dedupe", ["userKey", "dedupeKey"]),
+
+  /**
+   * Browser Web Push subscriptions (FCM / Mozilla / Apple push networks).
+   * Delivery is event-driven via webPushActions.trySendWebPush — never polled.
+   */
+  pushSubscriptions: defineTable({
+    organizationId: v.id("organizations"),
+    memberUserKey: v.string(),
+    endpoint: v.string(),
+    keysP256dh: v.string(),
+    keysAuth: v.string(),
+    userAgent: v.optional(v.string()),
+    expirationTime: v.optional(v.number()),
+    createdAt: v.number(),
+    lastSuccessAt: v.optional(v.number()),
+    lastTestAt: v.optional(v.number()),
+  })
+    .index("by_user", ["memberUserKey"])
+    .index("by_org_user", ["organizationId", "memberUserKey"])
+    .index("by_endpoint", ["endpoint"]),
+
   /**
    * Per-task file metadata (the app’s “task files” / attachments store).
    * Bytes live in Convex file storage (`_storage`); each row points at a blob via `storageId`.
@@ -5610,4 +5635,95 @@ export default defineSchema({
     taskDuePush: v.boolean(),
     updatedAt: v.number(),
   }).index("by_userKey", ["userKey"]),
+
+  clientUploadReviewDebounce: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    organizationId: v.id("organizations"),
+    lastUploadAt: v.number(),
+    generation: v.number(),
+    updatedAt: v.number(),
+  }).index("by_pipelineFile", ["pipelineFileId"]),
+
+  clientUploadReviews: defineTable({
+    pipelineFileId: v.id("pipeline"),
+    organizationId: v.id("organizations"),
+    status: v.union(
+      v.literal("awaiting_broker_approval"),
+      v.literal("approved"),
+      v.literal("changes_requested"),
+      v.literal("dismissed"),
+    ),
+    generation: v.number(),
+    lastUploadAt: v.number(),
+    gapReport: v.object({
+      matched: v.array(
+        v.object({
+          fileTaskId: v.id("documentVaultFileTasks"),
+          title: v.string(),
+          status: v.union(
+            v.literal("incomplete"),
+            v.literal("pending_review"),
+            v.literal("complete"),
+          ),
+          isRequired: v.boolean(),
+          uploadedCount: v.number(),
+          note: v.optional(v.string()),
+        }),
+      ),
+      missing: v.array(
+        v.object({
+          fileTaskId: v.id("documentVaultFileTasks"),
+          title: v.string(),
+          status: v.union(
+            v.literal("incomplete"),
+            v.literal("pending_review"),
+            v.literal("complete"),
+          ),
+          isRequired: v.boolean(),
+          uploadedCount: v.number(),
+          note: v.optional(v.string()),
+        }),
+      ),
+      unclear: v.array(
+        v.object({
+          fileTaskId: v.id("documentVaultFileTasks"),
+          title: v.string(),
+          status: v.union(
+            v.literal("incomplete"),
+            v.literal("pending_review"),
+            v.literal("complete"),
+          ),
+          isRequired: v.boolean(),
+          uploadedCount: v.number(),
+          note: v.optional(v.string()),
+        }),
+      ),
+      summaryLine: v.string(),
+    }),
+    draftEmail: v.object({
+      toEmails: v.array(v.string()),
+      subject: v.string(),
+      body: v.string(),
+    }),
+    draftSms: v.object({
+      toPhones: v.array(v.string()),
+      body: v.string(),
+    }),
+    draftTaskReassignment: v.optional(
+      v.object({
+        suggestedAssigneeUserKey: v.string(),
+        reason: v.string(),
+      }),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    decidedAt: v.optional(v.number()),
+    decidedByUserKey: v.optional(v.string()),
+  })
+    .index("by_pipelineFile_createdAt", ["pipelineFileId", "createdAt"])
+    .index("by_org_status_createdAt", [
+      "organizationId",
+      "status",
+      "createdAt",
+    ]),
 });
