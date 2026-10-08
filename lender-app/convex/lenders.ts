@@ -850,7 +850,8 @@ export const list = query({
     const f = listArgsToFilterBundle(args);
 
     if (needsFullScan(f)) {
-      let rows = await ctx.db.query("lenders").order("desc").collect();
+      // bounded: max browse cap — avoid full-table .collect() on filter scans
+      let rows = await ctx.db.query("lenders").order("desc").take(10_000);
       rows = rows.filter((r) => {
         if (!god && !lenderVisibleInOrg(r, organizationId)) return false;
         try {

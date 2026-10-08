@@ -9,7 +9,6 @@ import type { QueryCtx } from "./_generated/server";
 import type { PaginationOptions, PaginationResult } from "convex/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { resolveClientAccessLevel } from "./resourceAccess";
-import { filterContactsByOrgScope } from "./organizationAccess";
 import type { RegistryRoleId } from "../lib/registry/universalRoles";
 import {
   mapContactToRegistryItem,
@@ -534,25 +533,17 @@ async function fetchAllContactRegistryItems(
   ctx: QueryCtx,
   filters: RegistryListFilters,
 ): Promise<RegistryItem[]> {
-  const { organizationId, globalAdmin } = filters;
-  let rows: Doc<"contacts">[];
-
-  if (globalAdmin) {
-    rows = await ctx.db
-      .query("contacts")
-      .withIndex("by_updatedAt")
-      .order("desc")
-      .collect();
-    rows = filterContactsByOrgScope(rows, organizationId);
-  } else {
-    rows = await ctx.db
-      .query("contacts")
-      .withIndex("by_organization_updatedAt", (idx) =>
-        idx.eq("organizationId", organizationId),
-      )
-      .order("desc")
-      .collect();
-  }
+  const { organizationId } = filters;
+  // Always org-index when listing an org hub — never take(N) on the global
+  // contacts stream then filter (starves the active org on multi-tenant DBs).
+  // bounded: LIST_ALL_STREAM_CAP
+  const rows = await ctx.db
+    .query("contacts")
+    .withIndex("by_organization_updatedAt", (idx) =>
+      idx.eq("organizationId", organizationId),
+    )
+    .order("desc")
+    .take(LIST_ALL_STREAM_CAP);
 
   return rows
     .map(mapContactToRegistryItem)
@@ -563,12 +554,13 @@ async function fetchAllEntityRegistryItems(
   ctx: QueryCtx,
   filters: RegistryListFilters,
 ): Promise<RegistryItem[]> {
+  // bounded: LIST_ALL_STREAM_CAP — matches contact/lender streams for listAll
   const raw = await ctx.db
     .query("clients")
     .withIndex("by_organization", (idx) =>
       idx.eq("organizationId", filters.organizationId),
     )
-    .collect();
+    .take(LIST_ALL_STREAM_CAP);
 
   const visible = await filterEntitiesForMember(
     ctx,

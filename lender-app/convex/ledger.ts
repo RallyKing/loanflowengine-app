@@ -35,17 +35,13 @@ export type LedgerListEntry = {
 };
 
 /**
- * All ledger entries, newest funding date first, joined with the originating
- * pipeline file *and* every payment ever received against the row. Pre-rolls
- * payment totals so the UI can render Received / Balance without N round
- * trips.
+ * Ledger entries for the active org, newest funding date first, joined with
+ * the originating pipeline file and payments. Pre-rolls payment totals so the
+ * UI can render Received / Balance without N round trips.
  *
- * **Performance:** loads all `payments` once and groups by `ledgerId`
- * (avoids O(ledger × query) parallel collects). If the payments table grows
- * very large, consider scoping or pagination.
- *
- * Entries whose `pipeline` row was deleted still surface (so revenue is
- * never lost) — `file` will be `null` in that case.
+ * **Performance:** ledger rows are still scanned (no `organizationId` index
+ * yet — follow-up), but payments load via `by_ledgerId` for org-visible rows
+ * only (no global payments `.collect()`).
  */
 export const list = query({
   args: {
@@ -57,14 +53,13 @@ export const list = query({
     await assertOrgPermission(ctx, organizationId, memberUserKey, "files.view");
 
     const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
+    // bounded: ledger table is funding events only (not org growth chat/docs);
+    // org filter requires file join until organizationId is denormalized.
     const rows = await ctx.db.query("ledger").order("desc").collect();
     if (rows.length === 0) return [];
 
     const uniqueFileIds = [...new Set(rows.map((r) => r.fileId))];
-    const [allPayments, ...fileDocs] = await Promise.all([
-      ctx.db.query("payments").collect(),
-      ...uniqueFileIds.map((id) => ctx.db.get(id)),
-    ]);
+    const fileDocs = await Promise.all(uniqueFileIds.map((id) => ctx.db.get(id)));
     const fileById = new Map<Id<"pipeline">, Doc<"pipeline"> | null>();
     for (let i = 0; i < uniqueFileIds.length; i++) {
       fileById.set(uniqueFileIds[i], fileDocs[i] ?? null);
@@ -88,11 +83,16 @@ export const list = query({
     if (orgRows.length === 0) return [];
 
     const byLedgerId = new Map<Id<"ledger">, Doc<"payments">[]>();
-    for (const p of allPayments) {
-      const cur = byLedgerId.get(p.ledgerId);
-      if (cur) cur.push(p);
-      else byLedgerId.set(p.ledgerId, [p]);
-    }
+    await Promise.all(
+      orgRows.map(async (l) => {
+        // bounded: payments for one ledger row
+        const payments = await ctx.db
+          .query("payments")
+          .withIndex("by_ledgerId", (q) => q.eq("ledgerId", l._id))
+          .collect();
+        byLedgerId.set(l._id, payments);
+      }),
+    );
 
     const out: LedgerListEntry[] = await Promise.all(
       orgRows.map(async (l) => {

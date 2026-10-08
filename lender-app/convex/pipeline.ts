@@ -522,7 +522,15 @@ export const listLight = query({
   },
   handler: async (ctx, { includeArchived, organizationId, memberUserKey, maxRows }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
+    const LIST_LIGHT_ORG_CAP = 20_000;
+    // bounded: org-indexed take — never full-table pipeline .collect()
+    const rows = await ctx.db
+      .query("pipeline")
+      .withIndex("by_organization_createdAt", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .order("desc")
+      .take(LIST_LIGHT_ORG_CAP);
     const filtered = includeArchived
       ? rows
       : rows.filter((r) => r.archivedAt == null);
