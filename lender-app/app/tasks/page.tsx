@@ -21,6 +21,7 @@ import {
 import { OperationalRowShell } from "@/components/ui/OperationalRowShell";
 import { OperationalOrientationStrip } from "@/components/ui/OperationalOrientationStrip";
 import { OperationalEmptyState } from "@/components/ui/OperationalEmptyState";
+import { OperationalSkeletonList } from "@/components/ui/OperationalSkeleton";
 import { useOperationalConfirm } from "@/components/ui/OperationalConfirmDialog";
 import { simpleDeleteConfirm } from "@/lib/ui/confirmDestructive";
 import { Input, Select } from "@/components/ui/Input";
@@ -2310,13 +2311,13 @@ function TasksPageInner() {
       {listLoading && (
         <div
           className="space-y-3"
-          role="status"
           aria-busy="true"
-          aria-label="Loading tasks"
+          data-testid="tasks-list-loading"
         >
-          <div className="h-4 w-40 max-w-full animate-pulse rounded bg-muted" />
-          <div className="h-24 max-w-full animate-pulse rounded-lg border border-border/50 bg-muted/40" />
-          <div className="h-36 max-w-full animate-pulse rounded-lg border border-border/40 bg-muted/25" />
+          <div className="h-9 max-w-sm animate-pulse rounded-dlc-md border border-border/50 bg-dlc-surface-low/50" />
+          <div className="overflow-hidden rounded-lg border border-border/80 bg-muted/15 p-2">
+            <OperationalSkeletonList rows={8} gapClassName="space-y-1.5" />
+          </div>
           <p className="text-xs text-muted-foreground">Loading tasks…</p>
         </div>
       )}

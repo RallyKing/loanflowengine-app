@@ -861,6 +861,8 @@ export default function LedgerPage() {
               settings.tableDensity,
               "w-full min-w-[1180px] text-sm"
             )}
+            aria-busy={loading || undefined}
+            aria-label={loading ? "Loading fundings" : undefined}
           >
             <thead className="sticky top-0 z-[1] border-b border-border/80 bg-muted text-left text-xs font-semibold uppercase tracking-wider text-foreground/80">
               <tr>
@@ -890,10 +892,10 @@ export default function LedgerPage() {
             </thead>
             <tbody>
               {loading &&
-                Array.from({ length: 6 }, (_, i) => (
-                  <tr key={i} aria-hidden>
+                Array.from({ length: 8 }, (_, i) => (
+                  <tr key={`ledger-skel-${i}`} aria-hidden>
                     <td colSpan={11} className="px-3 py-1.5">
-                      <OperationalSkeletonRow />
+                      <OperationalSkeletonRow data-testid={i === 0 ? "ledger-table-loading" : undefined} />
                     </td>
                   </tr>
                 ))}
