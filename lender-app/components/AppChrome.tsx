@@ -14,6 +14,7 @@ import { ChevronLeft } from "lucide-react";
 import { useColorScheme } from "@/lib/colorScheme";
 import { ColorSchemeToggle } from "@/components/ColorSchemeToggle";
 import { UserNotificationsBell } from "@/components/UserNotificationsBell";
+import { TimeAlertsBell } from "@/components/TimeAlertsBell";
 import { ProductUpdatesBellSafe } from "@/components/ProductUpdatesBell";
 import { SettingsLink } from "@/components/SettingsLink";
 import { ConvexConnectionStatus } from "@/components/ConvexConnectionStatus";
@@ -393,6 +394,7 @@ function AppChromeBody({
                     {notifyUserKey ? (
                       <>
                         <ProductUpdatesBellSafe userKey={notifyUserKey} />
+                        <TimeAlertsBell userKey={notifyUserKey} />
                         <UserNotificationsBell userKey={notifyUserKey} />
                       </>
                     ) : null}
@@ -583,6 +585,7 @@ function AppChromeBody({
               {notifyUserKey ? (
                 <>
                   <ProductUpdatesBellSafe userKey={notifyUserKey} />
+                  <TimeAlertsBell userKey={notifyUserKey} />
                   <UserNotificationsBell userKey={notifyUserKey} />
                 </>
               ) : null}
