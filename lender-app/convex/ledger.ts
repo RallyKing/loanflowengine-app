@@ -6,9 +6,8 @@ import {
   assertCanMutatePipelineRow,
   assertOrgPermission,
   assertOrgScopeArgs,
-  pipelineFileReadable,
+  filterPipelineRowsForMember,
   resolveOrgPipelineFileAccessLevel,
-  sessionKeyIsGlobalAdmin,
 } from "./organizationAccess";
 
 /**
@@ -35,17 +34,12 @@ export type LedgerListEntry = {
 };
 
 /**
- * All ledger entries, newest funding date first, joined with the originating
- * pipeline file *and* every payment ever received against the row. Pre-rolls
- * payment totals so the UI can render Received / Balance without N round
- * trips.
+ * Org-scoped ledger entries, newest funding date first, joined with the
+ * originating pipeline file and payments for those files. Pre-rolls payment
+ * totals so the UI can render Received / Balance without N round trips.
  *
- * **Performance:** loads all `payments` once and groups by `ledgerId`
- * (avoids O(ledger × query) parallel collects). If the payments table grows
- * very large, consider scoping or pagination.
- *
- * Entries whose `pipeline` row was deleted still surface (so revenue is
- * never lost) — `file` will be `null` in that case.
+ * **Performance:** starts from org-indexed pipeline rows, then reads
+ * `ledger` / `payments` via `by_fileId` (no global table scans).
  */
 export const list = query({
   args: {
@@ -56,51 +50,50 @@ export const list = query({
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
     await assertOrgPermission(ctx, organizationId, memberUserKey, "files.view");
 
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
-    const rows = await ctx.db.query("ledger").order("desc").collect();
-    if (rows.length === 0) return [];
+    const LEDGER_ORG_FILE_CAP = 5_000;
+    // bounded: org pipeline hose — ledger has no organizationId index
+    const orgFiles = await ctx.db
+      .query("pipeline")
+      .withIndex("by_organization_createdAt", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .order("desc")
+      .take(LEDGER_ORG_FILE_CAP);
 
-    const uniqueFileIds = [...new Set(rows.map((r) => r.fileId))];
-    const [allPayments, ...fileDocs] = await Promise.all([
-      ctx.db.query("payments").collect(),
-      ...uniqueFileIds.map((id) => ctx.db.get(id)),
-    ]);
-    const fileById = new Map<Id<"pipeline">, Doc<"pipeline"> | null>();
-    for (let i = 0; i < uniqueFileIds.length; i++) {
-      fileById.set(uniqueFileIds[i], fileDocs[i] ?? null);
-    }
+    const visibleFiles = await filterPipelineRowsForMember(
+      ctx,
+      orgFiles,
+      organizationId,
+      memberUserKey,
+    );
+    if (visibleFiles.length === 0) return [];
 
-    const orgRows = god
-      ? rows.filter((l) => {
-          const f = fileById.get(l.fileId);
-          return f != null && f.organizationId === organizationId;
-        })
-      : (
-          await Promise.all(
-            rows.map(async (l) => {
-              const f = fileById.get(l.fileId);
-              if (!f || f.organizationId !== organizationId) return null;
-              const ok = await pipelineFileReadable(ctx, f, memberUserKey);
-              return ok ? l : null;
-            }),
-          )
-        ).filter((l): l is Doc<"ledger"> => l != null);
-    if (orgRows.length === 0) return [];
+    const out: LedgerListEntry[] = [];
+    for (const file of visibleFiles) {
+      // bounded: few ledger rows per file
+      const ledgerRows = await ctx.db
+        .query("ledger")
+        .withIndex("by_fileId", (q) => q.eq("fileId", file._id))
+        .collect();
+      if (ledgerRows.length === 0) continue;
 
-    const byLedgerId = new Map<Id<"ledger">, Doc<"payments">[]>();
-    for (const p of allPayments) {
-      const cur = byLedgerId.get(p.ledgerId);
-      if (cur) cur.push(p);
-      else byLedgerId.set(p.ledgerId, [p]);
-    }
+      // bounded: payments denormalized by fileId
+      const filePayments = await ctx.db
+        .query("payments")
+        .withIndex("by_fileId", (q) => q.eq("fileId", file._id))
+        .collect();
+      const byLedgerId = new Map<Id<"ledger">, Doc<"payments">[]>();
+      for (const p of filePayments) {
+        const cur = byLedgerId.get(p.ledgerId);
+        if (cur) cur.push(p);
+        else byLedgerId.set(p.ledgerId, [p]);
+      }
 
-    const out: LedgerListEntry[] = await Promise.all(
-      orgRows.map(async (l) => {
-        const file = fileById.get(l.fileId) ?? null;
-        const canEditFile = file
-          ? (await resolveOrgPipelineFileAccessLevel(ctx, file, memberUserKey)) ===
-            "edit"
-          : false;
+      const canEditFile =
+        (await resolveOrgPipelineFileAccessLevel(ctx, file, memberUserKey)) ===
+        "edit";
+
+      for (const l of ledgerRows) {
         const paymentsUnsorted = byLedgerId.get(l._id) ?? [];
         const payments = [...paymentsUnsorted].sort((a, b) => b.date - a.date);
         let receivedGross = 0;
@@ -113,7 +106,7 @@ export const list = query({
             lastPaymentDate = p.date;
           }
         }
-        return {
+        out.push({
           ledger: l,
           file,
           payments,
@@ -122,9 +115,9 @@ export const list = query({
           paymentCount: payments.length,
           lastPaymentDate,
           canEditFile,
-        };
-      }),
-    );
+        });
+      }
+    }
     out.sort((a, b) => b.ledger.date - a.ledger.date);
     return out;
   },

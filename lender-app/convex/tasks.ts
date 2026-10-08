@@ -146,8 +146,8 @@ const orgScopeArgs = {
   memberUserKey: v.optional(v.string()),
 };
 
-/** Bound reads for `getAll` — unbounded `.collect()` can exceed Convex query limits. */
-const TASKS_GET_ALL_MAX_ROWS = 20_000;
+/** Bound reads for `getAll` — keep the live hub subscription payload finite. */
+const TASKS_GET_ALL_MAX_ROWS = 3_000;
 
 async function requireTaskOrg(
   ctx: QueryCtx | MutationCtx,

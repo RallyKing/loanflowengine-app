@@ -509,6 +509,8 @@ export function PipelinePageClient() {
       memberUserKey,
       contactRoleIdFilter: DEFAULT_CONTACT_ROLE_IDS.referralPartner,
       strictCanonicalRoleMatch: true,
+      /** Bound first-paint hose — filter dropdown does not need the full org. */
+      limit: 500,
     };
   }, [orgQueryReady, activeOrganizationId, memberUserKey]);
   const referralPartnerContacts = useQuery(

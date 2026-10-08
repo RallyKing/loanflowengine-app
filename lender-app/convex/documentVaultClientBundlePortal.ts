@@ -281,7 +281,14 @@ export const getBundleByToken = query({
     const dealPayload = embeddedDealPayloadIsSubstantive(pipeline.dealData)
       ? (pipeline.dealData as Record<string, unknown>)
       : {};
-    const allPipelineTasks = await loadPipelineVaultTasks(ctx, row.pipelineFileId);
+    // Selective bundles only need the listed task docs; all_outstanding still
+    // scans the file's vault tasks so newly outstanding portal tasks appear.
+    const allPipelineTasks =
+      row.mode === "all_outstanding"
+        ? await loadPipelineVaultTasks(ctx, row.pipelineFileId)
+        : (
+            await Promise.all(row.fileTaskIds.map((id) => ctx.db.get(id)))
+          ).filter((t): t is Doc<"documentVaultFileTasks"> => t != null);
     const scopedTaskIds = resolveBundleFileTaskIds(row, allPipelineTasks);
 
     const pushTask = async (task: Doc<"documentVaultFileTasks">) => {

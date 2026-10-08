@@ -538,20 +538,22 @@ async function fetchAllContactRegistryItems(
   let rows: Doc<"contacts">[];
 
   if (globalAdmin) {
+    // bounded: LIST_ALL_STREAM_CAP — same merge budget as lenders stream
     rows = await ctx.db
       .query("contacts")
       .withIndex("by_updatedAt")
       .order("desc")
-      .collect();
+      .take(LIST_ALL_STREAM_CAP);
     rows = filterContactsByOrgScope(rows, organizationId);
   } else {
+    // bounded: LIST_ALL_STREAM_CAP — org-indexed newest-first hose
     rows = await ctx.db
       .query("contacts")
       .withIndex("by_organization_updatedAt", (idx) =>
         idx.eq("organizationId", organizationId),
       )
       .order("desc")
-      .collect();
+      .take(LIST_ALL_STREAM_CAP);
   }
 
   return rows
@@ -563,12 +565,13 @@ async function fetchAllEntityRegistryItems(
   ctx: QueryCtx,
   filters: RegistryListFilters,
 ): Promise<RegistryItem[]> {
+  // bounded: LIST_ALL_STREAM_CAP — matches contact/lender streams for listAll
   const raw = await ctx.db
     .query("clients")
     .withIndex("by_organization", (idx) =>
       idx.eq("organizationId", filters.organizationId),
     )
-    .collect();
+    .take(LIST_ALL_STREAM_CAP);
 
   const visible = await filterEntitiesForMember(
     ctx,

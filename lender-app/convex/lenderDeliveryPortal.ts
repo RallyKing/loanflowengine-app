@@ -180,11 +180,6 @@ export const getDeliveryByToken = query({
     const pipeline = await ctx.db.get(row.pipelineFileId);
     if (!lender || !pipeline) return { status: "not_found" as const };
 
-    const allFolders = await ctx.db
-      .query("documentFolders")
-      .withIndex("by_pipeline", (q) => q.eq("pipelineFileId", row.pipelineFileId))
-      .collect();
-
     const documents: {
       documentId: Id<"libraryDocuments">;
       versionId?: Id<"libraryDocumentVersions">;
@@ -234,13 +229,25 @@ export const getDeliveryByToken = query({
     }
 
     /**
-     * Mirror Document Vault organization for included files only: each doc's
-     * folder plus ancestors (empty sibling folders omitted). Explicitly
-     * selected folder/task subtrees still contribute docs via
-     * resolveIncludedDocuments; display prunes to paths that own those docs.
+     * Walk ancestors of included docs only — avoid collecting every folder on
+     * the pipeline file. Mirror Document Vault organization for package paths.
      */
+    const folderById = new Map<string, Doc<"documentFolders">>();
+    for (const startId of documents.map((d) => d.folderId)) {
+      let cur = startId;
+      let guard = 0;
+      while (cur && !folderById.has(String(cur)) && guard < 64) {
+        guard += 1;
+        const folder = await ctx.db.get(cur);
+        if (!folder || folder.pipelineFileId !== row.pipelineFileId) break;
+        folderById.set(String(folder._id), folder);
+        cur = folder.parentFolderId;
+      }
+    }
+    const ancestorFolders = [...folderById.values()];
+
     const packageFolderIdSet = collectPackageFolderIds(
-      allFolders.map((f) => ({
+      ancestorFolders.map((f) => ({
         _id: f._id,
         name: f.name,
         parentFolderId: f.parentFolderId,
@@ -250,7 +257,7 @@ export const getDeliveryByToken = query({
       documents.map((d) => d.folderId),
     );
 
-    const folders = allFolders
+    const folders = ancestorFolders
       .filter((f) => packageFolderIdSet.has(String(f._id)))
       .map((f) => ({
         _id: f._id,
