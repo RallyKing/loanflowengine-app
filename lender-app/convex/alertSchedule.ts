@@ -9,6 +9,7 @@ import { internal } from "./_generated/api";
 import { buildAlertDedupeKey } from "../lib/alerts/dedupe";
 import {
   parseSnoozedUntilMs,
+  resolveHubTaskAlertFireAt,
   shouldScheduleOneShot,
 } from "../lib/alerts/fireValidity";
 import {
@@ -147,17 +148,23 @@ export async function scheduleHubTaskDueAlert(
     taskId: Id<"tasks">;
     userKey: string;
     orgId: Id<"organizations">;
-    dueDate: number | null | undefined;
+    dueDate?: number | null;
+    scheduledTriggerTime?: number | null;
+    reminderAt?: number | null;
     title?: string;
   },
 ): Promise<void> {
   const userKey = args.userKey.trim();
   if (!userKey) return;
-  if (args.dueDate == null || !Number.isFinite(args.dueDate)) {
+  const fireAt = resolveHubTaskAlertFireAt({
+    dueDate: args.dueDate,
+    scheduledTriggerTime: args.scheduledTriggerTime,
+    reminderAt: args.reminderAt,
+  });
+  if (fireAt == null) {
     await clearHubTaskDueAlert(ctx, args.taskId);
     return;
   }
-  const fireAt = Math.trunc(args.dueDate);
   const row = await ctx.db.get(args.taskId);
   if (!row) return;
   if (row.status === "done" || row.status === "archived") {
@@ -185,7 +192,11 @@ export async function scheduleHubTaskDueAlert(
     fireAt,
   });
   const label = args.title?.trim() || row.title.trim() || "Task";
-  const title = `Due: ${label}`;
+  const dueMatches =
+    args.dueDate != null &&
+    Number.isFinite(args.dueDate) &&
+    Math.abs(Math.trunc(args.dueDate) - fireAt) <= 1000;
+  const title = `${dueMatches ? "Due" : "Reminder"}: ${label}`;
   const deepLinkPath = hubTaskDeepLink(entityId);
 
   const jobId = await ctx.scheduler.runAt(runAt, internal.alerts.fireTaskDue, {
@@ -313,6 +324,8 @@ export async function syncHubTaskDueAlert(
     userKey: args.userKey,
     orgId: args.orgId,
     dueDate: row.dueDate,
+    scheduledTriggerTime: row.scheduledTriggerTime,
+    reminderAt: row.reminderAt,
     title: row.title,
   });
 }

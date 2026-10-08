@@ -29,6 +29,7 @@ import {
   isHubTaskDueAlertStillValid,
   isVaultFileTaskDueAlertStillValid,
   parseSnoozedUntilMs,
+  resolveHubTaskAlertFireAt,
 } from "../lib/alerts/fireValidity";
 import {
   scheduleHubTaskDueAlert,
@@ -248,6 +249,8 @@ export const fireTaskDue = internalMutation({
       if (
         !isHubTaskDueAlertStillValid({
           dueDate: row.dueDate,
+          scheduledTriggerTime: row.scheduledTriggerTime,
+          reminderAt: row.reminderAt,
           expectedFireAt: args.fireAt,
           status: row.status,
         })
@@ -671,7 +674,6 @@ export const backfillAlertSchedulesPage = internalMutation({
     );
     const startCursor =
       args.cursor === undefined || args.cursor === null ? null : args.cursor;
-    const now = Date.now();
 
     let scheduled = 0;
     let skipped = 0;
@@ -731,14 +733,20 @@ export const backfillAlertSchedulesPage = internalMutation({
     }
 
     if (args.phase === "hub_tasks") {
+      // Paginate all tasks (not by_dueDate): in-file triage schedules use
+      // scheduledTriggerTime / reminderAt without a classic dueDate.
       const { page, isDone, continueCursor } = await ctx.db
         .query("tasks")
-        .withIndex("by_dueDate")
         .order("asc")
         .paginate({ numItems: pageSize, cursor: startCursor });
       examined = page.length;
       for (const row of page) {
-        if (row.dueDate == null) {
+        const fireAt = resolveHubTaskAlertFireAt({
+          dueDate: row.dueDate,
+          scheduledTriggerTime: row.scheduledTriggerTime,
+          reminderAt: row.reminderAt,
+        });
+        if (fireAt == null) {
           skipped += 1;
           continue;
         }
@@ -769,6 +777,8 @@ export const backfillAlertSchedulesPage = internalMutation({
           userKey,
           orgId: row.organizationId,
           dueDate: row.dueDate,
+          scheduledTriggerTime: row.scheduledTriggerTime,
+          reminderAt: row.reminderAt,
           title: row.title,
         });
         scheduled += 1;
