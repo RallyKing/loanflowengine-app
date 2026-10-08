@@ -1,17 +1,24 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import {
+  useMutation,
+  useQueries,
+  type RequestForQueries,
+} from "convex/react";
 import { getFunctionName } from "convex/server";
 import { api } from "@/convex/_generated/api";
 import { useAuth } from "@/lib/sessionUiClient";
 import { useActorUserKey } from "@/lib/useActorUserKey";
+import { useConvexJwtReady } from "@/lib/useConvexOrgQueryReady";
+import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import {
   ALERT_CATEGORIES,
   DEFAULT_ALERT_PREFERENCES,
   type AlertCategory,
   type AlertPreferencesResolved,
 } from "@/lib/alerts/alertCategories";
+import { Button } from "@/components/ui/Button";
 import { SettingsSectionCard } from "./SettingsHubChrome";
 
 const CATEGORY_COPY: Record<
@@ -31,24 +38,44 @@ const CATEGORY_COPY: Record<
 export function SettingsRemindersSection() {
   const actorKey = useActorUserKey().trim();
   const { isLoaded, isSignedIn, userId } = useAuth();
+  const jwtReady = useConvexJwtReady();
+  const { activeOrganizationId } = useOrgPermissions();
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
-  const userKey = sessionKey || actorKey;
-  const ready = isLoaded && isSignedIn === true && userKey.length > 0;
+  /** Prefer session userKey; never fall back to browser accountId while signed in. */
+  const userKey = sessionKey || (isSignedIn ? "" : actorKey);
+  const sessionReady = isLoaded && isSignedIn === true && userKey.length > 0;
+  /** Wait for Convex RS256 JWT — unauthenticated getPreferences throws and crashes the route. */
+  const ready = sessionReady && jwtReady;
 
-  const prefsArgs = useMemo(() => {
-    if (!ready) return "skip" as const;
-    return { userKey, memberUserKey: userKey };
+  const prefsQueries = useMemo((): RequestForQueries => {
+    if (!ready) return {};
+    return {
+      prefs: {
+        query: api.alerts.getPreferences,
+        args: { userKey, memberUserKey: userKey },
+      },
+    };
   }, [ready, userKey]);
 
-  const prefs = useQuery(api.alerts.getPreferences, prefsArgs);
+  const prefsResults = useQueries(prefsQueries);
+  const prefsRaw = ready ? prefsResults.prefs : undefined;
+  const prefsError = prefsRaw instanceof Error ? prefsRaw : null;
+  const prefs =
+    prefsRaw instanceof Error || prefsRaw === undefined
+      ? undefined
+      : (prefsRaw as AlertPreferencesResolved);
+
   const upsertPreferences = useMutation(api.alerts.upsertPreferences);
+  const scheduleSelfTest = useMutation(api.alerts.scheduleSelfTestReminder);
   const upsertName = getFunctionName(api.alerts.upsertPreferences);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [testBusy, setTestBusy] = useState(false);
+  const [testMessage, setTestMessage] = useState<string | null>(null);
 
   const resolved: AlertPreferencesResolved =
     prefs ?? DEFAULT_ALERT_PREFERENCES;
   const loaded = prefs !== undefined;
-  const canEdit = ready && loaded;
+  const canEdit = ready && loaded && !prefsError;
 
   const toggleChannel = useCallback(
     (category: AlertCategory, channel: "inApp" | "push", enabled: boolean) => {
@@ -73,17 +100,49 @@ export function SettingsRemindersSection() {
     [canEdit, resolved, upsertName, upsertPreferences, userKey],
   );
 
+  const runSelfTest = useCallback(() => {
+    if (!ready || !activeOrganizationId) return;
+    setTestBusy(true);
+    setTestMessage(null);
+    void (async () => {
+      try {
+        const result = await scheduleSelfTest({
+          orgId: activeOrganizationId,
+          memberUserKey: userKey,
+          delayMs: 5000,
+        });
+        const secs = Math.max(1, Math.round(result.delayMs / 1000));
+        setTestMessage(
+          result.alreadyPending
+            ? `A test reminder is already scheduled — check the Reminders bell in about ${secs}s.`
+            : `Test reminder scheduled — check the Reminders bell in about ${secs}s.`,
+        );
+      } catch (e) {
+        setTestMessage(
+          e instanceof Error ? e.message : "Could not schedule test reminder.",
+        );
+      } finally {
+        setTestBusy(false);
+      }
+    })();
+  }, [ready, activeOrganizationId, scheduleSelfTest, userKey]);
+
   return (
     <SettingsSectionCard
       id="reminders"
       title="Reminders"
       description="Reminder channels for file snooze and task due — separate from Notifications (the Alerts bell)."
     >
-      {!ready ? (
+      {!sessionReady ? (
         <p className="text-sm text-muted-foreground">
           Sign in to load and save reminder preferences for this account.
         </p>
-      ) : !loaded ? (
+      ) : prefsError ? (
+        <p className="text-sm text-destructive" role="alert">
+          Could not load reminder preferences. Wait a moment and refresh — if
+          this continues, sign out and back in.
+        </p>
+      ) : !ready || !loaded ? (
         <p className="text-sm text-muted-foreground" aria-live="polite">
           Loading reminder preferences…
         </p>
@@ -91,8 +150,27 @@ export function SettingsRemindersSection() {
         <div className="max-w-xl space-y-4">
           <p className="text-xs text-muted-foreground">
             In-app reminders appear in the Reminders bell. Push toggles are
-            stored for later and are not delivered until Web Push ships.
+            stored for later and are not delivered until Web Push ships. File
+            snooze reminders fire at the snooze end time (usually end of day) —
+            use Send test reminder to verify the bell sooner.
           </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canEdit || !activeOrganizationId || testBusy}
+              onClick={runSelfTest}
+              data-testid="settings-reminders-self-test"
+            >
+              {testBusy ? "Scheduling…" : "Send test reminder"}
+            </Button>
+            {testMessage ? (
+              <p className="text-xs text-muted-foreground" role="status">
+                {testMessage}
+              </p>
+            ) : null}
+          </div>
           <div className="space-y-3">
             {ALERT_CATEGORIES.map((id) => {
               const copy = CATEGORY_COPY[id];

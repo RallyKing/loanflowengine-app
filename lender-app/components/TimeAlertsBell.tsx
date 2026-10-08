@@ -19,6 +19,7 @@ import { formatRelativeTimestamp } from "@/lib/formatRelativeTimestamp";
 import { isInternalAppPath } from "@/lib/alerts/internalPath";
 import { settingsHref } from "@/lib/settingsRegistry";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
+import { useConvexJwtReady } from "@/lib/useConvexOrgQueryReady";
 
 type AlertRow = Doc<"alerts">;
 type FilterTab = "all" | "unread" | "snooze" | "tasks";
@@ -89,8 +90,12 @@ function TimeAlertsBellInner({
   const router = useRouter();
   const nowBucket = useTriageClockTime();
   const { isLoaded: authLoaded, isSignedIn, userId } = useAuth();
+  const jwtReady = useConvexJwtReady();
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
-  const k = sessionKey || (userKey?.trim() ?? "");
+  /** Prefer session userKey; avoid browser accountId while signed in (auth mismatch). */
+  const k =
+    sessionKey ||
+    (isSignedIn ? "" : (userKey?.trim() ?? ""));
   const { activeOrganizationId } = useOrgPermissions();
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0, width: 384 });
@@ -100,7 +105,8 @@ function TimeAlertsBellInner({
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const ready = authLoaded && isSignedIn && k.length > 0;
+  /** Skip until Convex JWT is attached — same Unauthorized race as Settings reminders. */
+  const ready = authLoaded && isSignedIn && k.length > 0 && jwtReady;
 
   /**
    * Badge always subscribes to unread count. List only while the panel is open

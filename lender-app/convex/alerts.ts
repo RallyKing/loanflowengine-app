@@ -12,7 +12,9 @@ import {
 } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { requireAuthenticatedCaller } from "./callerAuth";
+import { assertOrgMember } from "./organizationAccess";
 import {
   DEFAULT_ALERT_PREFERENCES,
   resolveAlertPreferences,
@@ -187,6 +189,14 @@ export const fireFileSnoozeDue = internalMutation({
         expectedFireAt: args.fireAt,
       })
     ) {
+      console.warn(
+        "[alerts] fireFileSnoozeDue stale",
+        JSON.stringify({
+          pipelineId: args.pipelineId,
+          expectedFireAt: args.fireAt,
+          snoozedUntil: row.snoozedUntil ?? null,
+        }),
+      );
       return { inserted: false as const, reason: "stale" as const };
     }
     if (
@@ -447,6 +457,127 @@ export const getPreferences = query({
     if (!k) return DEFAULT_ALERT_PREFERENCES;
     await assertCallerOwnsUserKey(ctx, k, memberUserKey);
     return await loadAlertPrefs(ctx, k);
+  },
+});
+
+/**
+ * One-shot self-test: schedule an in-app reminder that fires after `delayMs`
+ * (clamped 2s–60s). Used to verify scheduler → fire → Reminders bell without
+ * waiting for end-of-day file snooze. Membership-checked; one pending test per user.
+ */
+export const scheduleSelfTestReminder = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    delayMs: v.optional(v.number()),
+    ...memberUserKeyArg,
+  },
+  handler: async (ctx, args) => {
+    const k = await requireAuthenticatedCaller(ctx, args.memberUserKey);
+    await assertOrgMember(ctx, args.orgId, k);
+    const delay = Math.min(Math.max(args.delayMs ?? 5000, 2000), 60_000);
+    const now = Date.now();
+    // Stable pending key — one in-flight self-test per user (cost + UX).
+    const pendingKey = `self_test_pending:${k}`;
+    const pending = await ctx.db
+      .query("alerts")
+      .withIndex("by_dedupeKey", (q) =>
+        q.eq("userKey", k).eq("dedupeKey", pendingKey),
+      )
+      .first();
+    if (pending && pending.fireAt > now) {
+      return {
+        ok: true as const,
+        fireAt: pending.fireAt,
+        delayMs: Math.max(0, pending.fireAt - now),
+        alreadyPending: true as const,
+      };
+    }
+    const fireAt = now + delay;
+    const dedupeKey = `self_test:${k}:${fireAt}`;
+    await ctx.scheduler.runAt(fireAt, internal.alerts.fireSelfTestReminder, {
+      userKey: k,
+      orgId: args.orgId,
+      fireAt,
+      dedupeKey,
+      pendingKey,
+    });
+    // Placeholder row so a second click within the delay is a no-op (not a new job).
+    if (pending) {
+      await ctx.db.patch(pending._id, { fireAt, createdAt: now });
+    } else {
+      await ctx.db.insert("alerts", {
+        userKey: k,
+        orgId: args.orgId,
+        category: "task_due",
+        title: "Test reminder (scheduled)",
+        body: "Waiting for self-test fire…",
+        entityType: "task",
+        entityId: `self_test_pending`,
+        deepLinkPath: "/settings#reminders",
+        fireAt,
+        createdAt: now,
+        dedupeKey: pendingKey,
+        // Hide from default inbox until the real fire replaces/dismisses it.
+        dismissedAt: now,
+      });
+    }
+    return {
+      ok: true as const,
+      fireAt,
+      delayMs: delay,
+      alreadyPending: false as const,
+    };
+  },
+});
+
+export const fireSelfTestReminder = internalMutation({
+  args: {
+    userKey: v.string(),
+    orgId: v.id("organizations"),
+    fireAt: v.number(),
+    dedupeKey: v.string(),
+    pendingKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userKey = args.userKey.trim();
+    if (!userKey) {
+      return { inserted: false as const, reason: "missing" as const };
+    }
+    // Bypass channel prefs — diagnostic must still appear when task_due in-app is off.
+    const existing = await ctx.db
+      .query("alerts")
+      .withIndex("by_dedupeKey", (q) =>
+        q.eq("userKey", userKey).eq("dedupeKey", args.dedupeKey),
+      )
+      .first();
+    if (existing) {
+      return { inserted: false as const, reason: "dedupe" as const };
+    }
+    const deepLinkPath = assertInternalAppPath("/settings#reminders");
+    const now = Date.now();
+    const id = await ctx.db.insert("alerts", {
+      userKey,
+      orgId: args.orgId,
+      category: "task_due",
+      title: "Test reminder",
+      body: "Self-test from Reminder preferences — the Reminders bell is working.",
+      entityType: "task",
+      entityId: `self_test:${args.fireAt}`,
+      deepLinkPath,
+      fireAt: args.fireAt,
+      createdAt: now,
+      dedupeKey: args.dedupeKey,
+    });
+    const pending = await ctx.db
+      .query("alerts")
+      .withIndex("by_dedupeKey", (q) =>
+        q.eq("userKey", userKey).eq("dedupeKey", args.pendingKey),
+      )
+      .first();
+    if (pending) {
+      await ctx.db.delete(pending._id);
+    }
+    return { inserted: true as const, reason: "ok" as const, id };
   },
 });
 
