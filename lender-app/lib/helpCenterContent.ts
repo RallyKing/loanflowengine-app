@@ -229,11 +229,18 @@ export const HELP_ARTICLES: HelpArticle[] = [
     id: "time-alerts",
     title: "Reminders (Time Alerts)",
     summary:
-      "File snooze and task due reminders, with in-app and stored push preferences.",
+      "File snooze, task due/reminder, and triage schedule reminders, with in-app and stored push preferences.",
     category: "account",
-    keywords: ["reminders", "snooze", "task due", "push", "settings reminders"],
+    keywords: [
+      "reminders",
+      "snooze",
+      "task due",
+      "scheduled",
+      "push",
+      "settings reminders",
+    ],
     body: [
-      "The Reminders bell in the header lists file snooze and task due items. Channel toggles live under Settings → Reminders.",
+      "The Reminders bell in the header lists file snooze, task due/reminder, and triage schedule items. Channel toggles live under Settings → Reminders.",
       "In-app is on by default. Push can be turned on and is saved, but Web Push is not delivered until that feature ships.",
     ],
   },

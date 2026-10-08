@@ -9,7 +9,8 @@ import { internal } from "./_generated/api";
 import { buildAlertDedupeKey } from "../lib/alerts/dedupe";
 import {
   parseSnoozedUntilMs,
-  resolveHubTaskAlertFireAt,
+  resolveHubTaskDueAlertFireAt,
+  resolveHubTaskScheduleAlertFireAt,
   shouldScheduleOneShot,
 } from "../lib/alerts/fireValidity";
 import {
@@ -122,22 +123,166 @@ export async function schedulePipelineSnoozeAlert(
   });
 }
 
+type HubTaskAlertKind = "due" | "scheduled";
+
+async function clearHubTaskOneShot(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+  kind: HubTaskAlertKind,
+): Promise<void> {
+  const row = await ctx.db.get(taskId);
+  if (!row) return;
+  if (kind === "due") {
+    await cancelJob(ctx, row.dueAlertJobId);
+    if (
+      row.dueAlertJobId != null ||
+      row.dueAlertUserKey != null ||
+      row.dueAlertFireAt != null
+    ) {
+      await ctx.db.patch(taskId, {
+        dueAlertJobId: undefined,
+        dueAlertUserKey: undefined,
+        dueAlertFireAt: undefined,
+      });
+    }
+    return;
+  }
+  await cancelJob(ctx, row.scheduleAlertJobId);
+  if (
+    row.scheduleAlertJobId != null ||
+    row.scheduleAlertUserKey != null ||
+    row.scheduleAlertFireAt != null
+  ) {
+    await ctx.db.patch(taskId, {
+      scheduleAlertJobId: undefined,
+      scheduleAlertUserKey: undefined,
+      scheduleAlertFireAt: undefined,
+    });
+  }
+}
+
 export async function clearHubTaskDueAlert(
   ctx: MutationCtx,
   taskId: Id<"tasks">,
 ): Promise<void> {
-  const row = await ctx.db.get(taskId);
+  await clearHubTaskOneShot(ctx, taskId, "due");
+}
+
+export async function clearHubTaskScheduleAlert(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+): Promise<void> {
+  await clearHubTaskOneShot(ctx, taskId, "scheduled");
+}
+
+/** Clear both classic due/reminder and triage schedule one-shots. */
+export async function clearHubTaskAlerts(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+): Promise<void> {
+  await clearHubTaskOneShot(ctx, taskId, "due");
+  await clearHubTaskOneShot(ctx, taskId, "scheduled");
+}
+
+async function scheduleHubTaskOneShot(
+  ctx: MutationCtx,
+  args: {
+    kind: HubTaskAlertKind;
+    taskId: Id<"tasks">;
+    userKey: string;
+    orgId: Id<"organizations">;
+    fireAt: number | null;
+    title?: string;
+    /** When kind=due, used to choose "Due:" vs "Reminder:" title. */
+    dueDate?: number | null;
+  },
+): Promise<void> {
+  const userKey = args.userKey.trim();
+  if (!userKey) return;
+  if (args.fireAt == null) {
+    await clearHubTaskOneShot(ctx, args.taskId, args.kind);
+    return;
+  }
+  const fireAt = args.fireAt;
+  const row = await ctx.db.get(args.taskId);
   if (!row) return;
-  await cancelJob(ctx, row.dueAlertJobId);
+  if (row.status === "done" || row.status === "archived") {
+    await clearHubTaskOneShot(ctx, args.taskId, args.kind);
+    return;
+  }
+
+  const existingJobId =
+    args.kind === "due" ? row.dueAlertJobId : row.scheduleAlertJobId;
+  const existingFireAt =
+    args.kind === "due" ? row.dueAlertFireAt : row.scheduleAlertFireAt;
+  const existingUserKey =
+    args.kind === "due" ? row.dueAlertUserKey : row.scheduleAlertUserKey;
   if (
-    row.dueAlertJobId != null ||
-    row.dueAlertUserKey != null ||
-    row.dueAlertFireAt != null
+    existingJobId &&
+    existingFireAt === fireAt &&
+    existingUserKey === userKey
   ) {
-    await ctx.db.patch(taskId, {
-      dueAlertJobId: undefined,
-      dueAlertUserKey: undefined,
-      dueAlertFireAt: undefined,
+    return;
+  }
+  await cancelJob(ctx, existingJobId);
+
+  const now = Date.now();
+  const runAt = fireAt > now ? fireAt : now;
+  const entityId = String(args.taskId);
+  const category = args.kind === "due" ? "task_due" : "task_scheduled";
+  const dedupeKey = buildAlertDedupeKey({
+    userKey,
+    category,
+    entityType: "task",
+    entityId,
+    fireAt,
+  });
+  const label = args.title?.trim() || row.title.trim() || "Task";
+  const title =
+    args.kind === "scheduled"
+      ? `Scheduled: ${label}`
+      : (() => {
+          const dueMatches =
+            args.dueDate != null &&
+            Number.isFinite(args.dueDate) &&
+            Math.abs(Math.trunc(args.dueDate) - fireAt) <= 1000;
+          return `${dueMatches ? "Due" : "Reminder"}: ${label}`;
+        })();
+  const deepLinkPath = hubTaskDeepLink(entityId);
+
+  const jobId =
+    args.kind === "due"
+      ? await ctx.scheduler.runAt(runAt, internal.alerts.fireTaskDue, {
+          kind: "hub_task",
+          taskId: args.taskId,
+          userKey,
+          orgId: args.orgId,
+          fireAt,
+          dedupeKey,
+          title,
+          deepLinkPath,
+        })
+      : await ctx.scheduler.runAt(runAt, internal.alerts.fireTaskScheduled, {
+          taskId: args.taskId,
+          userKey,
+          orgId: args.orgId,
+          fireAt,
+          dedupeKey,
+          title,
+          deepLinkPath,
+        });
+
+  if (args.kind === "due") {
+    await ctx.db.patch(args.taskId, {
+      dueAlertJobId: jobId,
+      dueAlertUserKey: userKey,
+      dueAlertFireAt: fireAt,
+    });
+  } else {
+    await ctx.db.patch(args.taskId, {
+      scheduleAlertJobId: jobId,
+      scheduleAlertUserKey: userKey,
+      scheduleAlertFireAt: fireAt,
     });
   }
 }
@@ -149,71 +294,47 @@ export async function scheduleHubTaskDueAlert(
     userKey: string;
     orgId: Id<"organizations">;
     dueDate?: number | null;
-    scheduledTriggerTime?: number | null;
     reminderAt?: number | null;
     title?: string;
   },
 ): Promise<void> {
-  const userKey = args.userKey.trim();
-  if (!userKey) return;
-  const fireAt = resolveHubTaskAlertFireAt({
-    dueDate: args.dueDate,
-    scheduledTriggerTime: args.scheduledTriggerTime,
-    reminderAt: args.reminderAt,
-  });
-  if (fireAt == null) {
-    await clearHubTaskDueAlert(ctx, args.taskId);
-    return;
-  }
-  const row = await ctx.db.get(args.taskId);
-  if (!row) return;
-  if (row.status === "done" || row.status === "archived") {
-    await clearHubTaskDueAlert(ctx, args.taskId);
-    return;
-  }
-
-  if (
-    row.dueAlertJobId &&
-    row.dueAlertFireAt === fireAt &&
-    row.dueAlertUserKey === userKey
-  ) {
-    return;
-  }
-  await cancelJob(ctx, row.dueAlertJobId);
-
-  const now = Date.now();
-  const runAt = fireAt > now ? fireAt : now;
-  const entityId = String(args.taskId);
-  const dedupeKey = buildAlertDedupeKey({
-    userKey,
-    category: "task_due",
-    entityType: "task",
-    entityId,
-    fireAt,
-  });
-  const label = args.title?.trim() || row.title.trim() || "Task";
-  const dueMatches =
-    args.dueDate != null &&
-    Number.isFinite(args.dueDate) &&
-    Math.abs(Math.trunc(args.dueDate) - fireAt) <= 1000;
-  const title = `${dueMatches ? "Due" : "Reminder"}: ${label}`;
-  const deepLinkPath = hubTaskDeepLink(entityId);
-
-  const jobId = await ctx.scheduler.runAt(runAt, internal.alerts.fireTaskDue, {
-    kind: "hub_task",
+  await scheduleHubTaskOneShot(ctx, {
+    kind: "due",
     taskId: args.taskId,
-    userKey,
+    userKey: args.userKey,
     orgId: args.orgId,
-    fireAt,
-    dedupeKey,
-    title,
-    deepLinkPath,
+    fireAt: resolveHubTaskDueAlertFireAt({
+      dueDate: args.dueDate,
+      reminderAt: args.reminderAt,
+    }),
+    title: args.title,
+    dueDate: args.dueDate,
   });
+}
 
-  await ctx.db.patch(args.taskId, {
-    dueAlertJobId: jobId,
-    dueAlertUserKey: userKey,
-    dueAlertFireAt: fireAt,
+/**
+ * One-shot for in-file triage `scheduledTriggerTime` — distinct category/title
+ * from classic dueDate / reminderAt (`task_due`).
+ */
+export async function scheduleHubTaskScheduleAlert(
+  ctx: MutationCtx,
+  args: {
+    taskId: Id<"tasks">;
+    userKey: string;
+    orgId: Id<"organizations">;
+    scheduledTriggerTime?: number | null;
+    title?: string;
+  },
+): Promise<void> {
+  await scheduleHubTaskOneShot(ctx, {
+    kind: "scheduled",
+    taskId: args.taskId,
+    userKey: args.userKey,
+    orgId: args.orgId,
+    fireAt: resolveHubTaskScheduleAlertFireAt({
+      scheduledTriggerTime: args.scheduledTriggerTime,
+    }),
+    title: args.title,
   });
 }
 
@@ -303,10 +424,10 @@ export async function scheduleVaultFileTaskDueAlert(
 }
 
 /**
- * Load hub task and schedule or clear due alert from current row state.
+ * Load hub task and schedule or clear due + schedule alerts from current row.
  * Call after create/update/complete/delete mutations (authenticated userKey only).
  */
-export async function syncHubTaskDueAlert(
+export async function syncHubTaskAlerts(
   ctx: MutationCtx,
   args: {
     taskId: Id<"tasks">;
@@ -316,7 +437,7 @@ export async function syncHubTaskDueAlert(
 ): Promise<void> {
   const row = await ctx.db.get(args.taskId);
   if (!row) {
-    await clearHubTaskDueAlert(ctx, args.taskId);
+    await clearHubTaskAlerts(ctx, args.taskId);
     return;
   }
   await scheduleHubTaskDueAlert(ctx, {
@@ -324,8 +445,14 @@ export async function syncHubTaskDueAlert(
     userKey: args.userKey,
     orgId: args.orgId,
     dueDate: row.dueDate,
-    scheduledTriggerTime: row.scheduledTriggerTime,
     reminderAt: row.reminderAt,
+    title: row.title,
+  });
+  await scheduleHubTaskScheduleAlert(ctx, {
+    taskId: args.taskId,
+    userKey: args.userKey,
+    orgId: args.orgId,
+    scheduledTriggerTime: row.scheduledTriggerTime,
     title: row.title,
   });
 }

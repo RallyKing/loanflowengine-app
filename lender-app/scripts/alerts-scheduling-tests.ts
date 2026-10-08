@@ -14,9 +14,11 @@ import { buildAlertDedupeKey } from "../lib/alerts/dedupe";
 import {
   isFileSnoozeAlertStillValid,
   isHubTaskDueAlertStillValid,
+  isHubTaskScheduleAlertStillValid,
   isVaultFileTaskDueAlertStillValid,
   parseSnoozedUntilMs,
-  resolveHubTaskAlertFireAt,
+  resolveHubTaskDueAlertFireAt,
+  resolveHubTaskScheduleAlertFireAt,
   shouldScheduleOneShot,
 } from "../lib/alerts/fireValidity";
 import {
@@ -64,6 +66,14 @@ function testDedupe() {
     fireAt: 1_700_000_000_001,
   });
   assert.notEqual(a, c);
+  const scheduled = buildAlertDedupeKey({
+    userKey: "u1",
+    category: "task_scheduled",
+    entityType: "task",
+    entityId: "t1",
+    fireAt: 1_700_000_000_000,
+  });
+  assert.notEqual(a, scheduled);
 }
 
 function testPreferences() {
@@ -71,6 +81,8 @@ function testPreferences() {
   assert.deepEqual(d, DEFAULT_ALERT_PREFERENCES);
   assert.equal(shouldCreateInAppAlert(d, "task_due"), true);
   assert.equal(shouldSendPushAlert(d, "task_due"), false);
+  assert.equal(shouldCreateInAppAlert(d, "task_scheduled"), true);
+  assert.equal(shouldSendPushAlert(d, "task_scheduled"), false);
 
   const off = resolveAlertPreferences({
     task_due: { inApp: false, push: true },
@@ -78,6 +90,7 @@ function testPreferences() {
   assert.equal(shouldCreateInAppAlert(off, "task_due"), false);
   assert.equal(shouldSendPushAlert(off, "task_due"), true);
   assert.equal(shouldCreateInAppAlert(off, "file_snooze_due"), true);
+  assert.equal(shouldCreateInAppAlert(off, "task_scheduled"), true);
 }
 
 function testValidity() {
@@ -113,17 +126,25 @@ function testValidity() {
     }),
     false,
   );
-  // In-file triage schedule (no classic dueDate) must still validate.
   assert.equal(
-    resolveHubTaskAlertFireAt({
-      dueDate: null,
-      scheduledTriggerTime: fireAt,
-      reminderAt: null,
-    }),
-    fireAt,
+    resolveHubTaskDueAlertFireAt({ dueDate: null, reminderAt: null }),
+    null,
   );
   assert.equal(
     isHubTaskDueAlertStillValid({
+      dueDate: null,
+      reminderAt: null,
+      expectedFireAt: fireAt,
+      status: "todo",
+    }),
+    false,
+  );
+  assert.equal(
+    resolveHubTaskScheduleAlertFireAt({ scheduledTriggerTime: fireAt }),
+    fireAt,
+  );
+  assert.equal(
+    isHubTaskScheduleAlertStillValid({
       scheduledTriggerTime: fireAt,
       expectedFireAt: fireAt,
       status: "todo",
@@ -131,23 +152,19 @@ function testValidity() {
     true,
   );
   assert.equal(
-    isHubTaskDueAlertStillValid({
-      dueDate: null,
-      scheduledTriggerTime: null,
-      reminderAt: null,
+    isHubTaskScheduleAlertStillValid({
+      scheduledTriggerTime: fireAt,
       expectedFireAt: fireAt,
-      status: "todo",
+      status: "done",
     }),
     false,
   );
-  // Earliest of due / schedule / reminder wins.
   assert.equal(
-    resolveHubTaskAlertFireAt({
+    resolveHubTaskDueAlertFireAt({
       dueDate: fireAt + 60_000,
-      scheduledTriggerTime: fireAt,
       reminderAt: fireAt + 120_000,
     }),
-    fireAt,
+    fireAt + 60_000,
   );
   assert.equal(
     isVaultFileTaskDueAlertStillValid({
@@ -166,9 +183,15 @@ function testValidity() {
     false,
   );
 
-  const future = shouldScheduleOneShot({ fireAt: Date.now() + 60_000, now: Date.now() });
+  const future = shouldScheduleOneShot({
+    fireAt: Date.now() + 60_000,
+    now: Date.now(),
+  });
   assert.equal(future?.kind, "future");
-  const past = shouldScheduleOneShot({ fireAt: Date.now() - 1000, now: Date.now() });
+  const past = shouldScheduleOneShot({
+    fireAt: Date.now() - 1000,
+    now: Date.now(),
+  });
   assert.equal(past?.kind, "immediate_past");
   assert.equal(past?.delayMs, 0);
 }

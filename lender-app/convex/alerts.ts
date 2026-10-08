@@ -27,14 +27,16 @@ import { assertInternalAppPath } from "../lib/alerts/internalPath";
 import {
   isFileSnoozeAlertStillValid,
   isHubTaskDueAlertStillValid,
+  isHubTaskScheduleAlertStillValid,
   isVaultFileTaskDueAlertStillValid,
   parseSnoozedUntilMs,
-  resolveHubTaskAlertFireAt,
+  resolveHubTaskDueAlertFireAt,
+  resolveHubTaskScheduleAlertFireAt,
 } from "../lib/alerts/fireValidity";
 import {
-  scheduleHubTaskDueAlert,
   schedulePipelineSnoozeAlert,
   scheduleVaultFileTaskDueAlert,
+  syncHubTaskAlerts,
 } from "./alertSchedule";
 
 const UNREAD_BADGE_CAP = 100;
@@ -71,6 +73,10 @@ function prefsFromDoc(
     task_due: {
       inApp: row.taskDueInApp,
       push: row.taskDuePush,
+    },
+    task_scheduled: {
+      inApp: row.taskScheduledInApp ?? true,
+      push: row.taskScheduledPush ?? false,
     },
   });
 }
@@ -226,6 +232,62 @@ export const fireFileSnoozeDue = internalMutation({
   },
 });
 
+async function fireHubTaskAlert(
+  ctx: MutationCtx,
+  args: {
+    path: "due" | "scheduled";
+    taskId: Id<"tasks">;
+    userKey: string;
+    orgId: Id<"organizations">;
+    fireAt: number;
+    dedupeKey: string;
+    title: string;
+    deepLinkPath: string;
+    body?: string;
+  },
+): Promise<{
+  inserted: boolean;
+  reason: "missing" | "stale" | "user_mismatch" | "ok" | "skipped";
+}> {
+  const row = await ctx.db.get(args.taskId);
+  if (!row) return { inserted: false, reason: "missing" };
+  const stillValid =
+    args.path === "due"
+      ? isHubTaskDueAlertStillValid({
+          dueDate: row.dueDate,
+          reminderAt: row.reminderAt,
+          expectedFireAt: args.fireAt,
+          status: row.status,
+        })
+      : isHubTaskScheduleAlertStillValid({
+          scheduledTriggerTime: row.scheduledTriggerTime,
+          expectedFireAt: args.fireAt,
+          status: row.status,
+        });
+  if (!stillValid) return { inserted: false, reason: "stale" };
+  const storedUserKey =
+    args.path === "due" ? row.dueAlertUserKey : row.scheduleAlertUserKey;
+  if (storedUserKey && storedUserKey.trim() !== args.userKey.trim()) {
+    return { inserted: false, reason: "user_mismatch" };
+  }
+  const id = await insertAlertIdempotent(ctx, {
+    userKey: args.userKey,
+    orgId: args.orgId,
+    category: args.path === "due" ? "task_due" : "task_scheduled",
+    title: args.title,
+    body: args.body,
+    entityType: "task",
+    entityId: String(args.taskId),
+    deepLinkPath: args.deepLinkPath,
+    fireAt: args.fireAt,
+    dedupeKey: args.dedupeKey,
+  });
+  return {
+    inserted: id != null,
+    reason: id != null ? "ok" : "skipped",
+  };
+}
+
 export const fireTaskDue = internalMutation({
   args: {
     kind: v.union(v.literal("hub_task"), v.literal("vault_file_task")),
@@ -244,41 +306,17 @@ export const fireTaskDue = internalMutation({
       if (!args.taskId) {
         return { inserted: false as const, reason: "missing" as const };
       }
-      const row = await ctx.db.get(args.taskId);
-      if (!row) return { inserted: false as const, reason: "missing" as const };
-      if (
-        !isHubTaskDueAlertStillValid({
-          dueDate: row.dueDate,
-          scheduledTriggerTime: row.scheduledTriggerTime,
-          reminderAt: row.reminderAt,
-          expectedFireAt: args.fireAt,
-          status: row.status,
-        })
-      ) {
-        return { inserted: false as const, reason: "stale" as const };
-      }
-      if (
-        row.dueAlertUserKey &&
-        row.dueAlertUserKey.trim() !== args.userKey.trim()
-      ) {
-        return { inserted: false as const, reason: "user_mismatch" as const };
-      }
-      const id = await insertAlertIdempotent(ctx, {
+      return await fireHubTaskAlert(ctx, {
+        path: "due",
+        taskId: args.taskId,
         userKey: args.userKey,
         orgId: args.orgId,
-        category: "task_due",
-        title: args.title,
-        body: args.body,
-        entityType: "task",
-        entityId: String(args.taskId),
-        deepLinkPath: args.deepLinkPath,
         fireAt: args.fireAt,
         dedupeKey: args.dedupeKey,
+        title: args.title,
+        deepLinkPath: args.deepLinkPath,
+        body: args.body,
       });
-      return {
-        inserted: id != null,
-        reason: id != null ? ("ok" as const) : ("skipped" as const),
-      };
     }
 
     if (!args.fileTaskId) {
@@ -318,6 +356,32 @@ export const fireTaskDue = internalMutation({
       inserted: id != null,
       reason: id != null ? ("ok" as const) : ("skipped" as const),
     };
+  },
+});
+
+export const fireTaskScheduled = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    userKey: v.string(),
+    orgId: v.id("organizations"),
+    fireAt: v.number(),
+    dedupeKey: v.string(),
+    title: v.string(),
+    deepLinkPath: v.string(),
+    body: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    return await fireHubTaskAlert(ctx, {
+      path: "scheduled",
+      taskId: args.taskId,
+      userKey: args.userKey,
+      orgId: args.orgId,
+      fireAt: args.fireAt,
+      dedupeKey: args.dedupeKey,
+      title: args.title,
+      deepLinkPath: args.deepLinkPath,
+      body: args.body,
+    });
   },
 });
 
@@ -587,6 +651,7 @@ export const fireSelfTestReminder = internalMutation({
 const alertCategoryArg = v.union(
   v.literal("file_snooze_due"),
   v.literal("task_due"),
+  v.literal("task_scheduled"),
 );
 const alertChannelArg = v.union(v.literal("inApp"), v.literal("push"));
 
@@ -596,6 +661,8 @@ function prefsDocFromResolved(resolved: AlertPreferencesResolved) {
     fileSnoozeDuePush: resolved.file_snooze_due.push,
     taskDueInApp: resolved.task_due.inApp,
     taskDuePush: resolved.task_due.push,
+    taskScheduledInApp: resolved.task_scheduled.inApp,
+    taskScheduledPush: resolved.task_scheduled.push,
   };
 }
 
@@ -733,23 +800,14 @@ export const backfillAlertSchedulesPage = internalMutation({
     }
 
     if (args.phase === "hub_tasks") {
-      // Paginate all tasks (not by_dueDate): in-file triage schedules use
-      // scheduledTriggerTime / reminderAt without a classic dueDate.
+      // Paginate all tasks (not by_dueDate): sync clears/reschedules both
+      // classic due/reminder and triage scheduledTriggerTime one-shots.
       const { page, isDone, continueCursor } = await ctx.db
         .query("tasks")
         .order("asc")
         .paginate({ numItems: pageSize, cursor: startCursor });
       examined = page.length;
       for (const row of page) {
-        const fireAt = resolveHubTaskAlertFireAt({
-          dueDate: row.dueDate,
-          scheduledTriggerTime: row.scheduledTriggerTime,
-          reminderAt: row.reminderAt,
-        });
-        if (fireAt == null) {
-          skipped += 1;
-          continue;
-        }
         if (!row.organizationId) {
           skipped += 1;
           continue;
@@ -758,11 +816,24 @@ export const backfillAlertSchedulesPage = internalMutation({
           skipped += 1;
           continue;
         }
-        if (row.dueAlertJobId != null) {
+        const dueFireAt = resolveHubTaskDueAlertFireAt({
+          dueDate: row.dueDate,
+          reminderAt: row.reminderAt,
+        });
+        const scheduleFireAt = resolveHubTaskScheduleAlertFireAt({
+          scheduledTriggerTime: row.scheduledTriggerTime,
+        });
+        const needsWork =
+          dueFireAt != null ||
+          scheduleFireAt != null ||
+          row.dueAlertJobId != null ||
+          row.scheduleAlertJobId != null;
+        if (!needsWork) {
           skipped += 1;
           continue;
         }
         const userKey = (
+          row.scheduleAlertUserKey ??
           row.dueAlertUserKey ??
           row.ownerUserId ??
           row.assigneeId ??
@@ -772,14 +843,10 @@ export const backfillAlertSchedulesPage = internalMutation({
           skipped += 1;
           continue;
         }
-        await scheduleHubTaskDueAlert(ctx, {
+        await syncHubTaskAlerts(ctx, {
           taskId: row._id,
           userKey,
           orgId: row.organizationId,
-          dueDate: row.dueDate,
-          scheduledTriggerTime: row.scheduledTriggerTime,
-          reminderAt: row.reminderAt,
-          title: row.title,
         });
         scheduled += 1;
       }

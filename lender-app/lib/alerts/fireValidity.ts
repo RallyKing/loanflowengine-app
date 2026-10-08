@@ -26,39 +26,61 @@ export function isFileSnoozeAlertStillValid(args: {
   return Math.abs(stored - args.expectedFireAt) <= skew;
 }
 
-/**
- * Earliest alert-worthy timestamp for a hub task.
- * In-file triage schedules use `scheduledTriggerTime` (not `dueDate`);
- * classic hub due dates use `dueDate`; optional `reminderAt` also counts.
- */
-export function resolveHubTaskAlertFireAt(fields: {
-  dueDate?: number | null;
-  scheduledTriggerTime?: number | null;
-  reminderAt?: number | null;
-}): number | null {
+function collectPositiveTimes(
+  ...raws: Array<number | null | undefined>
+): number[] {
   const times: number[] = [];
-  for (const raw of [
-    fields.dueDate,
-    fields.scheduledTriggerTime,
-    fields.reminderAt,
-  ]) {
+  for (const raw of raws) {
     if (raw == null || !Number.isFinite(raw) || raw <= 0) continue;
     times.push(Math.trunc(raw));
   }
+  return times;
+}
+
+/**
+ * Classic hub due / reminder fire time (earliest of dueDate | reminderAt).
+ * Triage `scheduledTriggerTime` uses a separate one-shot path.
+ */
+export function resolveHubTaskDueAlertFireAt(fields: {
+  dueDate?: number | null;
+  reminderAt?: number | null;
+}): number | null {
+  const times = collectPositiveTimes(fields.dueDate, fields.reminderAt);
   if (times.length === 0) return null;
   return Math.min(...times);
 }
 
+/** In-file triage schedule fire time (`scheduledTriggerTime` only). */
+export function resolveHubTaskScheduleAlertFireAt(fields: {
+  scheduledTriggerTime?: number | null;
+}): number | null {
+  const times = collectPositiveTimes(fields.scheduledTriggerTime);
+  if (times.length === 0) return null;
+  return times[0]!;
+}
+
 export function isHubTaskDueAlertStillValid(args: {
   dueDate?: number | null;
-  scheduledTriggerTime?: number | null;
   reminderAt?: number | null;
   expectedFireAt: number;
   status: string;
   skewMs?: number;
 }): boolean {
   if (args.status === "done" || args.status === "archived") return false;
-  const fireAt = resolveHubTaskAlertFireAt(args);
+  const fireAt = resolveHubTaskDueAlertFireAt(args);
+  if (fireAt == null) return false;
+  const skew = args.skewMs ?? 1000;
+  return Math.abs(fireAt - args.expectedFireAt) <= skew;
+}
+
+export function isHubTaskScheduleAlertStillValid(args: {
+  scheduledTriggerTime?: number | null;
+  expectedFireAt: number;
+  status: string;
+  skewMs?: number;
+}): boolean {
+  if (args.status === "done" || args.status === "archived") return false;
+  const fireAt = resolveHubTaskScheduleAlertFireAt(args);
   if (fireAt == null) return false;
   const skew = args.skewMs ?? 1000;
   return Math.abs(fireAt - args.expectedFireAt) <= skew;
