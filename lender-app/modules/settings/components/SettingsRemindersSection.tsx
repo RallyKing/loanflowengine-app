@@ -14,30 +14,21 @@ import {
 } from "@/lib/alerts/alertCategories";
 import { SettingsSectionCard } from "./SettingsHubChrome";
 
-const CATEGORY_META: Record<
+const CATEGORY_COPY: Record<
   AlertCategory,
-  {
-    label: string;
-    hint: string;
-    inAppKey: "fileSnoozeDueInApp" | "taskDueInApp";
-    pushKey: "fileSnoozeDuePush" | "taskDuePush";
-  }
+  { label: string; hint: string }
 > = {
   file_snooze_due: {
     label: "File snooze due",
     hint: "When a snoozed pipeline file comes due again.",
-    inAppKey: "fileSnoozeDueInApp",
-    pushKey: "fileSnoozeDuePush",
   },
   task_due: {
     label: "Task due",
     hint: "When a hub or vault file task is due.",
-    inAppKey: "taskDueInApp",
-    pushKey: "taskDuePush",
   },
 };
 
-export function SettingsAlertsSection() {
+export function SettingsRemindersSection() {
   const actorKey = useActorUserKey().trim();
   const { isLoaded, isSignedIn, userId } = useAuth();
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
@@ -59,46 +50,33 @@ export function SettingsAlertsSection() {
   const loaded = prefs !== undefined;
   const canEdit = ready && loaded;
 
-  const savePatch = useCallback(
-    async (
-      patch: Partial<{
-        fileSnoozeDueInApp: boolean;
-        fileSnoozeDuePush: boolean;
-        taskDueInApp: boolean;
-        taskDuePush: boolean;
-      }>,
-    ) => {
-      if (!canEdit) return;
-      const field = Object.keys(patch)[0] ?? "prefs";
-      setBusyKey(field);
-      try {
-        await upsertPreferences({
-          userKey,
-          memberUserKey: userKey,
-          ...patch,
-        });
-      } finally {
-        setBusyKey(null);
-      }
-    },
-    [canEdit, upsertName, upsertPreferences, userKey],
-  );
-
   const toggleChannel = useCallback(
-    (category: AlertCategory, channel: "inApp" | "push", checked: boolean) => {
-      const current = resolved[category][channel];
-      if (current === checked) return;
-      const row = CATEGORY_META[category];
-      const key = channel === "inApp" ? row.inAppKey : row.pushKey;
-      void savePatch({ [key]: checked });
+    (category: AlertCategory, channel: "inApp" | "push", enabled: boolean) => {
+      if (!canEdit) return;
+      if (resolved[category][channel] === enabled) return;
+      const key = `${category}:${channel}`;
+      setBusyKey(key);
+      void (async () => {
+        try {
+          await upsertPreferences({
+            userKey,
+            memberUserKey: userKey,
+            category,
+            channel,
+            enabled,
+          });
+        } finally {
+          setBusyKey(null);
+        }
+      })();
     },
-    [resolved, savePatch],
+    [canEdit, resolved, upsertName, upsertPreferences, userKey],
   );
 
   return (
     <SettingsSectionCard
-      id="alerts"
-      title="Alerts"
+      id="reminders"
+      title="Reminders"
       description="Reminder channels for file snooze and task due — separate from Notifications (the Alerts bell)."
     >
       {!ready ? (
@@ -117,18 +95,18 @@ export function SettingsAlertsSection() {
           </p>
           <div className="space-y-3">
             {ALERT_CATEGORIES.map((id) => {
-              const row = CATEGORY_META[id];
+              const copy = CATEGORY_COPY[id];
               const channels = resolved[id];
               return (
                 <div
                   key={id}
                   className="flex flex-col gap-2 rounded-dlc-md border border-border/60 bg-dlc-surface-high/40 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                  data-testid={`settings-alerts-row-${id}`}
+                  data-testid={`settings-reminders-row-${id}`}
                 >
                   <span>
-                    <span className="text-sm font-medium">{row.label}</span>
+                    <span className="text-sm font-medium">{copy.label}</span>
                     <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {row.hint}
+                      {copy.hint}
                     </span>
                   </span>
                   <div className="flex flex-wrap gap-4">
@@ -137,7 +115,7 @@ export function SettingsAlertsSection() {
                         type="checkbox"
                         className="h-4 w-4 accent-primary"
                         checked={channels.inApp}
-                        disabled={!canEdit || busyKey === row.inAppKey}
+                        disabled={!canEdit || busyKey === `${id}:inApp`}
                         onChange={(e) =>
                           toggleChannel(id, "inApp", e.target.checked)
                         }
@@ -149,7 +127,7 @@ export function SettingsAlertsSection() {
                         type="checkbox"
                         className="h-4 w-4 accent-primary"
                         checked={channels.push}
-                        disabled={!canEdit || busyKey === row.pushKey}
+                        disabled={!canEdit || busyKey === `${id}:push`}
                         onChange={(e) =>
                           toggleChannel(id, "push", e.target.checked)
                         }

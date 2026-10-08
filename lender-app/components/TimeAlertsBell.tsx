@@ -499,7 +499,7 @@ function TimeAlertsBellInner({
           File snooze and task due reminders. Notification Alerts stay in the
           Alerts bell.{" "}
           <Link
-            href={settingsHref("alerts")}
+            href={settingsHref("reminders")}
             className="font-medium text-primary underline-offset-2 hover:underline"
             data-testid="time-alerts-settings-link"
             onClick={() => setOpen(false)}
