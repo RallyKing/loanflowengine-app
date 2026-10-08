@@ -9,7 +9,6 @@ import type { QueryCtx } from "./_generated/server";
 import type { PaginationOptions, PaginationResult } from "convex/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { resolveClientAccessLevel } from "./resourceAccess";
-import { filterContactsByOrgScope } from "./organizationAccess";
 import type { RegistryRoleId } from "../lib/registry/universalRoles";
 import {
   mapContactToRegistryItem,
@@ -534,22 +533,17 @@ async function fetchAllContactRegistryItems(
   ctx: QueryCtx,
   filters: RegistryListFilters,
 ): Promise<RegistryItem[]> {
-  const { organizationId, globalAdmin } = filters;
-  let rows: Doc<"contacts">[];
-
+  const { organizationId } = filters;
   // Always org-index when listing an org hub — never take(N) on the global
   // contacts stream then filter (starves the active org on multi-tenant DBs).
   // bounded: LIST_ALL_STREAM_CAP
-  rows = await ctx.db
+  const rows = await ctx.db
     .query("contacts")
     .withIndex("by_organization_updatedAt", (idx) =>
       idx.eq("organizationId", organizationId),
     )
     .order("desc")
     .take(LIST_ALL_STREAM_CAP);
-  if (globalAdmin) {
-    rows = filterContactsByOrgScope(rows, organizationId);
-  }
 
   return rows
     .map(mapContactToRegistryItem)

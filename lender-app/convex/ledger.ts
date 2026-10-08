@@ -39,8 +39,9 @@ export type LedgerListEntry = {
  * the originating pipeline file and payments. Pre-rolls payment totals so the
  * UI can render Received / Balance without N round trips.
  *
- * **Performance:** bounded newest-ledger take (not full-table) + payments via
- * `by_ledgerId` for returned rows only (not a global payments collect).
+ * **Performance:** ledger rows are still scanned (no `organizationId` index
+ * yet — follow-up), but payments load via `by_ledgerId` for org-visible rows
+ * only (no global payments `.collect()`).
  */
 export const list = query({
   args: {
@@ -52,12 +53,9 @@ export const list = query({
     await assertOrgPermission(ctx, organizationId, memberUserKey, "files.view");
 
     const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
-    const LEDGER_LIST_CAP = 5_000;
-    // bounded: newest ledger rows — table has no organizationId index yet
-    const rows = await ctx.db
-      .query("ledger")
-      .order("desc")
-      .take(LEDGER_LIST_CAP);
+    // bounded: ledger table is funding events only (not org growth chat/docs);
+    // org filter requires file join until organizationId is denormalized.
+    const rows = await ctx.db.query("ledger").order("desc").collect();
     if (rows.length === 0) return [];
 
     const uniqueFileIds = [...new Set(rows.map((r) => r.fileId))];
