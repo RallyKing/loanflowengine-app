@@ -10,7 +10,6 @@ import { getFunctionName } from "convex/server";
 import { api } from "@/convex/_generated/api";
 import { useAuth } from "@/lib/sessionUiClient";
 import { useActorUserKey } from "@/lib/useActorUserKey";
-import { useConvexJwtReady } from "@/lib/useConvexOrgQueryReady";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import {
   ALERT_CATEGORIES,
@@ -43,14 +42,17 @@ const CATEGORY_COPY: Record<
 export function SettingsRemindersSection() {
   const actorKey = useActorUserKey().trim();
   const { isLoaded, isSignedIn, userId } = useAuth();
-  const jwtReady = useConvexJwtReady();
   const { activeOrganizationId } = useOrgPermissions();
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
   /** Prefer session userKey; never fall back to browser accountId while signed in. */
   const userKey = sessionKey || (isSignedIn ? "" : actorKey);
   const sessionReady = isLoaded && isSignedIn === true && userKey.length > 0;
-  /** Wait for Convex RS256 JWT — unauthenticated getPreferences throws and crashes the route. */
-  const ready = sessionReady && jwtReady;
+  /**
+   * Session identity is enough — same as Alerts bell. JWT probe failure must not
+   * leave Settings stuck on "Loading reminder preferences…". `useQueries` soft-
+   * handles Unauthorized (PR #63); backend also accepts verified members without JWT.
+   */
+  const ready = sessionReady;
 
   const prefsQueries = useMemo((): RequestForQueries => {
     if (!ready) return {};
