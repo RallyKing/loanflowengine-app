@@ -241,7 +241,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     ],
     body: [
       "The Reminders bell in the header lists file snooze, task due/reminder, and triage schedule items. Channel toggles live under Settings → Reminders.",
-      "In-app is on by default. Push can be turned on and is saved, but Web Push is not delivered until that feature ships.",
+      "In-app is on by default (Reminders bell). Push delivers to this device when Settings → Reminders Push is on and phone push is enabled for the device.",
     ],
   },
   {

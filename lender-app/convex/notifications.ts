@@ -21,6 +21,7 @@ import {
 import { resolveDisplayUsernameForUserKey } from "./auth/displayIdentity";
 import { requireAuthenticatedCaller } from "./callerAuth";
 import { resolveNotificationContext } from "./notificationContext";
+import { isWebPushCategory } from "./webPushPayload";
 
 async function assertCallerOwnsUserKey(
   ctx: QueryCtx | MutationCtx,
@@ -162,6 +163,16 @@ export async function dispatchUserNotification(
 
   if (channels.email && simpleEmailLooksValid(prefs.notificationEmail)) {
     await ctx.scheduler.runAfter(0, internal.notifications.trySendNotificationEmail, {
+      notificationId: id,
+    });
+  }
+
+  /**
+   * Lean Web Push: allowlisted categories only. Action no-ops without
+   * subscription / VAPID — no cron / no polling.
+   */
+  if (isWebPushCategory(args.category)) {
+    await ctx.scheduler.runAfter(0, internal.webPushActions.trySendWebPush, {
       notificationId: id,
     });
   }
@@ -354,6 +365,16 @@ export const internalGetNotification = internalQuery({
   args: { notificationId: v.id("userNotifications") },
   handler: async (ctx, { notificationId }) => {
     return await ctx.db.get(notificationId);
+  },
+});
+
+export const internalMarkPushDispatched = internalMutation({
+  args: { notificationId: v.id("userNotifications") },
+  handler: async (ctx, { notificationId }) => {
+    const row = await ctx.db.get(notificationId);
+    if (!row) return;
+    if (row.pushDispatchedAt != null) return;
+    await ctx.db.patch(notificationId, { pushDispatchedAt: Date.now() });
   },
 });
 

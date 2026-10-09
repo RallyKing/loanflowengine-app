@@ -5,6 +5,7 @@
 
 import {
   internalMutation,
+  internalQuery,
   mutation,
   query,
   type MutationCtx,
@@ -75,8 +76,9 @@ function prefsFromDoc(
       push: row.taskDuePush,
     },
     task_scheduled: {
-      inApp: row.taskScheduledInApp ?? true,
-      push: row.taskScheduledPush ?? false,
+      // Legacy rows predate task_scheduled — inherit task_due channels.
+      inApp: row.taskScheduledInApp ?? row.taskDueInApp,
+      push: row.taskScheduledPush ?? row.taskDuePush,
     },
   });
 }
@@ -92,20 +94,14 @@ async function loadAlertPrefs(
   return prefsFromDoc(row);
 }
 
-/** Web Push is not implemented — preference may be true but send is a no-op. */
-function stubPushSend(args: {
-  userKey: string;
-  category: AlertCategory;
-  title: string;
-}): void {
-  console.log(
-    "[alerts] push stub (no Web Push infra)",
-    JSON.stringify({
-      userKeyPrefix: args.userKey.slice(0, 12),
-      category: args.category,
-      title: args.title.slice(0, 80),
-    }),
-  );
+async function scheduleTimeAlertPush(
+  ctx: MutationCtx,
+  alertId: Id<"alerts">,
+): Promise<void> {
+  // One-shot fan-out — never a polling pump. Action no-ops without VAPID/subs.
+  await ctx.scheduler.runAfter(0, internal.webPushActions.trySendTimeAlertWebPush, {
+    alertId,
+  });
 }
 
 async function insertAlertIdempotent(
@@ -127,16 +123,9 @@ async function insertAlertIdempotent(
   if (!userKey) return null;
 
   const prefs = await loadAlertPrefs(ctx, userKey);
-  if (!shouldCreateInAppAlert(prefs, args.category)) {
-    if (shouldSendPushAlert(prefs, args.category)) {
-      stubPushSend({
-        userKey,
-        category: args.category,
-        title: args.title,
-      });
-    }
-    return null;
-  }
+  const wantInApp = shouldCreateInAppAlert(prefs, args.category);
+  const wantPush = shouldSendPushAlert(prefs, args.category);
+  if (!wantInApp && !wantPush) return null;
 
   const dedupeKey = args.dedupeKey.trim();
   const existing = await ctx.db
@@ -145,10 +134,18 @@ async function insertAlertIdempotent(
       q.eq("userKey", userKey).eq("dedupeKey", dedupeKey),
     )
     .first();
-  if (existing) return existing._id;
+  if (existing) {
+    if (wantPush && existing.pushDispatchedAt == null) {
+      await scheduleTimeAlertPush(ctx, existing._id);
+    }
+    return existing._id;
+  }
 
   const deepLinkPath = assertInternalAppPath(args.deepLinkPath);
   const now = Date.now();
+  // Persist a row whenever either channel is on so push has an idempotent
+  // stamp (`pushDispatchedAt`). Push-only rows are marked read so the
+  // Reminders badge stays quiet.
   const id = await ctx.db.insert("alerts", {
     userKey,
     orgId: args.orgId,
@@ -161,14 +158,11 @@ async function insertAlertIdempotent(
     fireAt: args.fireAt,
     createdAt: now,
     dedupeKey,
+    readAt: wantInApp ? undefined : now,
   });
 
-  if (shouldSendPushAlert(prefs, args.category)) {
-    stubPushSend({
-      userKey,
-      category: args.category,
-      title: args.title,
-    });
+  if (wantPush) {
+    await scheduleTimeAlertPush(ctx, id);
   }
 
   return id;
@@ -382,6 +376,79 @@ export const fireTaskScheduled = internalMutation({
       deepLinkPath: args.deepLinkPath,
       body: args.body,
     });
+  },
+});
+
+// ---------- Internal helpers for Web Push ----------
+
+export const internalGetAlert = internalQuery({
+  args: { alertId: v.id("alerts") },
+  handler: async (ctx, { alertId }) => {
+    return await ctx.db.get(alertId);
+  },
+});
+
+export const internalMarkPushDispatched = internalMutation({
+  args: { alertId: v.id("alerts") },
+  handler: async (ctx, { alertId }) => {
+    const row = await ctx.db.get(alertId);
+    if (!row) return;
+    if (row.pushDispatchedAt != null) return;
+    await ctx.db.patch(alertId, { pushDispatchedAt: Date.now() });
+  },
+});
+
+/**
+ * Re-queue Web Push for an existing alert (idempotent via pushDispatchedAt).
+ * Used after shipping push infra / prefs backfill — not a polling pump.
+ */
+export const internalRedispatchAlertPush = internalMutation({
+  args: { alertId: v.id("alerts"), force: v.optional(v.boolean()) },
+  handler: async (ctx, { alertId, force }) => {
+    const row = await ctx.db.get(alertId);
+    if (!row) return { ok: false as const, reason: "missing" as const };
+    if (!force && row.pushDispatchedAt != null) {
+      return { ok: false as const, reason: "already_sent" as const };
+    }
+    if (force && row.pushDispatchedAt != null) {
+      await ctx.db.patch(alertId, { pushDispatchedAt: undefined });
+    }
+    await scheduleTimeAlertPush(ctx, alertId);
+    return { ok: true as const, reason: "scheduled" as const };
+  },
+});
+
+/**
+ * Persist inherited task_scheduled push when legacy prefs only set taskDuePush.
+ * One-shot operator/backfill helper — not scheduled on a loop.
+ */
+export const internalAlignScheduledPushPrefs = internalMutation({
+  args: { userKey: v.string() },
+  handler: async (ctx, { userKey }) => {
+    const k = userKey.trim();
+    if (!k) return { ok: false as const, reason: "empty" as const };
+    const row = await ctx.db
+      .query("alertPreferences")
+      .withIndex("by_userKey", (q) => q.eq("userKey", k))
+      .first();
+    if (!row) return { ok: false as const, reason: "missing" as const };
+    if (row.taskScheduledPush !== undefined) {
+      return {
+        ok: true as const,
+        reason: "already_set" as const,
+        taskScheduledPush: row.taskScheduledPush,
+      };
+    }
+    await ctx.db.patch(row._id, {
+      taskScheduledInApp: row.taskScheduledInApp ?? row.taskDueInApp,
+      taskScheduledPush: row.taskDuePush,
+      updatedAt: Date.now(),
+    });
+    return {
+      ok: true as const,
+      reason: "aligned" as const,
+      taskScheduledPush: row.taskDuePush,
+    };
   },
 });
 
