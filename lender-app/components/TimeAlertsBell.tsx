@@ -19,7 +19,6 @@ import { formatRelativeTimestamp } from "@/lib/formatRelativeTimestamp";
 import { isInternalAppPath } from "@/lib/alerts/internalPath";
 import { settingsHref } from "@/lib/settingsRegistry";
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
-import { useConvexJwtReady } from "@/lib/useConvexOrgQueryReady";
 
 type AlertRow = Doc<"alerts">;
 type FilterTab = "all" | "unread" | "snooze" | "tasks";
@@ -92,7 +91,6 @@ function TimeAlertsBellInner({
   const router = useRouter();
   const nowBucket = useTriageClockTime();
   const { isLoaded: authLoaded, isSignedIn, userId } = useAuth();
-  const jwtReady = useConvexJwtReady();
   const sessionKey = isSignedIn && userId ? userId.trim() : "";
   /**
    * Same key resolution as UserNotificationsBell / ProductUpdatesBell so the
@@ -112,10 +110,14 @@ function TimeAlertsBellInner({
   /** Mount the Reminders control for signed-in chrome — never gate UI on JWT. */
   const chromeVisible = authLoaded && isSignedIn && k.length > 0;
   /**
-   * Skip Convex reads until JWT is attached (Unauthorized race). Soft-handled
-   * via useQueries; must not hide the bell (PR #63 regression).
+   * Same session gate as UserNotificationsBell (Alerts). Do not wait on
+   * `useConvexJwtReady`: when the token probe fails or never reaches "ready",
+   * `queryReady && jwtReady` stayed false and the open panel showed
+   * "Loading reminders…" forever. Backend `requireAuthenticatedCaller` accepts
+   * verified workspace members via `memberUserKey` without JWT; Unauthorized is
+   * soft-handled by `useQueries` (Error result → panel message, not crash).
    */
-  const queryReady = chromeVisible && jwtReady;
+  const queryReady = chromeVisible;
 
   /**
    * Badge always subscribes to unread count. List only while the panel is open
@@ -278,12 +280,13 @@ function TimeAlertsBellInner({
     }
   };
 
+  // Only show loading while queries are actually subscribed. Never treat
+  // "JWT not ready / queries skipped" as an infinite spinner (PR #64 bug).
   const loading =
     open &&
+    queryReady &&
     !queryError &&
-    (!queryReady ||
-      allItems === undefined ||
-      unreadPayload === undefined);
+    (allItems === undefined || unreadPayload === undefined);
   // Panel children are evaluated even when PortalOverlayPanel returns null
   // (open=false). List query is skipped while closed, so visibleItems is
   // undefined — never call .map without a defined array.
