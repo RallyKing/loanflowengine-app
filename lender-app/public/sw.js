@@ -38,7 +38,10 @@ function parsePushPayload(data) {
         ? o.body.trim().slice(0, 240)
         : fallback.body,
     url:
-      typeof o.url === "string" && o.url.startsWith("/")
+      typeof o.url === "string" &&
+      o.url.startsWith("/") &&
+      !o.url.startsWith("//") &&
+      !o.url.includes(":")
         ? o.url
         : fallback.url,
     tag:

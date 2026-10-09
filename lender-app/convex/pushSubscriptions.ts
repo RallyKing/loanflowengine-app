@@ -3,6 +3,32 @@ import { v } from "convex/values";
 import { requireOrgMemberKey } from "./authUtils";
 import { requireAuthenticatedCaller } from "./callerAuth";
 
+/** Browser push networks only — rejects SSRF-shaped endpoints. */
+function assertAllowedPushEndpoint(endpoint: string): void {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error("Invalid push subscription endpoint");
+  }
+  if (url.protocol !== "https:") {
+    throw new Error("Push endpoint must be https");
+  }
+  const host = url.hostname.toLowerCase();
+  const allowed =
+    host === "fcm.googleapis.com" ||
+    host.endsWith(".fcm.googleapis.com") ||
+    host === "web.push.apple.com" ||
+    host.endsWith(".push.apple.com") ||
+    host === "updates.push.services.mozilla.com" ||
+    host.endsWith(".push.services.mozilla.com") ||
+    host === "wns2-pn1p.notify.windows.com" ||
+    host.endsWith(".notify.windows.com");
+  if (!allowed) {
+    throw new Error("Push endpoint host is not an allowed push service");
+  }
+}
+
 /**
  * Persist a browser PushSubscription for the signed-in member.
  * Idempotent on endpoint (updates keys / org / user if the same endpoint re-subscribes).
@@ -27,6 +53,7 @@ export const upsert = mutation({
     if (endpoint.length > 2048 || p256dh.length > 512 || auth.length > 512) {
       throw new Error("Push subscription fields too long");
     }
+    assertAllowedPushEndpoint(endpoint);
 
     const caller = await requireOrgMemberKey(
       ctx,
@@ -41,6 +68,9 @@ export const upsert = mutation({
       .first();
 
     if (existing) {
+      if (existing.memberUserKey !== caller) {
+        throw new Error("Unauthorized");
+      }
       await ctx.db.patch(existing._id, {
         organizationId: args.organizationId,
         memberUserKey: caller,
