@@ -120,8 +120,10 @@ function TimeAlertsBellInner({
   const queryReady = chromeVisible;
 
   /**
-   * Badge always subscribes to unread count. List only while the panel is open
-   * (shell cost — no always-on listForUser). Args stay clock-free.
+   * Always subscribe to unread + list when the control is mounted (same as
+   * Alerts / `UserNotificationsBell`). Open-gating `listForUser` left the panel
+   * on "Loading reminders…" forever when the dynamic `useQueries` key never
+   * settled, while the badge still worked. Args stay clock-free.
    */
   const alertQueries = useMemo((): RequestForQueries => {
     if (!queryReady) return {};
@@ -130,24 +132,21 @@ function TimeAlertsBellInner({
       memberUserKey: k,
       ...(activeOrganizationId ? { orgId: activeOrganizationId } : {}),
     };
-    const req: RequestForQueries = {
+    return {
       unread: {
         query: api.alerts.unreadCountForUser,
         args: base,
       },
-    };
-    if (open) {
-      req.items = {
+      items: {
         query: api.alerts.listForUser,
         args: {
           ...base,
           limit: LIST_LIMIT,
           includeDismissed: showHidden,
         },
-      };
-    }
-    return req;
-  }, [queryReady, k, activeOrganizationId, showHidden, open]);
+      },
+    };
+  }, [queryReady, k, activeOrganizationId, showHidden]);
 
   const alertResults = useQueries(alertQueries);
   const unreadRaw = queryReady ? alertResults.unread : undefined;
@@ -164,6 +163,8 @@ function TimeAlertsBellInner({
     unreadRaw instanceof Error || unreadRaw === undefined
       ? undefined
       : (unreadRaw as { count: number; capped: boolean });
+  const unreadSettled = unreadRaw !== undefined;
+  const itemsSettled = itemsRaw !== undefined;
   const allItems: AlertRow[] | undefined =
     itemsRaw instanceof Error || itemsRaw === undefined
       ? undefined
@@ -195,6 +196,7 @@ function TimeAlertsBellInner({
 
   const markRead = useMutation(api.alerts.markRead);
   const dismiss = useMutation(api.alerts.dismiss);
+  const clearAllForUser = useMutation(api.alerts.clearAllForUser);
 
   useLayoutEffect(() => {
     if (!open || !rootRef.current) return;
@@ -260,38 +262,47 @@ function TimeAlertsBellInner({
     }
   };
 
-  const markAllRead = async () => {
-    if (!allItems || busy) return;
-    const unread = allItems.filter(
-      (r) =>
-        r.readAt == null &&
-        r.dismissedAt == null &&
-        (showHidden || !isCurrentlyHidden(r, nowBucket)),
-    );
-    if (unread.length === 0) return;
+  /**
+   * Server-side clear — zeros the unread badge for this user (paginated,
+   * idempotent). Does not depend on the list query having loaded (client-only
+   * mark-all over `allItems` left the badge at 85 when the panel was stuck or
+   * unread exceeded LIST_LIMIT).
+   */
+  const clearAll = async () => {
+    if (busy || !queryReady) return;
     setBusy(true);
     try {
-      await Promise.all(
-        unread.map((r) => markRead({ id: r._id, memberUserKey: k })),
-      );
+      let guard = 0;
+      let hasMore = true;
+      while (hasMore && guard < 20) {
+        guard += 1;
+        const result = await clearAllForUser({
+          userKey: k,
+          memberUserKey: k,
+          hide: true,
+          ...(activeOrganizationId ? { orgId: activeOrganizationId } : {}),
+        });
+        hasMore = result.hasMore;
+        if (result.updated === 0) break;
+      }
       setSelected(new Set());
     } finally {
       setBusy(false);
     }
   };
 
-  // Only show loading while queries are actually subscribed. Never treat
-  // "JWT not ready / queries skipped" as an infinite spinner (PR #64 bug).
+  // Loading only while subscribed queries are unresolved. Never treat skipped
+  // queries or a settled unread + pending list as an endless spinner.
   const loading =
     open &&
     queryReady &&
     !queryError &&
-    (allItems === undefined || unreadPayload === undefined);
+    (!unreadSettled || !itemsSettled);
   // Panel children are evaluated even when PortalOverlayPanel returns null
-  // (open=false). List query is skipped while closed, so visibleItems is
-  // undefined — never call .map without a defined array.
+  // (open=false). List is always subscribed when ready — still guard .map.
   const listRows = visibleItems ?? [];
-  const empty = open && !loading && !queryError && listRows.length === 0;
+  const empty =
+    open && !loading && !queryError && itemsSettled && listRows.length === 0;
 
   return (
     <div
@@ -341,9 +352,10 @@ function TimeAlertsBellInner({
                 size="sm"
                 className="h-7 text-xs"
                 disabled={busy}
-                onClick={() => void markAllRead()}
+                data-testid="time-alerts-clear-all"
+                onClick={() => void clearAll()}
               >
-                Mark all read
+                Clear all
               </Button>
             ) : null}
           </div>
@@ -428,7 +440,11 @@ function TimeAlertsBellInner({
             </p>
           ) : empty || listRows.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              {open ? "No reminders in this view." : null}
+              {open
+                ? badgeCount > 0
+                  ? "Reminders are ready — use Clear all to zero the badge, or adjust filters."
+                  : "No reminders in this view."
+                : null}
             </p>
           ) : (
             <ul className="space-y-1" aria-label="Reminder list">
