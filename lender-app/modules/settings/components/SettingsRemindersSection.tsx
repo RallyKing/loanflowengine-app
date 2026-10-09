@@ -19,6 +19,7 @@ import {
   type AlertPreferencesResolved,
 } from "@/lib/alerts/alertCategories";
 import { Button } from "@/components/ui/Button";
+import { PushNotificationDeviceToggle } from "@/components/PushNotificationDeviceToggle";
 import { SettingsSectionCard } from "./SettingsHubChrome";
 
 const CATEGORY_COPY: Record<
@@ -153,10 +154,11 @@ export function SettingsRemindersSection() {
       ) : (
         <div className="max-w-xl space-y-4">
           <p className="text-xs text-muted-foreground">
-            In-app reminders appear in the Reminders bell. Push toggles are
-            stored for later and are not delivered until Web Push ships. File
-            snooze reminders fire at the snooze end time (usually end of day) —
-            use Send test reminder to verify the bell sooner.
+            In-app reminders appear in the Reminders bell (clock icon). Push
+            uses this device&apos;s Web Push subscription when enabled below.
+            File snooze fires at snooze end; scheduled triage times use the
+            New Task &quot;Schedule date&quot; picker. Use Send test reminder
+            for the bell, and Send test notification for phone push.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -175,6 +177,11 @@ export function SettingsRemindersSection() {
               </p>
             ) : null}
           </div>
+          <PushNotificationDeviceToggle
+            organizationId={activeOrganizationId}
+            memberUserKey={userKey}
+            enabled={ready}
+          />
           <div className="space-y-3">
             {ALERT_CATEGORIES.map((id) => {
               const copy = CATEGORY_COPY[id];

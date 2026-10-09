@@ -5627,6 +5627,8 @@ export default defineSchema({
     hiddenUntil: v.optional(v.number()),
     /** Unique per user + category + entity + fireAt. */
     dedupeKey: v.string(),
+    /** Web Push delivery stamp (dedupe; one fan-out per alert row). */
+    pushDispatchedAt: v.optional(v.number()),
   })
     .index("by_user_unread", ["userKey", "readAt", "fireAt"])
     .index("by_user_created", ["userKey", "createdAt"])
@@ -5635,7 +5637,8 @@ export default defineSchema({
 
   /**
    * Per-user Time Alerts channel prefs. Defaults (when row missing):
-   * inApp on, push off for every category.
+   * inApp on, push off for every category. Legacy rows that omit
+   * `taskScheduled*` inherit the corresponding `taskDue*` values.
    */
   alertPreferences: defineTable({
     userKey: v.string(),
