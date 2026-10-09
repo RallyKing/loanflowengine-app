@@ -44,6 +44,9 @@ const UNREAD_BADGE_CAP = 100;
 const LIST_DEFAULT_LIMIT = 50;
 const LIST_MAX_LIMIT = 100;
 const BACKFILL_PAGE_MAX = 100;
+/** Max unread rows cleared per `clearAllForUser` invocation (bounded; client may re-call). */
+const CLEAR_ALL_PAGE = 100;
+const CLEAR_ALL_MAX_PAGES = 5;
 
 const memberUserKeyArg = {
   memberUserKey: v.optional(v.string()),
@@ -562,6 +565,83 @@ export const dismiss = mutation({
       dismissedAt: now,
       readAt: row.readAt ?? now,
     });
+  },
+});
+
+/**
+ * True clear for the Reminders badge: mark unread rows read (and optionally
+ * dismiss/hide) for the authenticated caller. Idempotent — already-read rows
+ * are skipped. Bounded pages via `by_user_unread` (no unbounded collect).
+ * Client may re-invoke while `hasMore` until the badge hits 0.
+ */
+export const clearAllForUser = mutation({
+  args: {
+    userKey: v.string(),
+    orgId: v.optional(v.id("organizations")),
+    /** When true (default), also set `dismissedAt` so rows leave the default inbox. */
+    hide: v.optional(v.boolean()),
+    ...memberUserKeyArg,
+  },
+  returns: v.object({
+    updated: v.number(),
+    hasMore: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const k = args.userKey.trim();
+    if (!k) return { updated: 0, hasMore: false };
+    await assertCallerOwnsUserKey(ctx, k, args.memberUserKey);
+    const hide = args.hide !== false;
+    const now = Date.now();
+    let updated = 0;
+
+    for (let page = 0; page < CLEAR_ALL_MAX_PAGES; page++) {
+      const rows = await ctx.db
+        .query("alerts")
+        .withIndex("by_user_unread", (q) =>
+          q.eq("userKey", k).eq("readAt", undefined),
+        )
+        .take(CLEAR_ALL_PAGE);
+
+      if (rows.length === 0) {
+        return { updated, hasMore: false };
+      }
+
+      let patchedThisPage = 0;
+      for (const r of rows) {
+        if (args.orgId && r.orgId !== args.orgId) continue;
+        // Idempotent: unread index already implies readAt == null.
+        const patch: { readAt: number; dismissedAt?: number } = {
+          readAt: now,
+        };
+        if (hide && r.dismissedAt == null) {
+          patch.dismissedAt = now;
+        }
+        await ctx.db.patch(r._id, patch);
+        updated += 1;
+        patchedThisPage += 1;
+      }
+
+      if (rows.length < CLEAR_ALL_PAGE) {
+        return { updated, hasMore: false };
+      }
+
+      // Org filter can skip an entire page — avoid an idle loop: if nothing
+      // matched this page, stop and let the client decide (rare multi-org).
+      if (patchedThisPage === 0) {
+        return { updated, hasMore: false };
+      }
+    }
+
+    const more = await ctx.db
+      .query("alerts")
+      .withIndex("by_user_unread", (q) =>
+        q.eq("userKey", k).eq("readAt", undefined),
+      )
+      .take(1);
+    const hasMore =
+      more.length > 0 &&
+      (!args.orgId || more.some((r) => r.orgId === args.orgId));
+    return { updated, hasMore };
   },
 });
 
