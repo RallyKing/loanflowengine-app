@@ -263,7 +263,8 @@ export function SettingsPageClient() {
       >
         <SettingsJumpNav
           hashSection={hashSection}
-          isGlobalAdmin={Boolean(isGlobalAdmin || canManagePlatformUsers)}
+          isGlobalAdmin={Boolean(isGlobalAdmin)}
+          canManagePlatformUsers={canManagePlatformUsers}
         />
 
         <div

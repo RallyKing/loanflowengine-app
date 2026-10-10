@@ -8,6 +8,7 @@
 import type { QueryCtx } from "./_generated/server";
 import type { PaginationOptions, PaginationResult } from "convex/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { rowBelongsToOrganizationScope } from "./orgScopeMatching";
 import { resolveClientAccessLevel } from "./resourceAccess";
 import type { RegistryRoleId } from "../lib/registry/universalRoles";
 import {
@@ -110,11 +111,12 @@ function includesType(
   return typeFilter.includes(type);
 }
 
+/** Fail-closed: exact org or primary-workspace legacy null-org only. */
 function lenderVisibleInOrg(
   row: Doc<"lenders">,
   organizationId: Id<"organizations">,
 ): boolean {
-  return row.organizationId == null || row.organizationId === organizationId;
+  return rowBelongsToOrganizationScope(row.organizationId, organizationId);
 }
 
 function sortValue(

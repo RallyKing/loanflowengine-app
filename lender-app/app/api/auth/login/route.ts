@@ -372,14 +372,49 @@ export async function POST(req: Request) {
         );
       }
       if (gate.code === "NO_MEMBER" || gate.code === "INACTIVE") {
+        // Only approved accounts may be repaired. Await + re-gate before session.
         const repairProof = signBridge(`login-repair-membership:${record.userId}`);
-        void client
-          .mutation(api.auth.loginBridge.repairDefaultOrgMembershipBridged, {
+        try {
+          await client.mutation(
+            api.auth.loginBridge.repairDefaultOrgMembershipBridged,
+            {
+              userId: record.userId,
+              bridgePayload: repairProof.bridgePayload,
+              bridgeProof: repairProof.bridgeProof,
+            },
+          );
+        } catch {
+          /* fall through to re-gate */
+        }
+        const reGateProof = signBridge(`login-gate-retry:${record.userId}`);
+        const reGate = await client.query(
+          api.auth.loginBridge.assertUserWorkspaceActive,
+          {
             userId: record.userId,
-            bridgePayload: repairProof.bridgePayload,
-            bridgeProof: repairProof.bridgeProof,
-          })
-          .catch(() => {});
+            bridgePayload: reGateProof.bridgePayload,
+            bridgeProof: reGateProof.bridgeProof,
+          },
+        );
+        if (!reGate.ok) {
+          return NextResponse.json(
+            {
+              ok: false,
+              code:
+                reGate.code === "PENDING_APPROVAL"
+                  ? "PENDING_APPROVAL"
+                  : reGate.code === "ACCOUNT_REJECTED"
+                    ? "ACCOUNT_REJECTED"
+                    : "ACCOUNT_DISABLED",
+              error:
+                reGate.code === "PENDING_APPROVAL"
+                  ? "Your account is awaiting review. Someone will get back to you if it is approved."
+                  : reGate.code === "ACCOUNT_REJECTED"
+                    ? "This account request was not approved."
+                    : "This workspace account is deactivated or not provisioned.",
+            },
+            { status: 403 },
+          );
+        }
       } else {
         const auditProof = signBridge(`login-audit-gate:${record.userId}:${gate.code}`);
         try {

@@ -11,6 +11,7 @@ import {
   assertOrgPermission,
   assertOrgScopeArgs,
 } from "./organizationAccess";
+import { rowBelongsToOrganizationScope } from "./orgScopeMatching";
 import { callerHasUnrestrictedOrgDataAccess } from "./viewerOrgAccess";
 import { resolveClientAccessLevel } from "./resourceAccess";
 import { registryRoleIdV } from "./registryRoleValidators";
@@ -54,11 +55,12 @@ const linkStatusFilterV = v.optional(
   ),
 );
 
+/** Fail-closed: exact org or primary-workspace legacy null-org only. */
 function lenderVisibleInOrg(
   row: Doc<"lenders">,
   organizationId: Id<"organizations">,
 ): boolean {
-  return row.organizationId == null || row.organizationId === organizationId;
+  return rowBelongsToOrganizationScope(row.organizationId, organizationId);
 }
 
 async function filterClientsForMember(
