@@ -19,9 +19,12 @@ function testPayload() {
     category: "task_scheduled",
     title: "Scheduled: Get remaining list back from FundRock",
     body: undefined,
-    deepLinkPath: "/tasks?task=k17abc",
+    deepLinkPath: "/pipeline/jx73pa3as5e8ap648d6b27ynzs87jww4?block=tasks&task=k17abc",
   });
-  assert.equal(p.url, "/tasks?task=k17abc");
+  assert.equal(
+    p.url,
+    "/pipeline/jx73pa3as5e8ap648d6b27ynzs87jww4?block=tasks&task=k17abc",
+  );
   assert.equal(p.tag, "time-alert:alert123");
   assert.ok(p.title.startsWith("Scheduled:"));
 }

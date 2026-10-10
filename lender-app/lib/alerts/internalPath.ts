@@ -3,6 +3,11 @@
  * Rejects open redirects / external URLs.
  */
 
+/** Query param: expand Tasks block on the pipeline file workspace. */
+export const ALERT_FILE_BLOCK_QUERY = "block" as const;
+/** Query param: open a hub task drawer on the file workspace when supported. */
+export const ALERT_FILE_TASK_QUERY = "task" as const;
+
 export function isInternalAppPath(path: string): boolean {
   if (typeof path !== "string") return false;
   const trimmed = path.trim();
@@ -37,15 +42,45 @@ export function assertInternalAppPath(path: string): string {
 }
 
 export function fileSnoozeDeepLink(fileId: string): string {
-  return assertInternalAppPath(`/pipeline/${fileId}`);
+  return assertInternalAppPath(`/pipeline/${encodeURIComponent(fileId)}`);
 }
 
-export function hubTaskDeepLink(taskId: string): string {
-  return assertInternalAppPath(`/tasks?task=${taskId}`);
+/**
+ * Hub task / schedule reminder → client's pipeline **file** workspace.
+ * Prefer `relatedFileId` / fileTasks edge when scheduling; `taskId` focuses the
+ * task drawer when the file route supports `?task=`.
+ */
+export function hubTaskDeepLink(fileId: string, taskId?: string): string {
+  const id = fileId.trim();
+  if (!id) {
+    throw new Error("Invalid deep link path");
+  }
+  const q = new URLSearchParams();
+  q.set(ALERT_FILE_BLOCK_QUERY, "tasks");
+  const tid = taskId?.trim();
+  if (tid) q.set(ALERT_FILE_TASK_QUERY, tid);
+  return assertInternalAppPath(
+    `/pipeline/${encodeURIComponent(id)}?${q.toString()}`,
+  );
+}
+
+/**
+ * Legacy Reminders links pointed at the Tasks page. Detect so fire-time repair
+ * / click-time resolution can rewrite to the pipeline file workspace.
+ */
+export function isLegacyTasksPageDeepLink(path: string): boolean {
+  const trimmed = path.trim();
+  if (!trimmed.startsWith("/tasks")) return false;
+  try {
+    const u = new URL(trimmed, "https://dlc.local");
+    return u.pathname === "/tasks";
+  } catch {
+    return false;
+  }
 }
 
 export function vaultFileTaskDeepLink(pipelineFileId: string): string {
   return assertInternalAppPath(
-    `/pipeline/${pipelineFileId}?tab=documents`,
+    `/pipeline/${encodeURIComponent(pipelineFileId)}?tab=documents`,
   );
 }
