@@ -5644,6 +5644,15 @@ export default defineSchema({
     dedupeKey: v.string(),
     /** Web Push delivery stamp (dedupe; one fan-out per alert row). */
     pushDispatchedAt: v.optional(v.number()),
+    /**
+     * Denormalized Reminders row context (set at fire time). Optional so
+     * legacy rows remain valid; UI omits missing fields.
+     */
+    taskName: v.optional(v.string()),
+    contactName: v.optional(v.string()),
+    fileName: v.optional(v.string()),
+    lenderName: v.optional(v.string()),
+    loanAmount: v.optional(v.number()),
   })
     .index("by_user_unread", ["userKey", "readAt", "fireAt"])
     .index("by_user_created", ["userKey", "createdAt"])

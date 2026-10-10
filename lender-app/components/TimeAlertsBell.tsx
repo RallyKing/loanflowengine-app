@@ -72,6 +72,35 @@ function isCurrentlyHidden(row: AlertRow, nowBucket: number): boolean {
   return row.hiddenUntil != null && row.hiddenUntil > nowBucket;
 }
 
+function formatLoanAmount(amount: number | undefined): string | null {
+  if (amount == null || !Number.isFinite(amount) || amount <= 0) return null;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0,
+    }).format(amount);
+  } catch {
+    return `$${Math.round(amount).toLocaleString("en-US")}`;
+  }
+}
+
+/** Compact context lines under the reminder title (omit missing fields). */
+function reminderContextLines(row: AlertRow): string[] {
+  const lines: string[] = [];
+  const task = row.taskName?.trim();
+  if (task) lines.push(task);
+  const contact = row.contactName?.trim();
+  if (contact) lines.push(contact);
+  const file = row.fileName?.trim();
+  if (file) lines.push(file);
+  const lender = row.lenderName?.trim();
+  if (lender) lines.push(lender);
+  const loan = formatLoanAmount(row.loanAmount);
+  if (loan) lines.push(loan);
+  return lines;
+}
+
 /**
  * Time Alerts (Reminders) inbox — separate from `UserNotificationsBell` (Alerts).
  * Queries are clock-free; `hiddenUntil` is filtered against TriageClockProvider.
@@ -101,13 +130,15 @@ function TimeAlertsBellInner({
   const { activeOrganizationId } = useOrgPermissions();
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0, width: 384 });
-  const [filter, setFilter] = useState<FilterTab>("all");
+  const [filter, setFilter] = useState<FilterTab>("unread");
   const [showHidden, setShowHidden] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   /** Run legacy deep-link repair once per mounted bell (idempotent; not on every open). */
   const deepLinkRepairAttemptedRef = useRef(false);
+  /** Bounded one-shot enrich of legacy alerts missing denormalized row fields. */
+  const displayContextBackfillAttemptedRef = useRef(false);
 
   /** Mount the Reminders control for signed-in chrome — never gate UI on JWT. */
   const chromeVisible = authLoaded && isSignedIn && k.length > 0;
@@ -201,6 +232,9 @@ function TimeAlertsBellInner({
   const markAllReadForUser = useMutation(api.alerts.markAllReadForUser);
   const clearAllForUser = useMutation(api.alerts.clearAllForUser);
   const repairDeepLinksForUser = useMutation(api.alerts.repairDeepLinksForUser);
+  const backfillDisplayContextForUser = useMutation(
+    api.alerts.backfillDisplayContextForUser,
+  );
 
   useLayoutEffect(() => {
     if (!open || !rootRef.current) return;
@@ -339,6 +373,23 @@ function TimeAlertsBellInner({
     }
   };
 
+  const backfillDisplayContextOnce = async () => {
+    if (!queryReady) return;
+    let guard = 0;
+    let hasMore = true;
+    while (hasMore && guard < 6) {
+      guard += 1;
+      const result = await backfillDisplayContextForUser({
+        userKey: k,
+        memberUserKey: k,
+        ...orgScope,
+      });
+      hasMore = result.hasMore;
+      if (result.updated === 0 && !hasMore) break;
+      if (result.scanned === 0) break;
+    }
+  };
+
   // Loading only while subscribed queries are unresolved. Never treat skipped
   // queries or a settled unread + pending list as an endless spinner.
   const loading =
@@ -373,6 +424,10 @@ function TimeAlertsBellInner({
           if (next && !deepLinkRepairAttemptedRef.current) {
             deepLinkRepairAttemptedRef.current = true;
             void repairDeepLinksOnce();
+          }
+          if (next && !displayContextBackfillAttemptedRef.current) {
+            displayContextBackfillAttemptedRef.current = true;
+            void backfillDisplayContextOnce();
           }
         }}
       >
@@ -524,6 +579,7 @@ function TimeAlertsBellInner({
                 const hidden = isCurrentlyHidden(row, nowBucket);
                 const dismissed = row.dismissedAt != null;
                 const checked = selected.has(row._id);
+                const contextLines = reminderContextLines(row);
                 return (
                   <li key={row._id}>
                     <div
@@ -560,6 +616,19 @@ function TimeAlertsBellInner({
                           >
                             {row.title}
                           </span>
+                          {contextLines.length > 0 ? (
+                            <span className="mt-0.5 block space-y-0.5 text-[11px] leading-snug text-foreground/85">
+                              {contextLines.map((line) => (
+                                <span
+                                  key={line}
+                                  className="block truncate"
+                                  title={line}
+                                >
+                                  {line}
+                                </span>
+                              ))}
+                            </span>
+                          ) : null}
                           <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[10px] text-muted-foreground">
                             <span>{entityLabel(row.entityType)}</span>
                             <span aria-hidden>·</span>
