@@ -21,6 +21,10 @@ import {
   bumpCredentialForUserKey,
   revokeAllSessionsForUserId,
 } from "./sessionInvalidate";
+import {
+  recordPlatformAccountAudit,
+  type PlatformAccountEventType,
+} from "./platformAccountAudit";
 
 const accessStatusValidator = v.union(
   v.literal("pending"),
@@ -222,6 +226,31 @@ async function applyAccessStatus(
     await bumpCredentialForUserKey(ctx, target._id as string);
     await revokeAllSessionsForUserId(ctx, target._id, args.revokeReason);
   }
+
+  let eventType: PlatformAccountEventType;
+  let summary: string;
+  if (args.revokeReason === "account_reenabled") {
+    eventType = "account_reenabled";
+    summary = "Account re-enabled";
+  } else if (args.next === "approved") {
+    eventType = "signup_approved";
+    summary = "Signup approved";
+  } else if (args.next === "rejected") {
+    eventType = "signup_rejected";
+    summary = "Signup rejected";
+  } else if (args.next === "disabled") {
+    eventType = "account_disabled";
+    summary = "Account disabled";
+  } else {
+    eventType = "signup";
+    summary = "Access status updated";
+  }
+  await recordPlatformAccountAudit(ctx, {
+    subjectUserId: target._id,
+    actorUserId: args.actor._id,
+    eventType,
+    summary,
+  });
 
   return { ok: true as const, accessStatus: args.next };
 }

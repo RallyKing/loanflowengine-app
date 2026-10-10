@@ -506,6 +506,34 @@ export default defineSchema({
     userAgent: v.optional(v.string()),
   }).index("by_at", ["at"]).index("by_audit_user", ["userId"]),
 
+  /**
+   * Append-only per-account activity for the primary platform admin log book.
+   * Never store passwords, hashes, tokens, or other secrets.
+   */
+  platformAccountAuditEvents: defineTable({
+    subjectUserId: v.id("authUsers"),
+    actorUserId: v.optional(v.id("authUsers")),
+    at: v.number(),
+    eventType: v.union(
+      v.literal("signup"),
+      v.literal("signup_approved"),
+      v.literal("signup_rejected"),
+      v.literal("account_disabled"),
+      v.literal("account_reenabled"),
+      v.literal("login_success"),
+      v.literal("login_failure"),
+      v.literal("password_reset_by_owner"),
+      v.literal("password_reset_by_org_admin"),
+      v.literal("force_logout"),
+      v.literal("document_download"),
+      v.literal("lender_import"),
+      v.literal("pipeline_file_created"),
+      v.literal("data_export"),
+    ),
+    summary: v.string(),
+    detail: v.optional(v.string()),
+  }).index("by_subject_at", ["subjectUserId", "at"]),
+
   /** Server-side superuser tenant impersonation sessions (Phase 12.2 Step 7). */
   superuserImpersonationSessions: defineTable({
     publicId: v.string(),

@@ -10,6 +10,7 @@ import { bootstrapCleanNewTenant } from "./cleanTenantBootstrap";
 import { validateStoredArgon2PasswordHash } from "../../lib/auth/passwordPolicy";
 import { signupIdentityIsPrimaryPlatformAdmin } from "./primaryPlatformAdmin";
 import { notifyPrimaryAdminOfPendingSignup } from "./signupAccessAdmin";
+import { recordPlatformAccountAudit } from "./platformAccountAudit";
 
 const SIGNUP_RL_MAX = 10;
 
@@ -116,6 +117,17 @@ export const signup = mutation({
         email: emailNorm,
       });
     }
+
+    await recordPlatformAccountAudit(ctx, {
+      subjectUserId: userId,
+      actorUserId: userId,
+      eventType: "signup",
+      summary:
+        accessStatus === "pending"
+          ? "Signed up (pending review)"
+          : "Signed up (auto-approved)",
+      detail: `Workspace: ${args.organizationName.trim() || "Workspace"}`,
+    });
 
     return {
       ok: true as const,
