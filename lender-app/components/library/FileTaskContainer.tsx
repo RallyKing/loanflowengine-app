@@ -50,6 +50,10 @@ import {
   vaultFileTaskSortableId,
 } from "@/lib/library/documentVaultDnD";
 import {
+  fileTaskPortalHiddenBorderClass,
+  fileTaskPortalVisibilityDataAttr,
+} from "@/lib/library/fileTaskPortalVisibilityCue";
+import {
   isOsFileDragEvent,
   readOsFilesFromDragEvent,
 } from "@/lib/library/documentVaultOsFileDrop";
@@ -454,14 +458,19 @@ export function FileTaskContainer({
     >
       <div
         ref={setDropRef}
+        data-file-task-card=""
+        data-portal-visible={fileTaskPortalVisibilityDataAttr(
+          fileTask.isPortalVisible,
+        )}
         className={cn(
-          "overflow-visible rounded-dlc-md shadow-dlc-1 transition-colors duration-dlc-standard ease-dlc-standard",
+          "relative overflow-visible rounded-dlc-md shadow-dlc-1 transition-colors duration-dlc-standard ease-dlc-standard",
           cardSurfaceClass,
+          fileTaskPortalHiddenBorderClass(fileTask.isPortalVisible),
           isOver && "ring-1 ring-inset ring-emerald-500/30",
           osDragOver && expanded && "ring-1 ring-inset ring-emerald-500/30",
         )}
       >
-        <div className="px-2.5 py-1.5">
+        <div className="relative z-[1] px-2.5 py-1.5">
           <div className="flex min-w-0 items-center gap-1">
             <button
               type="button"
@@ -757,7 +766,7 @@ export function FileTaskContainer({
         {expanded ? (
           <div
             className={cn(
-              "border-t border-border/40",
+              "relative z-[1] border-t border-border/40",
               (osDragOver || isOver) && "bg-emerald-50/30 dark:bg-emerald-950/10",
             )}
             onDragOver={handleOsDragOver}

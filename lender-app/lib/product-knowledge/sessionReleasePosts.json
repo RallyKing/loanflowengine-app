@@ -1,5 +1,15 @@
 [
   {
+    "slug": "2026-10-09-vault-hidden-task-cue",
+    "title": "Hidden vault tasks are easier to spot",
+    "summary": "In Document Vault, tasks marked Hidden keep a light dashed border and soft stripe so you can tell them apart from Visible tasks without reading the eye button.",
+    "body": [
+      "Visible and Hidden file tasks used to look the same except for the small Visible/Hidden control on the action row.",
+      "Hidden (not shared to the client portal) tasks now use a dashed card border plus a very light diagonal stripe behind the content. Text and buttons stay fully readable and clickable."
+    ],
+    "changeType": "improved"
+  },
+  {
     "slug": "2026-08-17-convex-query-cache-fixes",
     "title": "Lists and badges reuse cached Convex results instead of re-running every time",
     "summary": "Unread counts, triage highlights, pipeline snooze, and related badges still show the same information. The backend no longer treats “what time is it?” as a reason to recompute those queries, so repeat calls drop without changing what you see.",
