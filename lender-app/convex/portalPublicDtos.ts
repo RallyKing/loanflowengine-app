@@ -35,6 +35,9 @@ export function portalPublicTaskRow(
     url: string;
   }> = [],
 ) {
+  const passwordProtected = Boolean(
+    task.accessPasswordHash?.trim() && task.accessPasswordSalt?.trim(),
+  );
   const questionItems =
     task.taskType === "questions"
       ? (task.questionItems ?? []).map((q) => ({
@@ -45,8 +48,10 @@ export function portalPublicTaskRow(
           required: q.required !== false,
         }))
       : undefined;
+  // Do not leak saved answers until the per-task password gate is unlocked
+  // (client hydrates answers only when passwordProtected is false).
   const questionAnswers =
-    task.taskType === "questions"
+    task.taskType === "questions" && !passwordProtected
       ? (task.questionAnswers ?? []).map((a) => ({
           questionId: a.questionId,
           value: a.value,
@@ -68,9 +73,7 @@ export function portalPublicTaskRow(
     assignedBlocks,
     blockSettings,
     blockPrefill,
-    passwordProtected: Boolean(
-      task.accessPasswordHash?.trim() && task.accessPasswordSalt?.trim(),
-    ),
+    passwordProtected,
   };
 }
 

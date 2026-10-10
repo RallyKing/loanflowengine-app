@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -76,6 +76,9 @@ export function ClientPortalQuestionsPanel({
   const [draft, setDraft] = useState<Record<string, string>>(serverMap);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Dirty local edits — never clobber from reactive server pushes. */
+  const dirtyRef = useRef(false);
+  const hydratedTaskIdRef = useRef<string | null>(null);
 
   const submitAnswers = useMutation(
     api.documentVaultClientBundlePortal.submitQuestionAnswersFromBundle,
@@ -85,8 +88,16 @@ export function ClientPortalQuestionsPanel({
   );
 
   useEffect(() => {
+    const taskKey = String(fileTaskId);
+    if (hydratedTaskIdRef.current !== taskKey) {
+      hydratedTaskIdRef.current = taskKey;
+      dirtyRef.current = false;
+      setDraft(serverMap);
+      return;
+    }
+    if (dirtyRef.current) return;
     setDraft(serverMap);
-  }, [serverMap]);
+  }, [fileTaskId, serverMap]);
 
   const readOnly = disabled || taskStatus === "complete";
   const accessProof = readPortalAccessProof(bundleToken);
@@ -148,9 +159,10 @@ export function ClientPortalQuestionsPanel({
                     className="mt-2 min-h-[5.5rem] w-full rounded-dlc-md border border-border bg-background px-3 py-2 text-sm"
                     value={value}
                     disabled={readOnly || busy}
-                    onChange={(e) =>
-                      setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))
-                    }
+                    onChange={(e) => {
+                      dirtyRef.current = true;
+                      setDraft((prev) => ({ ...prev, [q.id]: e.target.value }));
+                    }}
                     onBlur={() => void flushDraft()}
                   />
                 ) : (
@@ -167,9 +179,10 @@ export function ClientPortalQuestionsPanel({
                     }
                     value={value}
                     disabled={readOnly || busy}
-                    onChange={(e) =>
-                      setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))
-                    }
+                    onChange={(e) => {
+                      dirtyRef.current = true;
+                      setDraft((prev) => ({ ...prev, [q.id]: e.target.value }));
+                    }}
                     onBlur={() => void flushDraft()}
                   />
                 )}
@@ -203,6 +216,7 @@ export function ClientPortalQuestionsPanel({
                   accessProof: accessProof ?? undefined,
                   taskAccessProof: taskAccessProof ?? undefined,
                 });
+                dirtyRef.current = false;
                 onSubmitted();
                 showOperationalToast({
                   title: "Answers submitted",
