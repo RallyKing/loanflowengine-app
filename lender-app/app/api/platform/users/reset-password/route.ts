@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { api } from "@/convex/_generated/api";
+import { signBridge } from "@/lib/auth/bridgeProof";
 import { getConvexHttpClient } from "@/lib/convexServerClient";
 import { assertSameSiteRequest } from "@/lib/middleware/sameOrigin";
 import { validatePlaintextPasswordPolicy } from "@/lib/auth/passwordPolicy";
@@ -12,7 +13,8 @@ export const runtime = "nodejs";
 
 /**
  * Primary platform admin — set/reset password for any account (GHL-style).
- * Hashes server-side; never logs plaintext. Convex revokes all sessions.
+ * Hashes server-side; never logs plaintext. Convex call is auth-bridge gated
+ * (ConvexHttpClient has no JWT — do not use a spoofable memberUserKey gate alone).
  */
 export async function POST(req: Request) {
   try {
@@ -57,12 +59,17 @@ export async function POST(req: Request) {
   try {
     // Hash in Node — never send plaintext to Convex; never echo in logs.
     const passwordHash = await hashPassword(password);
+    const bridge = signBridge(
+      `platform-admin-set-password:${session.userKey}:${targetUserId}`,
+    );
     await getConvexHttpClient().mutation(
-      api.auth.platformAccountAudit.platformAdminSetPassword,
+      api.auth.platformAccountAudit.platformAdminSetPasswordBridged,
       {
-        memberUserKey: session.userKey,
+        actorUserKey: session.userKey,
         targetUserId: targetUserId as Id<"authUsers">,
         passwordHash,
+        bridgePayload: bridge.bridgePayload,
+        bridgeProof: bridge.bridgeProof,
       },
     );
     return NextResponse.json({ ok: true as const });

@@ -351,8 +351,8 @@
     "summary": "Platform owner can expand any account for an activity timeline and set/reset that user’s password (sessions revoked). Approve, reject, and disable stay as before.",
     "body": [
       "Settings → Users & access (primary platform admin only) now expands each account into a GHL-style detail panel: activity log book plus set/reset password.",
-      "The log records signups, approvals, disables, logins, owner/org password resets, document downloads, lender imports, and new pipeline files — event type and summary only, never passwords.",
-      "Password override hashes on the server, writes an audit event without the secret, and signs the user out of all sessions so they must log in again."
+      "The log records signups, approvals, rejects, disables, re-enables, logins, and owner/org password resets — event type and summary only, never passwords.",
+      "Password override hashes on the server (auth-bridge protected), writes an audit event without the secret, and signs the user out of all sessions so they must log in again."
     ],
     "changeType": "added"
   }

@@ -1,6 +1,9 @@
 /**
  * Append-only platform account activity log for the primary platform admin.
  * Slim DTOs only — never store passwords or hashes.
+ *
+ * Lifecycle / auth events are recorded here. Product-domain activity
+ * (pipeline, vault, lenders) stays in existing feed/access tables.
  */
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
@@ -13,6 +16,7 @@ import {
 } from "../_generated/server";
 import { validateStoredArgon2PasswordHash } from "../../lib/auth/passwordPolicy";
 import { requireAuthenticatedCaller } from "../callerAuth";
+import { assertAuthBridgeProofWithSkew } from "./bridge";
 import { tryGetAuthUserByPermissionKey } from "./globalAdmin";
 import { authUserIsPrimaryPlatformAdmin } from "./primaryPlatformAdmin";
 import {
@@ -36,6 +40,8 @@ export type PlatformAccountEventType =
   | "pipeline_file_created"
   | "data_export";
 
+const BRIDGE_SKEW_MS = 120_000;
+
 async function requirePrimaryPlatformAdminCaller(
   ctx: QueryCtx | MutationCtx,
   memberUserKey: string | undefined,
@@ -52,7 +58,6 @@ function sanitizeDetail(detail: string | undefined): string | undefined {
   if (!detail) return undefined;
   const trimmed = detail.trim().slice(0, 280);
   if (!trimmed) return undefined;
-  // Defense-in-depth: never persist anything that looks like a secret.
   if (
     /password|passwd|secret|token|hash|argon2|bearer/i.test(trimmed) &&
     /[=:$]/.test(trimmed)
@@ -62,9 +67,7 @@ function sanitizeDetail(detail: string | undefined): string | undefined {
   return trimmed;
 }
 
-/**
- * Best-effort append. Call sites should not let this fail the primary write.
- */
+/** Append-only audit row (same transaction as the calling mutation). */
 export async function recordPlatformAccountAudit(
   ctx: MutationCtx,
   args: {
@@ -116,8 +119,7 @@ export async function recordPlatformAccountAuditForUserKey(
 }
 
 /**
- * Paginated activity log for one account. Owner-only.
- * Client uses load-more; no nested scrollport in Settings.
+ * Paginated activity log for one account. Owner-only (browser JWT path).
  */
 export const listAccountActivityLog = query({
   args: {
@@ -151,24 +153,33 @@ export const listAccountActivityLog = query({
 });
 
 /**
- * Platform admin sets a new password hash for any account.
- * Sessions revoked; credential version bumped. Never logs plaintext/hash.
+ * Platform admin password override — callable only via Next API with
+ * AUTH_BRIDGE_SECRET proof. Does not trust memberUserKey alone (no JWT
+ * on ConvexHttpClient). Sessions revoked; never logs plaintext/hash.
  */
-export const platformAdminSetPassword = mutation({
+export const platformAdminSetPasswordBridged = mutation({
   args: {
-    memberUserKey: v.optional(v.string()),
+    actorUserKey: v.string(),
     targetUserId: v.id("authUsers"),
     passwordHash: v.string(),
+    bridgePayload: v.string(),
+    bridgeProof: v.string(),
   },
   returns: v.object({ ok: v.literal(true) }),
   handler: async (ctx, args) => {
-    const actor = await requirePrimaryPlatformAdminCaller(
-      ctx,
-      args.memberUserKey,
+    await assertAuthBridgeProofWithSkew(
+      args.bridgePayload,
+      args.bridgeProof,
+      BRIDGE_SKEW_MS,
     );
 
     const hashErr = validateStoredArgon2PasswordHash(args.passwordHash);
     if (hashErr) throw new Error(hashErr);
+
+    const actor = await tryGetAuthUserByPermissionKey(ctx, args.actorUserKey);
+    if (!actor || !authUserIsPrimaryPlatformAdmin(actor)) {
+      throw new Error("Unauthorized");
+    }
 
     const target = await ctx.db.get(args.targetUserId);
     if (!target) throw new Error("User not found.");

@@ -301,7 +301,8 @@ export function PlatformUsersAdminPanel() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           GHL-style account management: review signups, reset passwords, disable
-          access, and expand each row for the activity log book.
+          access, and expand each row for the account activity log book
+          (signups, access changes, logins, password resets).
           {pendingCount !== undefined ? (
             <span className="ml-1 font-medium text-foreground">
               {pendingCount.count} pending
