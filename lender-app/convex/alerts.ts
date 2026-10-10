@@ -43,6 +43,11 @@ import {
   scheduleVaultFileTaskDueAlert,
   syncHubTaskAlerts,
 } from "./alertSchedule";
+import {
+  alertNeedsDisplayContext,
+  resolveAlertDisplayContext,
+  type AlertDisplayContext,
+} from "./alertDisplayContext";
 
 const UNREAD_BADGE_CAP = 100;
 const LIST_DEFAULT_LIMIT = 50;
@@ -54,6 +59,9 @@ const CLEAR_ALL_MAX_PAGES = 5;
 /** Max legacy `/tasks?task=` deep links repaired per `repairDeepLinksForUser` call. */
 const REPAIR_DEEPLINK_PAGE = 50;
 const REPAIR_DEEPLINK_MAX_PAGES = 4;
+/** Max legacy alerts enriched with display context per backfill call. */
+const BACKFILL_DISPLAY_PAGE = 40;
+const BACKFILL_DISPLAY_MAX_PAGES = 3;
 
 const memberUserKeyArg = {
   memberUserKey: v.optional(v.string()),
@@ -127,6 +135,7 @@ async function insertAlertIdempotent(
     deepLinkPath: string;
     fireAt: number;
     dedupeKey: string;
+    displayContext?: AlertDisplayContext;
   },
 ): Promise<Id<"alerts"> | null> {
   const userKey = args.userKey.trim();
@@ -148,11 +157,35 @@ async function insertAlertIdempotent(
     if (wantPush && existing.pushDispatchedAt == null) {
       await scheduleTimeAlertPush(ctx, existing._id);
     }
+    // Idempotent enrich when a legacy fire left context empty.
+    if (alertNeedsDisplayContext(existing)) {
+      const ctxFields =
+        args.displayContext ??
+        (await resolveAlertDisplayContext(ctx, {
+          entityType: args.entityType,
+          entityId: args.entityId,
+        }));
+      if (
+        ctxFields.taskName != null ||
+        ctxFields.contactName != null ||
+        ctxFields.fileName != null ||
+        ctxFields.lenderName != null ||
+        ctxFields.loanAmount != null
+      ) {
+        await ctx.db.patch(existing._id, ctxFields);
+      }
+    }
     return existing._id;
   }
 
   const deepLinkPath = assertInternalAppPath(args.deepLinkPath);
   const now = Date.now();
+  const displayContext =
+    args.displayContext ??
+    (await resolveAlertDisplayContext(ctx, {
+      entityType: args.entityType,
+      entityId: args.entityId,
+    }));
   // Persist a row whenever either channel is on so push has an idempotent
   // stamp (`pushDispatchedAt`). Push-only rows are marked read so the
   // Reminders badge stays quiet.
@@ -169,6 +202,7 @@ async function insertAlertIdempotent(
     createdAt: now,
     dedupeKey,
     readAt: wantInApp ? undefined : now,
+    ...displayContext,
   });
 
   if (wantPush) {
@@ -775,6 +809,62 @@ export const repairDeepLinksForUser = mutation({
       if (after !== before) repaired += 1;
     }
     return { repaired, scanned, hasMore };
+  },
+});
+
+/**
+ * One-shot enrich of legacy alerts missing denormalized row context.
+ * Bounded page; idempotent; client may re-invoke while `hasMore`.
+ */
+export const backfillDisplayContextForUser = mutation({
+  args: {
+    userKey: v.string(),
+    orgId: v.optional(v.id("organizations")),
+    ...memberUserKeyArg,
+  },
+  returns: v.object({
+    updated: v.number(),
+    scanned: v.number(),
+    hasMore: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const k = args.userKey.trim();
+    if (!k) return { updated: 0, scanned: 0, hasMore: false };
+    await assertCallerOwnsUserKey(ctx, k, args.memberUserKey);
+
+    const cap = BACKFILL_DISPLAY_PAGE * BACKFILL_DISPLAY_MAX_PAGES;
+    // bounded: newest reminders first
+    const batch = await ctx.db
+      .query("alerts")
+      .withIndex("by_user_created", (iq) => iq.eq("userKey", k))
+      .order("desc")
+      .take(cap + 1);
+    const hasMore = batch.length > cap;
+    const page = batch.slice(0, cap);
+
+    let updated = 0;
+    let scanned = 0;
+    for (const r of page) {
+      scanned += 1;
+      if (args.orgId && r.orgId !== args.orgId) continue;
+      if (!alertNeedsDisplayContext(r)) continue;
+      const fields = await resolveAlertDisplayContext(ctx, {
+        entityType: r.entityType,
+        entityId: r.entityId,
+      });
+      if (
+        fields.taskName == null &&
+        fields.contactName == null &&
+        fields.fileName == null &&
+        fields.lenderName == null &&
+        fields.loanAmount == null
+      ) {
+        continue;
+      }
+      await ctx.db.patch(r._id, fields);
+      updated += 1;
+    }
+    return { updated, scanned, hasMore };
   },
 });
 
