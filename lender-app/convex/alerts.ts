@@ -32,10 +32,12 @@ import {
   isFileSnoozeAlertStillValid,
   isHubTaskDueAlertStillValid,
   isHubTaskScheduleAlertStillValid,
+  isHubTaskSnoozeAlertStillValid,
   isVaultFileTaskDueAlertStillValid,
   parseSnoozedUntilMs,
   resolveHubTaskDueAlertFireAt,
   resolveHubTaskScheduleAlertFireAt,
+  resolveHubTaskSnoozeAlertFireAt,
 } from "../lib/alerts/fireValidity";
 import {
   resolveHubTaskDeepLinkPath,
@@ -446,6 +448,68 @@ export const fireTaskScheduled = internalMutation({
       deepLinkPath: args.deepLinkPath,
       body: args.body,
     });
+  },
+});
+
+/**
+ * Hub task snooze wake — category `file_snooze_due` (Snooze tab + prefs).
+ * Display context resolves via entityType `task` (PR #75 enrich path).
+ */
+export const fireTaskSnoozeDue = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    userKey: v.string(),
+    orgId: v.id("organizations"),
+    fireAt: v.number(),
+    dedupeKey: v.string(),
+    title: v.string(),
+    deepLinkPath: v.string(),
+    body: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.taskId);
+    if (!row) return { inserted: false as const, reason: "missing" as const };
+    if (
+      !isHubTaskSnoozeAlertStillValid({
+        snoozedUntil: row.snoozedUntil,
+        expectedFireAt: args.fireAt,
+        status: row.status,
+      })
+    ) {
+      console.warn(
+        "[alerts] fireTaskSnoozeDue stale",
+        JSON.stringify({
+          taskId: args.taskId,
+          expectedFireAt: args.fireAt,
+          snoozedUntil: row.snoozedUntil ?? null,
+          status: row.status,
+        }),
+      );
+      return { inserted: false as const, reason: "stale" as const };
+    }
+    if (
+      row.snoozeAlertUserKey &&
+      row.snoozeAlertUserKey.trim() !== args.userKey.trim()
+    ) {
+      return { inserted: false as const, reason: "user_mismatch" as const };
+    }
+    const deepLinkPath = await resolveHubTaskDeepLinkPath(ctx, args.taskId);
+    const id = await insertAlertIdempotent(ctx, {
+      userKey: args.userKey,
+      orgId: args.orgId,
+      category: "file_snooze_due",
+      title: args.title,
+      body: args.body,
+      entityType: "task",
+      entityId: String(args.taskId),
+      deepLinkPath,
+      fireAt: args.fireAt,
+      dedupeKey: args.dedupeKey,
+    });
+    return {
+      inserted: id != null,
+      reason: id != null ? ("ok" as const) : ("skipped" as const),
+    };
   },
 });
 
@@ -1170,8 +1234,8 @@ export const backfillAlertSchedulesPage = internalMutation({
     }
 
     if (args.phase === "hub_tasks") {
-      // Paginate all tasks (not by_dueDate): sync clears/reschedules both
-      // classic due/reminder and triage scheduledTriggerTime one-shots.
+      // Paginate all tasks (not by_dueDate): sync clears/reschedules due,
+      // scheduledTriggerTime, and snoozedUntil one-shots.
       const { page, isDone, continueCursor } = await ctx.db
         .query("tasks")
         .order("asc")
@@ -1193,16 +1257,22 @@ export const backfillAlertSchedulesPage = internalMutation({
         const scheduleFireAt = resolveHubTaskScheduleAlertFireAt({
           scheduledTriggerTime: row.scheduledTriggerTime,
         });
+        const snoozeFireAt = resolveHubTaskSnoozeAlertFireAt({
+          snoozedUntil: row.snoozedUntil,
+        });
         const needsWork =
           dueFireAt != null ||
           scheduleFireAt != null ||
+          snoozeFireAt != null ||
           row.dueAlertJobId != null ||
-          row.scheduleAlertJobId != null;
+          row.scheduleAlertJobId != null ||
+          row.snoozeAlertJobId != null;
         if (!needsWork) {
           skipped += 1;
           continue;
         }
         const userKey = (
+          row.snoozeAlertUserKey ??
           row.scheduleAlertUserKey ??
           row.dueAlertUserKey ??
           row.ownerUserId ??

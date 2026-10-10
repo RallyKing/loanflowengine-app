@@ -15,10 +15,12 @@ import {
   isFileSnoozeAlertStillValid,
   isHubTaskDueAlertStillValid,
   isHubTaskScheduleAlertStillValid,
+  isHubTaskSnoozeAlertStillValid,
   isVaultFileTaskDueAlertStillValid,
   parseSnoozedUntilMs,
   resolveHubTaskDueAlertFireAt,
   resolveHubTaskScheduleAlertFireAt,
+  resolveHubTaskSnoozeAlertFireAt,
   shouldScheduleOneShot,
 } from "../lib/alerts/fireValidity";
 import {
@@ -175,6 +177,32 @@ function testValidity() {
       scheduledTriggerTime: fireAt,
       expectedFireAt: fireAt,
       status: "done",
+    }),
+    false,
+  );
+  assert.equal(resolveHubTaskSnoozeAlertFireAt({ snoozedUntil: fireAt }), fireAt);
+  assert.equal(resolveHubTaskSnoozeAlertFireAt({ snoozedUntil: null }), null);
+  assert.equal(
+    isHubTaskSnoozeAlertStillValid({
+      snoozedUntil: fireAt,
+      expectedFireAt: fireAt,
+      status: "todo",
+    }),
+    true,
+  );
+  assert.equal(
+    isHubTaskSnoozeAlertStillValid({
+      snoozedUntil: fireAt,
+      expectedFireAt: fireAt,
+      status: "done",
+    }),
+    false,
+  );
+  assert.equal(
+    isHubTaskSnoozeAlertStillValid({
+      snoozedUntil: undefined,
+      expectedFireAt: fireAt,
+      status: "todo",
     }),
     false,
   );

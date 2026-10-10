@@ -59,6 +59,15 @@ export function resolveHubTaskScheduleAlertFireAt(fields: {
   return times[0]!;
 }
 
+/** Hub task snooze wake fire time (`snoozedUntil` only). */
+export function resolveHubTaskSnoozeAlertFireAt(fields: {
+  snoozedUntil?: number | null;
+}): number | null {
+  const times = collectPositiveTimes(fields.snoozedUntil);
+  if (times.length === 0) return null;
+  return times[0]!;
+}
+
 export function isHubTaskDueAlertStillValid(args: {
   dueDate?: number | null;
   reminderAt?: number | null;
@@ -84,6 +93,24 @@ export function isHubTaskScheduleAlertStillValid(args: {
   if (fireAt == null) return false;
   const skew = args.skewMs ?? 1000;
   return Math.abs(fireAt - args.expectedFireAt) <= skew;
+}
+
+/**
+ * Hub task snooze-end alert still valid at fire time.
+ * Same wall-clock match as file snooze; done/archived tasks skip fire.
+ */
+export function isHubTaskSnoozeAlertStillValid(args: {
+  snoozedUntil?: number | null;
+  expectedFireAt: number;
+  status: string;
+  skewMs?: number;
+}): boolean {
+  if (args.status === "done" || args.status === "archived") return false;
+  return isFileSnoozeAlertStillValid({
+    snoozedUntil: args.snoozedUntil,
+    expectedFireAt: args.expectedFireAt,
+    skewMs: args.skewMs,
+  });
 }
 
 export function isVaultFileTaskDueAlertStillValid(args: {

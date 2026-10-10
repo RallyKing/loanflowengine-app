@@ -11,6 +11,7 @@ import {
   parseSnoozedUntilMs,
   resolveHubTaskDueAlertFireAt,
   resolveHubTaskScheduleAlertFireAt,
+  resolveHubTaskSnoozeAlertFireAt,
   shouldScheduleOneShot,
 } from "../lib/alerts/fireValidity";
 import {
@@ -158,7 +159,7 @@ export async function schedulePipelineSnoozeAlert(
   });
 }
 
-type HubTaskAlertKind = "due" | "scheduled";
+type HubTaskAlertKind = "due" | "scheduled" | "snooze";
 
 async function clearHubTaskOneShot(
   ctx: MutationCtx,
@@ -182,16 +183,31 @@ async function clearHubTaskOneShot(
     }
     return;
   }
-  await cancelJob(ctx, row.scheduleAlertJobId);
+  if (kind === "scheduled") {
+    await cancelJob(ctx, row.scheduleAlertJobId);
+    if (
+      row.scheduleAlertJobId != null ||
+      row.scheduleAlertUserKey != null ||
+      row.scheduleAlertFireAt != null
+    ) {
+      await ctx.db.patch(taskId, {
+        scheduleAlertJobId: undefined,
+        scheduleAlertUserKey: undefined,
+        scheduleAlertFireAt: undefined,
+      });
+    }
+    return;
+  }
+  await cancelJob(ctx, row.snoozeAlertJobId);
   if (
-    row.scheduleAlertJobId != null ||
-    row.scheduleAlertUserKey != null ||
-    row.scheduleAlertFireAt != null
+    row.snoozeAlertJobId != null ||
+    row.snoozeAlertUserKey != null ||
+    row.snoozeAlertFireAt != null
   ) {
     await ctx.db.patch(taskId, {
-      scheduleAlertJobId: undefined,
-      scheduleAlertUserKey: undefined,
-      scheduleAlertFireAt: undefined,
+      snoozeAlertJobId: undefined,
+      snoozeAlertUserKey: undefined,
+      snoozeAlertFireAt: undefined,
     });
   }
 }
@@ -210,13 +226,21 @@ export async function clearHubTaskScheduleAlert(
   await clearHubTaskOneShot(ctx, taskId, "scheduled");
 }
 
-/** Clear both classic due/reminder and triage schedule one-shots. */
+export async function clearHubTaskSnoozeAlert(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+): Promise<void> {
+  await clearHubTaskOneShot(ctx, taskId, "snooze");
+}
+
+/** Clear due/reminder, triage schedule, and snooze-wake one-shots. */
 export async function clearHubTaskAlerts(
   ctx: MutationCtx,
   taskId: Id<"tasks">,
 ): Promise<void> {
   await clearHubTaskOneShot(ctx, taskId, "due");
   await clearHubTaskOneShot(ctx, taskId, "scheduled");
+  await clearHubTaskOneShot(ctx, taskId, "snooze");
 }
 
 async function scheduleHubTaskOneShot(
@@ -247,11 +271,23 @@ async function scheduleHubTaskOneShot(
   }
 
   const existingJobId =
-    args.kind === "due" ? row.dueAlertJobId : row.scheduleAlertJobId;
+    args.kind === "due"
+      ? row.dueAlertJobId
+      : args.kind === "scheduled"
+        ? row.scheduleAlertJobId
+        : row.snoozeAlertJobId;
   const existingFireAt =
-    args.kind === "due" ? row.dueAlertFireAt : row.scheduleAlertFireAt;
+    args.kind === "due"
+      ? row.dueAlertFireAt
+      : args.kind === "scheduled"
+        ? row.scheduleAlertFireAt
+        : row.snoozeAlertFireAt;
   const existingUserKey =
-    args.kind === "due" ? row.dueAlertUserKey : row.scheduleAlertUserKey;
+    args.kind === "due"
+      ? row.dueAlertUserKey
+      : args.kind === "scheduled"
+        ? row.scheduleAlertUserKey
+        : row.snoozeAlertUserKey;
   if (
     existingJobId &&
     existingFireAt === fireAt &&
@@ -264,7 +300,12 @@ async function scheduleHubTaskOneShot(
   const now = Date.now();
   const runAt = fireAt > now ? fireAt : now;
   const entityId = String(args.taskId);
-  const category = args.kind === "due" ? "task_due" : "task_scheduled";
+  const category =
+    args.kind === "due"
+      ? "task_due"
+      : args.kind === "scheduled"
+        ? "task_scheduled"
+        : "file_snooze_due";
   const dedupeKey = buildAlertDedupeKey({
     userKey,
     category,
@@ -276,13 +317,15 @@ async function scheduleHubTaskOneShot(
   const title =
     args.kind === "scheduled"
       ? `Scheduled: ${label}`
-      : (() => {
-          const dueMatches =
-            args.dueDate != null &&
-            Number.isFinite(args.dueDate) &&
-            Math.abs(Math.trunc(args.dueDate) - fireAt) <= 1000;
-          return `${dueMatches ? "Due" : "Reminder"}: ${label}`;
-        })();
+      : args.kind === "snooze"
+        ? `Snooze ended: ${label}`
+        : (() => {
+            const dueMatches =
+              args.dueDate != null &&
+              Number.isFinite(args.dueDate) &&
+              Math.abs(Math.trunc(args.dueDate) - fireAt) <= 1000;
+            return `${dueMatches ? "Due" : "Reminder"}: ${label}`;
+          })();
   const deepLinkPath = await resolveHubTaskDeepLinkPath(ctx, args.taskId);
 
   const jobId =
@@ -297,15 +340,25 @@ async function scheduleHubTaskOneShot(
           title,
           deepLinkPath,
         })
-      : await ctx.scheduler.runAt(runAt, internal.alerts.fireTaskScheduled, {
-          taskId: args.taskId,
-          userKey,
-          orgId: args.orgId,
-          fireAt,
-          dedupeKey,
-          title,
-          deepLinkPath,
-        });
+      : args.kind === "scheduled"
+        ? await ctx.scheduler.runAt(runAt, internal.alerts.fireTaskScheduled, {
+            taskId: args.taskId,
+            userKey,
+            orgId: args.orgId,
+            fireAt,
+            dedupeKey,
+            title,
+            deepLinkPath,
+          })
+        : await ctx.scheduler.runAt(runAt, internal.alerts.fireTaskSnoozeDue, {
+            taskId: args.taskId,
+            userKey,
+            orgId: args.orgId,
+            fireAt,
+            dedupeKey,
+            title,
+            deepLinkPath,
+          });
 
   if (args.kind === "due") {
     await ctx.db.patch(args.taskId, {
@@ -313,11 +366,17 @@ async function scheduleHubTaskOneShot(
       dueAlertUserKey: userKey,
       dueAlertFireAt: fireAt,
     });
-  } else {
+  } else if (args.kind === "scheduled") {
     await ctx.db.patch(args.taskId, {
       scheduleAlertJobId: jobId,
       scheduleAlertUserKey: userKey,
       scheduleAlertFireAt: fireAt,
+    });
+  } else {
+    await ctx.db.patch(args.taskId, {
+      snoozeAlertJobId: jobId,
+      snoozeAlertUserKey: userKey,
+      snoozeAlertFireAt: fireAt,
     });
   }
 }
@@ -368,6 +427,32 @@ export async function scheduleHubTaskScheduleAlert(
     orgId: args.orgId,
     fireAt: resolveHubTaskScheduleAlertFireAt({
       scheduledTriggerTime: args.scheduledTriggerTime,
+    }),
+    title: args.title,
+  });
+}
+
+/**
+ * One-shot for hub task `snoozedUntil` wake — same Reminders category as
+ * pipeline file snooze (`file_snooze_due`) so the Snooze tab + prefs apply.
+ */
+export async function scheduleHubTaskSnoozeAlert(
+  ctx: MutationCtx,
+  args: {
+    taskId: Id<"tasks">;
+    userKey: string;
+    orgId: Id<"organizations">;
+    snoozedUntil?: number | null;
+    title?: string;
+  },
+): Promise<void> {
+  await scheduleHubTaskOneShot(ctx, {
+    kind: "snooze",
+    taskId: args.taskId,
+    userKey: args.userKey,
+    orgId: args.orgId,
+    fireAt: resolveHubTaskSnoozeAlertFireAt({
+      snoozedUntil: args.snoozedUntil,
     }),
     title: args.title,
   });
@@ -459,8 +544,8 @@ export async function scheduleVaultFileTaskDueAlert(
 }
 
 /**
- * Load hub task and schedule or clear due + schedule alerts from current row.
- * Call after create/update/complete/delete mutations (authenticated userKey only).
+ * Load hub task and schedule or clear due + schedule + snooze alerts.
+ * Call after create/update/complete/delete/snooze/wake mutations.
  */
 export async function syncHubTaskAlerts(
   ctx: MutationCtx,
@@ -488,6 +573,13 @@ export async function syncHubTaskAlerts(
     userKey: args.userKey,
     orgId: args.orgId,
     scheduledTriggerTime: row.scheduledTriggerTime,
+    title: row.title,
+  });
+  await scheduleHubTaskSnoozeAlert(ctx, {
+    taskId: args.taskId,
+    userKey: args.userKey,
+    orgId: args.orgId,
+    snoozedUntil: row.snoozedUntil,
     title: row.title,
   });
 }

@@ -1306,7 +1306,7 @@ export const patch = mutation({
 export const snooze = mutation({
   args: { id: v.id("tasks"), until: v.number(), ...orgScopeArgs },
   handler: async (ctx, { id, until, organizationId, memberUserKey }) => {
-    await requireTaskOrg(ctx, organizationId, memberUserKey);
+    const actor = await requireTaskOrg(ctx, organizationId, memberUserKey);
     if (!Number.isFinite(until) || until <= Date.now()) {
       throw new Error("snooze: 'until' must be a future timestamp");
     }
@@ -1318,6 +1318,11 @@ export const snooze = mutation({
       completedAt:
         t.status === "done" || t.status === "archived" ? undefined : t.completedAt,
       updatedAt: now,
+    });
+    await syncHubTaskAlerts(ctx, {
+      taskId: id,
+      userKey: actor,
+      orgId: organizationId,
     });
     return { id, until };
   },
@@ -1399,6 +1404,12 @@ export const wakeUpTask = mutation({
       );
     }
 
+    await syncHubTaskAlerts(ctx, {
+      taskId: args.id,
+      userKey: actor,
+      orgId: args.organizationId,
+    });
+
     return {
       id: args.id,
       woke: true as const,
@@ -1421,6 +1432,11 @@ export const wake = mutation({
     await ctx.db.patch(args.id, {
       snoozedUntil: undefined,
       updatedAt: now,
+    });
+    await syncHubTaskAlerts(ctx, {
+      taskId: args.id,
+      userKey: actor,
+      orgId: args.organizationId,
     });
     return { id: args.id, woke: true as const };
   },
@@ -1538,6 +1554,12 @@ export const recordTaskAttempt = mutation({
         args.actorUserKey ?? actor,
       );
     }
+
+    await syncHubTaskAlerts(ctx, {
+      taskId: args.id,
+      userKey: actor,
+      orgId: args.organizationId,
+    });
 
     return {
       id: args.id,
