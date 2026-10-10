@@ -44,6 +44,9 @@ export function CsvUploader() {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bulkUpsert = useMutation(api.lenders.bulkUpsert);
+  const recordSelfUsageEvent = useMutation(
+    api.auth.platformAccountAudit.recordSelfUsageEvent,
+  );
   const orgScope = useOrgConvexQueryArgs();
   const { canUseHub, browserOnline, actionTitle } = useLiveConnection();
 
@@ -92,7 +95,12 @@ export function CsvUploader() {
     try {
       for (let i = 0; i < records.length; i += CHUNK_SIZE) {
         const chunk = records.slice(i, i + CHUNK_SIZE);
-        const result = await bulkUpsert({ ...orgScope, records: chunk });
+        // Chunks skip per-call audit; one summary event after all succeed.
+        const result = await bulkUpsert({
+          ...orgScope,
+          records: chunk,
+          emitPlatformAudit: false,
+        });
         inserted += result.inserted;
         updated += result.updated;
         setStatus({
@@ -101,6 +109,12 @@ export function CsvUploader() {
           done: Math.min(i + CHUNK_SIZE, records.length),
         });
       }
+      await recordSelfUsageEvent({
+        memberUserKey: orgScope.memberUserKey,
+        eventType: "lender_import",
+        summary: "Lender catalog import",
+        detail: `${inserted} inserted, ${updated} updated (${records.length} rows)`,
+      }).catch(() => {});
       setStatus({
         kind: "done",
         inserted,

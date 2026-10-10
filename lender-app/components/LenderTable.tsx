@@ -190,6 +190,9 @@ export function LenderTable({
 
   const createFilterPreset = useMutation(api.savedFilterLists.createPreset);
   const normalizeAll = useMutation(api.lenders.normalizeAll);
+  const recordSelfUsageEvent = useMutation(
+    api.auth.platformAccountAudit.recordSelfUsageEvent,
+  );
   const [normalizing, setNormalizing] = useState(false);
   const [normalizeMsg, setNormalizeMsg] = useState<string | null>(null);
 
@@ -227,6 +230,12 @@ export function LenderTable({
         blob,
         buildExportFilename("lenders", "csv", tags.length ? tags : ["all"])
       );
+      void recordSelfUsageEvent({
+        memberUserKey: orgScope.memberUserKey,
+        eventType: "data_export",
+        summary: "Lender CSV export",
+        detail: `${rows.length} rows`,
+      }).catch(() => {});
     } finally {
       setExporting(false);
     }

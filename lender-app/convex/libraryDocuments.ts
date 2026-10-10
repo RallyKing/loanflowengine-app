@@ -29,6 +29,7 @@ import {
   vaultFileIdentityFromRename,
 } from "../lib/library/vaultOutboundFileName";
 import { findExistingRegistryAssignment } from "../lib/library/documentCategoryCatalog";
+import { recordPlatformAccountAuditForUserKey } from "./auth/platformAccountAudit";
 
 const MAX_NAME_LEN = 255;
 const MAX_TITLE_LEN = 400;
@@ -1514,6 +1515,18 @@ export const logDocumentAccess = mutation({
       action,
       at: Date.now(),
     });
+    // Owner log book: downloads only (views/edits stay in vault access events).
+    if (action === "download" && key !== "__anonymous__") {
+      const doc = await ctx.db.get(documentId);
+      const title = doc?.title?.trim().slice(0, 80);
+      await recordPlatformAccountAuditForUserKey(ctx, {
+        userKey: key,
+        actorUserKey: key,
+        eventType: "document_download",
+        summary: "Document downloaded",
+        detail: title || undefined,
+      });
+    }
     return { ok: true as const };
   },
 });

@@ -2,8 +2,9 @@
  * Append-only platform account activity log for the primary platform admin.
  * Slim DTOs only — never store passwords or hashes.
  *
- * Lifecycle / auth events are recorded here. Product-domain activity
- * (pipeline, vault, lenders) stays in existing feed/access tables.
+ * Covers auth lifecycle events plus important product usage (downloads,
+ * lender imports, pipeline file creates, data exports). High-churn edits
+ * (keystrokes, filter tweaks) are intentionally not recorded.
  */
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
@@ -149,6 +150,37 @@ export const listAccountActivityLog = query({
         actorUserId: row.actorUserId ?? null,
       })),
     };
+  },
+});
+
+const selfUsageEventType = v.union(
+  v.literal("document_download"),
+  v.literal("lender_import"),
+  v.literal("data_export"),
+);
+
+/**
+ * Authenticated caller records their own high-value usage event
+ * (client-side CSV/ZIP exports, vault ZIP downloads). One event per action.
+ */
+export const recordSelfUsageEvent = mutation({
+  args: {
+    memberUserKey: v.optional(v.string()),
+    eventType: selfUsageEventType,
+    summary: v.string(),
+    detail: v.optional(v.string()),
+  },
+  returns: v.object({ ok: v.literal(true) }),
+  handler: async (ctx, args) => {
+    const key = await requireAuthenticatedCaller(ctx, args.memberUserKey);
+    await recordPlatformAccountAuditForUserKey(ctx, {
+      userKey: key,
+      actorUserKey: key,
+      eventType: args.eventType,
+      summary: args.summary,
+      detail: args.detail,
+    });
+    return { ok: true as const };
   },
 });
 
