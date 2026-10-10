@@ -29,6 +29,7 @@ import {
   vaultFileIdentityFromRename,
 } from "../lib/library/vaultOutboundFileName";
 import { findExistingRegistryAssignment } from "../lib/library/documentCategoryCatalog";
+import { recordPlatformAccountAuditForUserKey } from "./auth/platformAccountAudit";
 
 const MAX_NAME_LEN = 255;
 const MAX_TITLE_LEN = 400;
@@ -1514,6 +1515,15 @@ export const logDocumentAccess = mutation({
       action,
       at: Date.now(),
     });
+    if (action === "download" && key !== "__anonymous__") {
+      await recordPlatformAccountAuditForUserKey(ctx, {
+        userKey: key,
+        actorUserKey: key,
+        eventType: "document_download",
+        summary: "Document downloaded",
+        detail: `Document ${documentId}`,
+      });
+    }
     return { ok: true as const };
   },
 });

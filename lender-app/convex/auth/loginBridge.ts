@@ -20,6 +20,7 @@ import {
   signupAccessAllowsLogin,
   signupAccessLoginBlockCode,
 } from "./signupAccess";
+import { recordPlatformAccountAudit } from "./platformAccountAudit";
 
 const SKEW_MS = 120_000;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
@@ -269,6 +270,17 @@ export const appendLoginAuditBridged = mutation({
       userAgent: args.userAgent,
       ipHint: args.ipHint,
     });
+    if (args.userId) {
+      await recordPlatformAccountAudit(ctx, {
+        subjectUserId: args.userId,
+        actorUserId: args.userId,
+        eventType:
+          args.outcome === "success" ? "login_success" : "login_failure",
+        summary:
+          args.outcome === "success" ? "Logged in" : "Login failed",
+        detail: args.reason?.slice(0, 120),
+      });
+    }
     return { ok: true as const };
   },
 });

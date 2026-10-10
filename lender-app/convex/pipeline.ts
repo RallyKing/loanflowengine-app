@@ -28,6 +28,7 @@ import { parseClientMomentum } from "../lib/clientMomentum";
 import type { PipelineListRow } from "../lib/pipelineListRow";
 import { syncPipelineStatusFromStage, assertPipelineStageBelongsToOrg } from "./organizationPipelineStagesHelpers";
 import { insertCollaborationActivityEvent } from "./activityEvents";
+import { recordPlatformAccountAuditForUserKey } from "./auth/platformAccountAudit";
 import {
   autoArchiveFieldsForActivity,
   computeAutoArchiveAfterAt,
@@ -1532,6 +1533,15 @@ export async function insertPipelineFileWithDeal(
     kind: "file_created",
     summary: clampActivitySummary(`Created “${body.fileName}”`),
   });
+  if (args.preferencesAccountId?.trim()) {
+    await recordPlatformAccountAuditForUserKey(ctx, {
+      userKey: args.preferencesAccountId.trim(),
+      actorUserKey: args.preferencesAccountId.trim(),
+      eventType: "pipeline_file_created",
+      summary: "Pipeline file created",
+      detail: clampActivitySummary(body.fileName),
+    });
+  }
   await runUserSimpleWorkflows({
     ctx,
     accountId: args.preferencesAccountId,
@@ -2059,6 +2069,15 @@ export const create = mutation({
       kind: "file_created",
       summary: clampActivitySummary(`Created “${body.fileName}”`),
     });
+    if (preferencesAccountId?.trim()) {
+      await recordPlatformAccountAuditForUserKey(ctx, {
+        userKey: preferencesAccountId.trim(),
+        actorUserKey: preferencesAccountId.trim(),
+        eventType: "pipeline_file_created",
+        summary: "Pipeline file created",
+        detail: clampActivitySummary(body.fileName),
+      });
+    }
     await runUserSimpleWorkflows({
       ctx,
       accountId: preferencesAccountId,

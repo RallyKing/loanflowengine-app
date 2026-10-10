@@ -20,6 +20,10 @@ import { bumpCredentialForUserKey, revokeAllSessionsForUserId } from "./auth/ses
 import { tryGetAuthUserByPermissionKey } from "./auth/globalAdmin";
 import { canonicalDisplayUsernameFromAuthUser } from "./auth/displayIdentity";
 import { reinviteExistingUserToOrg } from "./orgMemberReinvite";
+import {
+  recordPlatformAccountAudit,
+  recordPlatformAccountAuditForUserKey,
+} from "./auth/platformAccountAudit";
 
 async function assertTeamAdmin(
   ctx: Parameters<typeof assertOrgPermission>[0],
@@ -305,6 +309,14 @@ export const adminSetMemberPassword = mutation({
     });
     await bumpCredentialForUserKey(ctx, target);
     await revokeAllSessionsForUserId(ctx, user._id, "admin_password_reset");
+    const actorUser = await tryGetAuthUserByPermissionKey(ctx, actor);
+    await recordPlatformAccountAudit(ctx, {
+      subjectUserId: user._id,
+      actorUserId: actorUser?._id,
+      eventType: "password_reset_by_org_admin",
+      summary: "Password reset by organization admin",
+      detail: "All sessions revoked",
+    });
     return { ok: true as const };
   },
 });
@@ -329,6 +341,12 @@ export const forceLogoutMemberSessions = mutation({
     );
     if (!user) throw new Error("User not found.");
     await revokeAllSessionsForUserId(ctx, user._id, "admin_force_logout");
+    await recordPlatformAccountAuditForUserKey(ctx, {
+      userKey: args.targetUserKey.trim(),
+      actorUserKey: actor,
+      eventType: "force_logout",
+      summary: "Sessions force-logged out by organization admin",
+    });
     return { ok: true as const };
   },
 });

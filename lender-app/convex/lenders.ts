@@ -20,6 +20,7 @@ import {
   listIncompleteCore,
 } from "./lenderWriteStats";
 import { appendLenderFeed } from "./activityFeed";
+import { recordPlatformAccountAuditForUserKey } from "./auth/platformAccountAudit";
 import {
   normalizePhone,
   normalizeEmail,
@@ -1526,6 +1527,15 @@ export const bulkUpsert = mutation({
         if (after) await applyLenderWrite(ctx, null, after);
         inserted += 1;
       }
+    }
+    if (records.length > 0) {
+      await recordPlatformAccountAuditForUserKey(ctx, {
+        userKey: memberUserKey,
+        actorUserKey: memberUserKey,
+        eventType: "lender_import",
+        summary: "Lender catalog import",
+        detail: `${inserted} inserted, ${updated} updated (${records.length} rows)`,
+      });
     }
     return { inserted, updated, total: records.length };
   },
