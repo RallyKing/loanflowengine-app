@@ -968,6 +968,23 @@ export const getUnlockedTaskClientContent = query({
     accessProof: v.optional(v.string()),
     taskAccessProof: v.optional(v.string()),
   },
+  returns: v.union(
+    v.null(),
+    v.object({
+      clientInstructionText: v.optional(v.string()),
+      instructionUrl: v.optional(v.string()),
+      clientTemplates: v.optional(
+        v.array(
+          v.object({
+            fileName: v.string(),
+            mimeType: v.string(),
+            size: v.number(),
+            url: v.string(),
+          }),
+        ),
+      ),
+    }),
+  ),
   handler: async (
     ctx,
     { bundleToken, fileTaskId, accessProof, taskAccessProof },
