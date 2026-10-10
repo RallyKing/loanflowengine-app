@@ -34,9 +34,6 @@ yarn-error.log*
 .vscode/
 __pycache__/
 *.pyc
-# Accidental empty artifact files
-lender-app/({userId
-
 # --- Database dumps, exports, migration artifacts ---
 export-bundle/
 migration-reports/

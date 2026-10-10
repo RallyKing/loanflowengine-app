@@ -50,6 +50,14 @@ export function LoginForm({
           setError("Too many attempts. Try again in a few minutes.");
         } else if (data.code === "ACCOUNT_LOCKED") {
           setError("This account is temporarily locked.");
+        } else if (data.code === "PENDING_APPROVAL") {
+          setError(
+            "Your account is awaiting review. Someone will get back to you if it is approved.",
+          );
+        } else if (data.code === "ACCOUNT_REJECTED") {
+          setError("This account request was not approved.");
+        } else if (data.code === "ACCOUNT_DISABLED") {
+          setError("This account has been disabled.");
         } else {
           setError(data.error ?? "Sign-in failed.");
         }

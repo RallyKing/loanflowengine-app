@@ -24,9 +24,12 @@ import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
 export function SettingsJumpNav({
   hashSection,
   isGlobalAdmin,
+  canManagePlatformUsers = false,
 }: {
   hashSection: SettingsSectionId | null;
   isGlobalAdmin: boolean;
+  /** Primary platform admin — Users & access (not the same as global admin). */
+  canManagePlatformUsers?: boolean;
 }) {
   const pathname = usePathname();
   const activeCanonical = hashSection
@@ -52,7 +55,8 @@ export function SettingsJumpNav({
         data-testid="settings-jump-nav-list"
       >
         {SETTINGS_CATEGORIES.filter(
-          (category) => !category.adminOnly || isGlobalAdmin,
+          (category) =>
+            !category.adminOnly || isGlobalAdmin || canManagePlatformUsers,
         ).map((category) => (
           <div
             key={category.id}
@@ -68,10 +72,18 @@ export function SettingsJumpNav({
             <ul className="flex flex-row gap-1 md:w-full md:flex-col md:gap-0.5">
               {category.sectionIds
                 .map((id) => SETTINGS_SECTIONS.find((s) => s.id === id))
-                .filter(
-                  (s): s is (typeof SETTINGS_SECTIONS)[number] =>
-                    s != null && !s.jumpHidden,
-                )
+                .filter((s): s is (typeof SETTINGS_SECTIONS)[number] => {
+                  if (s == null || s.jumpHidden) return false;
+                  if (s.id === "platformUsers") return canManagePlatformUsers;
+                  if (
+                    category.adminOnly &&
+                    s.id !== "platformUsers" &&
+                    !isGlobalAdmin
+                  ) {
+                    return false;
+                  }
+                  return true;
+                })
                 .map((s) => {
                   const href = s.jumpHref ?? `#${s.id}`;
                   const active = s.jumpHref

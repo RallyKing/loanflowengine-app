@@ -13,6 +13,7 @@ export type ClientViewer = {
   workspaceRole: "workspace:admin" | "workspace:member";
   isGlobalAdmin: boolean;
   canSuperuserImpersonate: boolean;
+  canManagePlatformUsers: boolean;
   homeOrganizationId: string;
   homeOrganizationName: string;
   impersonation: SuperuserImpersonationState | null;
@@ -35,6 +36,7 @@ export function SessionProvider({
   const workspaceRole = viewer?.workspaceRole;
   const isGlobalAdmin = viewer?.isGlobalAdmin === true;
   const canSuperuserImpersonate = viewer?.canSuperuserImpersonate === true;
+  const canManagePlatformUsers = viewer?.canManagePlatformUsers === true;
   const homeOrganizationId =
     viewer?.homeOrganizationId ?? viewer?.organizationId ?? "";
   const homeOrganizationName =
@@ -52,6 +54,7 @@ export function SessionProvider({
       workspaceRole: workspaceRole ?? "workspace:member",
       isGlobalAdmin,
       canSuperuserImpersonate,
+      canManagePlatformUsers,
       homeOrganizationId,
       homeOrganizationName,
       impersonation,
@@ -65,6 +68,7 @@ export function SessionProvider({
     workspaceRole,
     isGlobalAdmin,
     canSuperuserImpersonate,
+    canManagePlatformUsers,
     homeOrganizationId,
     homeOrganizationName,
     impersonation,

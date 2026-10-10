@@ -203,6 +203,8 @@ export const createOrgMemberUser = mutation({
       email: emailNorm,
       credentialVersion: 1,
       defaultOrganizationId: args.organizationId,
+      accessStatus: "approved",
+      accessStatusUpdatedAt: now,
       createdAt: now,
       updatedAt: now,
     });

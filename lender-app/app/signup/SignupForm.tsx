@@ -17,6 +17,7 @@ export function SignupForm() {
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submittedPending, setSubmittedPending] = useState(false);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -45,11 +46,36 @@ export function SignupForm() {
         setSubmitting(false);
         return;
       }
-      window.location.href = "/login?next=/";
+      setSubmittedPending(true);
+      setSubmitting(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error.");
       setSubmitting(false);
     }
+  }
+
+  if (submittedPending) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10 text-foreground">
+        <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-sm">
+          <div className="mb-4 text-center">
+            <h1 className="text-xl font-semibold tracking-tight">
+              Request received
+            </h1>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Thanks for signing up. Your account will be reviewed, and someone
+              will get back to you if it is approved. You will not be able to
+              sign in until then.
+            </p>
+          </div>
+          <p className="text-center text-xs text-muted-foreground">
+            <Link href="/login" className="underline-offset-2 hover:underline">
+              Back to sign in
+            </Link>
+          </p>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -58,7 +84,8 @@ export function SignupForm() {
         <div className="mb-6 text-center">
           <h1 className="text-xl font-semibold tracking-tight">Create account</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Username is case-insensitive. You’ll get a new workspace.
+            Username is case-insensitive. New accounts require review before
+            access is granted.
           </p>
         </div>
         <form onSubmit={onSubmit} className="space-y-4">
@@ -130,7 +157,7 @@ export function SignupForm() {
             }
             className="w-full rounded-md bg-brand px-3 py-2 text-sm font-medium text-brand-foreground hover:opacity-90 disabled:opacity-50"
           >
-            {submitting ? "Creating…" : "Create account"}
+            {submitting ? "Submitting…" : "Request access"}
           </button>
           <p className="text-center text-xs text-muted-foreground">
             Already have an account?{" "}

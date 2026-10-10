@@ -55,6 +55,8 @@ import { HelpSupportSettingsPanel } from "@/components/HelpSupportSettingsPanel"
 import { WebhookSettingsWorkspace } from "@/components/WebhookSettingsWorkspace";
 import { ProductKnowledgeAdminPanel } from "@/components/settings/ProductKnowledgeAdminPanel";
 import { SystemAdminSettingsPanel } from "@/components/system-admin/SystemAdminSettingsPanel";
+import { PlatformUsersAdminPanel } from "@/components/system-admin/PlatformUsersAdminPanel";
+import { useViewer } from "@/lib/sessionContext";
 import {
   SettingsJumpNav,
   SettingsSectionCard,
@@ -109,6 +111,8 @@ export function SettingsPageClient() {
   } = useUserPreferences();
   const { activeOrganizationId, can: orgCan, isRbacActive } = useOrgPermissions();
   const { isGlobalAdmin } = useAuth();
+  const viewer = useViewer();
+  const canManagePlatformUsers = viewer?.canManagePlatformUsers === true;
   const actorKeyForConvex = useActorUserKey().trim();
   const syncConvexPreferences = useCallback(
     (patch: Partial<UserPreferencesV1>) =>
@@ -260,6 +264,7 @@ export function SettingsPageClient() {
         <SettingsJumpNav
           hashSection={hashSection}
           isGlobalAdmin={Boolean(isGlobalAdmin)}
+          canManagePlatformUsers={canManagePlatformUsers}
         />
 
         <div
@@ -768,6 +773,16 @@ export function SettingsPageClient() {
               description="Seed the encyclopedia, publish release notes to the Updates bell, and review automation drafts."
             >
               <ProductKnowledgeAdminPanel />
+            </SettingsSectionCard>
+          ) : null}
+
+          {canManagePlatformUsers ? (
+            <SettingsSectionCard
+              id="platformUsers"
+              title="Users & access"
+              description="Approve or reject self-serve signups and disable accounts across the platform."
+            >
+              <PlatformUsersAdminPanel />
             </SettingsSectionCard>
           ) : null}
 

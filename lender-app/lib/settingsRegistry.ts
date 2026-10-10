@@ -48,6 +48,7 @@ export const SETTINGS_SECTION_IDS = [
   "data",
   "performance",
   "productKnowledge",
+  "platformUsers",
   "systemAdmin",
   /** @deprecated Prefer `display` — kept for typed deep links. */
   "appearance",
@@ -257,6 +258,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
       "Publish release notes and seed the feature encyclopedia (global administrators).",
   },
   {
+    id: "platformUsers",
+    label: "Users & access",
+    shortLabel: "Users",
+    description:
+      "Platform-wide signup approvals and account access (platform owner only).",
+  },
+  {
     id: "systemAdmin",
     label: "System admin",
     shortLabel: "System",
@@ -359,7 +367,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategoryMeta[] = [
     label: "Admin",
     description:
       "Global administrator tooling: product knowledge and tenant switching.",
-    sectionIds: ["productKnowledge", "systemAdmin"],
+    sectionIds: ["productKnowledge", "platformUsers", "systemAdmin"],
     adminOnly: true,
   },
 ] as const;

@@ -15,6 +15,11 @@ import { insertSessionRow } from "./sessionsInternal";
 import { pickCanonicalOrgMember } from "../orgMembership";
 import { seedSystemRolesForOrganization } from "../organizationRbac";
 import { assertOrgHasAvailableMemberSeat } from "../orgPlanLimits";
+import {
+  effectiveSignupAccessStatus,
+  signupAccessAllowsLogin,
+  signupAccessLoginBlockCode,
+} from "./signupAccess";
 
 const SKEW_MS = 120_000;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
@@ -64,6 +69,7 @@ export const loginLookup = query({
         accountLockedUntilMs: user.accountLockedUntilMs,
         emailVerificationRequired: user.emailVerificationRequired,
         emailVerifiedAt: user.emailVerifiedAt,
+        accessStatus: effectiveSignupAccessStatus(user),
       };
     } catch (e) {
       if (tryParseAuthBridgeStructuredError(e)) {
@@ -291,6 +297,10 @@ export const repairDefaultOrgMembershipBridged = mutation({
       if (!user?.defaultOrganizationId) {
         return { ok: false as const, code: "NO_ORG" as const };
       }
+      // Never auto-reactivate membership for accounts awaiting approval / disabled.
+      if (!signupAccessAllowsLogin(user)) {
+        return { ok: false as const, code: "ACCESS_PENDING" as const };
+      }
       const orgId = user.defaultOrganizationId;
       const { adminId, userId: memberRoleId } =
         await seedSystemRolesForOrganization(ctx, orgId);
@@ -360,6 +370,10 @@ export const assertUserWorkspaceActive = query({
     const user = await ctx.db.get(args.userId);
     if (!user?.defaultOrganizationId) {
       return { ok: false as const, code: "NO_ORG" as const };
+    }
+    const accessBlock = signupAccessLoginBlockCode(user);
+    if (accessBlock) {
+      return { ok: false as const, code: accessBlock };
     }
     const memRows = await ctx.db
       .query("organizationMembers")

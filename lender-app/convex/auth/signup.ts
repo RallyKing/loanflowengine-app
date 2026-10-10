@@ -8,6 +8,8 @@ import {
 } from "./canonicalIdentity";
 import { bootstrapCleanNewTenant } from "./cleanTenantBootstrap";
 import { validateStoredArgon2PasswordHash } from "../../lib/auth/passwordPolicy";
+import { signupIdentityIsPrimaryPlatformAdmin } from "./primaryPlatformAdmin";
+import { notifyPrimaryAdminOfPendingSignup } from "./signupAccessAdmin";
 
 const SIGNUP_RL_MAX = 10;
 
@@ -71,6 +73,17 @@ export const signup = mutation({
       ownerUserKey: "__signup_bootstrap__",
     });
 
+    /**
+     * Self-serve signups start pending (inactive membership) until the primary
+     * platform admin approves. Primary-admin identity never lands pending.
+     */
+    const isPrimary = signupIdentityIsPrimaryPlatformAdmin(
+      usernameLower,
+      emailNorm,
+    );
+    const accessStatus = isPrimary ? ("approved" as const) : ("pending" as const);
+    const membershipActive = accessStatus === "approved";
+
     const userId = await ctx.db.insert("authUsers", {
       normalizedUsername: usernameLower,
       usernameNormalized: usernameLower,
@@ -80,6 +93,8 @@ export const signup = mutation({
       emailVerificationRequired: false,
       credentialVersion: 1,
       defaultOrganizationId: bootstrap.organizationId,
+      accessStatus,
+      accessStatusUpdatedAt: now,
       createdAt: now,
       updatedAt: now,
     });
@@ -89,14 +104,25 @@ export const signup = mutation({
       userKey: userId as unknown as string,
       role: "owner",
       assignedRoleId: bootstrap.adminRoleId,
+      isActive: membershipActive,
       createdAt: now,
     });
+
+    if (accessStatus === "pending") {
+      await notifyPrimaryAdminOfPendingSignup(ctx, {
+        newUserId: userId,
+        displayUsername: displayLabel,
+        organizationName: args.organizationName.trim() || "Workspace",
+        email: emailNorm,
+      });
+    }
 
     return {
       ok: true as const,
       userId,
       organizationId: bootstrap.organizationId,
       pipelineStagesSeeded: bootstrap.pipelineStagesSeeded,
+      accessStatus,
     };
   },
 });

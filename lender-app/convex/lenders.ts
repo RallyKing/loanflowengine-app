@@ -52,6 +52,7 @@ import {
   repointMergedLenderId,
 } from "./graphCleanup";
 import { assertOrgScopeArgs, resolveMemberUserKey } from "./organizationAccess";
+import { rowBelongsToOrganizationScope } from "./orgScopeMatching";
 import { callerHasUnrestrictedOrgDataAccess } from "./viewerOrgAccess";
 import { assertOrgPermission } from "./organizationRbac";
 
@@ -75,16 +76,24 @@ async function assertCanTouchLender(
 ): Promise<void> {
   await assertLenderMutationAuth(ctx, organizationId, memberUserKey, permission);
   const god = await callerHasUnrestrictedOrgDataAccess(ctx, memberUserKey);
-  if (!god && row.organizationId && row.organizationId !== organizationId) {
+  if (
+    !god &&
+    !rowBelongsToOrganizationScope(row.organizationId, organizationId)
+  ) {
     throw new Error("Lender belongs to a different organization.");
   }
 }
 
+/**
+ * Fail-closed org visibility: exact org match, or legacy null-org rows only for
+ * the primary platform workspace (see `rowBelongsToOrganizationScope`).
+ * Null-org catalog rows must NOT leak to new self-serve tenants.
+ */
 function lenderVisibleInOrg(
   row: Doc<"lenders">,
   organizationId: Id<"organizations">,
 ): boolean {
-  return row.organizationId == null || row.organizationId === organizationId;
+  return rowBelongsToOrganizationScope(row.organizationId, organizationId);
 }
 
 async function takeVisibleLendersOrdered(
@@ -1204,12 +1213,13 @@ export const upsertDeliveryRecipient = mutation({
         throw new Error("A matching lender belongs to a different organization.");
       }
 
-      const sameOrg =
-        existing.organizationId == null ||
-        existing.organizationId === args.organizationId;
+      const sameOrg = rowBelongsToOrganizationScope(
+        existing.organizationId,
+        args.organizationId,
+      );
 
       // One-time recipients intentionally create an org-scoped row when the
-      // only match is the shared catalog (avoid mutating global lenders).
+      // only match is a legacy null-org catalog row (avoid mutating it).
       const reuseExisting =
         sameOrg &&
         (!oneTime || existing.organizationId === args.organizationId);
@@ -1244,7 +1254,8 @@ export const upsertDeliveryRecipient = mutation({
 
     const id = await ctx.db.insert("lenders", {
       ...doc,
-      ...(oneTime ? { organizationId: args.organizationId } : {}),
+      // Always tenant-scope new lenders — never create shared null-org catalog rows.
+      organizationId: args.organizationId,
     });
     const inserted = await ctx.db.get(id);
     if (inserted) {
