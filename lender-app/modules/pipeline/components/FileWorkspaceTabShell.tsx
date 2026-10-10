@@ -8,9 +8,9 @@ import { cn } from "@/lib/cn";
 /** Phase 4 + Stage 2 — five-tab Deal Command Center shell. */
 export const FILE_WORKSPACE_COMMAND_CENTER_TAB_IDS = [
   "dealInfo",
+  "documents",
   "financials",
   "portalsProgress",
-  "documents",
   "formsApplications",
 ] as const;
 

@@ -17,9 +17,9 @@ const describeOrSkip = convexConfigured() ? test.describe : test.describe.skip;
 
 const FILE_TAB_LABELS = [
   "Deal Info",
+  "Documents",
   "Financials",
   "Portals & Progress",
-  "Documents",
 ] as const;
 
 async function openHeaderOverflowMenu(page: Page) {
