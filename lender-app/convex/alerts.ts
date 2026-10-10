@@ -24,7 +24,10 @@ import {
   type AlertCategory,
   type AlertPreferencesResolved,
 } from "../lib/alerts/alertCategories";
-import { assertInternalAppPath } from "../lib/alerts/internalPath";
+import {
+  assertInternalAppPath,
+  isLegacyTasksPageDeepLink,
+} from "../lib/alerts/internalPath";
 import {
   isFileSnoozeAlertStillValid,
   isHubTaskDueAlertStillValid,
@@ -35,6 +38,7 @@ import {
   resolveHubTaskScheduleAlertFireAt,
 } from "../lib/alerts/fireValidity";
 import {
+  resolveHubTaskDeepLinkPath,
   schedulePipelineSnoozeAlert,
   scheduleVaultFileTaskDueAlert,
   syncHubTaskAlerts,
@@ -47,6 +51,9 @@ const BACKFILL_PAGE_MAX = 100;
 /** Max unread rows cleared per `clearAllForUser` invocation (bounded; client may re-call). */
 const CLEAR_ALL_PAGE = 100;
 const CLEAR_ALL_MAX_PAGES = 5;
+/** Max legacy `/tasks?task=` deep links repaired per `repairDeepLinksForUser` call. */
+const REPAIR_DEEPLINK_PAGE = 50;
+const REPAIR_DEEPLINK_MAX_PAGES = 4;
 
 const memberUserKeyArg = {
   memberUserKey: v.optional(v.string()),
@@ -267,6 +274,9 @@ async function fireHubTaskAlert(
   if (storedUserKey && storedUserKey.trim() !== args.userKey.trim()) {
     return { inserted: false, reason: "user_mismatch" };
   }
+  // Prefer file-workspace link even when the scheduled job still carries a
+  // legacy `/tasks?task=` path (jobs scheduled before the deep-link fix).
+  const deepLinkPath = await resolveHubTaskDeepLinkPath(ctx, args.taskId);
   const id = await insertAlertIdempotent(ctx, {
     userKey: args.userKey,
     orgId: args.orgId,
@@ -275,7 +285,7 @@ async function fireHubTaskAlert(
     body: args.body,
     entityType: "task",
     entityId: String(args.taskId),
-    deepLinkPath: args.deepLinkPath,
+    deepLinkPath,
     fireAt: args.fireAt,
     dedupeKey: args.dedupeKey,
   });
@@ -283,6 +293,29 @@ async function fireHubTaskAlert(
     inserted: id != null,
     reason: id != null ? "ok" : "skipped",
   };
+}
+
+/**
+ * Rewrite a stored legacy Tasks-page deep link to the pipeline file workspace
+ * when the hub task is file-linked. Idempotent; no-op when already correct.
+ */
+async function maybeRepairAlertDeepLink(
+  ctx: MutationCtx,
+  row: Doc<"alerts">,
+): Promise<string> {
+  const current = assertInternalAppPath(row.deepLinkPath);
+  if (row.entityType !== "task") return current;
+  if (!isLegacyTasksPageDeepLink(current)) return current;
+  let taskId: Id<"tasks">;
+  try {
+    taskId = row.entityId as Id<"tasks">;
+  } catch {
+    return current;
+  }
+  const repaired = await resolveHubTaskDeepLinkPath(ctx, taskId);
+  if (repaired === current) return current;
+  await ctx.db.patch(row._id, { deepLinkPath: repaired });
+  return repaired;
 }
 
 export const fireTaskDue = internalMutation({
@@ -528,12 +561,18 @@ export const markRead = mutation({
     id: v.id("alerts"),
     ...memberUserKeyArg,
   },
+  returns: v.object({
+    deepLinkPath: v.string(),
+  }),
   handler: async (ctx, { id, memberUserKey }) => {
     const row = await ctx.db.get(id);
-    if (!row) return;
+    if (!row) return { deepLinkPath: "" };
     await assertCallerOwnsUserKey(ctx, row.userKey, memberUserKey);
-    if (row.readAt != null) return;
-    await ctx.db.patch(id, { readAt: Date.now() });
+    if (row.readAt == null) {
+      await ctx.db.patch(id, { readAt: Date.now() });
+    }
+    const deepLinkPath = await maybeRepairAlertDeepLink(ctx, row);
+    return { deepLinkPath };
   },
 });
 
@@ -569,6 +608,100 @@ export const dismiss = mutation({
 });
 
 /**
+ * Shared unread pagination for mass mark-read / clear. Does not dismiss unless
+ * `hide` is true. Bounded via `by_user_unread` (no unbounded collect).
+ */
+async function markUnreadPageForUser(
+  ctx: MutationCtx,
+  args: {
+    userKey: string;
+    orgId?: Id<"organizations">;
+    hide: boolean;
+  },
+): Promise<{ updated: number; hasMore: boolean }> {
+  const k = args.userKey.trim();
+  if (!k) return { updated: 0, hasMore: false };
+  const now = Date.now();
+  let updated = 0;
+
+  for (let page = 0; page < CLEAR_ALL_MAX_PAGES; page++) {
+    const rows = await ctx.db
+      .query("alerts")
+      .withIndex("by_user_unread", (q) =>
+        q.eq("userKey", k).eq("readAt", undefined),
+      )
+      .take(CLEAR_ALL_PAGE);
+
+    if (rows.length === 0) {
+      return { updated, hasMore: false };
+    }
+
+    let patchedThisPage = 0;
+    for (const r of rows) {
+      if (args.orgId && r.orgId !== args.orgId) continue;
+      // Idempotent: unread index already implies readAt == null.
+      const patch: { readAt: number; dismissedAt?: number } = {
+        readAt: now,
+      };
+      if (args.hide && r.dismissedAt == null) {
+        patch.dismissedAt = now;
+      }
+      await ctx.db.patch(r._id, patch);
+      updated += 1;
+      patchedThisPage += 1;
+    }
+
+    if (rows.length < CLEAR_ALL_PAGE) {
+      return { updated, hasMore: false };
+    }
+
+    // Org filter can skip an entire page — avoid an idle loop: if nothing
+    // matched this page, stop and let the client decide (rare multi-org).
+    if (patchedThisPage === 0) {
+      return { updated, hasMore: false };
+    }
+  }
+
+  const more = await ctx.db
+    .query("alerts")
+    .withIndex("by_user_unread", (q) =>
+      q.eq("userKey", k).eq("readAt", undefined),
+    )
+    .take(1);
+  const hasMore =
+    more.length > 0 &&
+    (!args.orgId || more.some((r) => r.orgId === args.orgId));
+  return { updated, hasMore };
+}
+
+/**
+ * Mark every unread reminder read for the caller. Does **not** dismiss/hide —
+ * rows stay in the list; badge goes to 0. Idempotent; bounded pages via
+ * `by_user_unread`. Client may re-invoke while `hasMore`.
+ */
+export const markAllReadForUser = mutation({
+  args: {
+    userKey: v.string(),
+    orgId: v.optional(v.id("organizations")),
+    ...memberUserKeyArg,
+  },
+  returns: v.object({
+    updated: v.number(),
+    hasMore: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const k = args.userKey.trim();
+    if (!k) return { updated: 0, hasMore: false };
+    await assertCallerOwnsUserKey(ctx, k, args.memberUserKey);
+    return await markUnreadPageForUser(ctx, {
+      userKey: k,
+      orgId: args.orgId,
+      hide: false,
+    });
+  },
+});
+
+/**
  * True clear for the Reminders badge: mark unread rows read (and optionally
  * dismiss/hide) for the authenticated caller. Idempotent — already-read rows
  * are skipped. Bounded pages via `by_user_unread` (no unbounded collect).
@@ -591,57 +724,57 @@ export const clearAllForUser = mutation({
     if (!k) return { updated: 0, hasMore: false };
     await assertCallerOwnsUserKey(ctx, k, args.memberUserKey);
     const hide = args.hide !== false;
-    const now = Date.now();
-    let updated = 0;
+    return await markUnreadPageForUser(ctx, {
+      userKey: k,
+      orgId: args.orgId,
+      hide,
+    });
+  },
+});
 
-    for (let page = 0; page < CLEAR_ALL_MAX_PAGES; page++) {
-      const rows = await ctx.db
-        .query("alerts")
-        .withIndex("by_user_unread", (q) =>
-          q.eq("userKey", k).eq("readAt", undefined),
-        )
-        .take(CLEAR_ALL_PAGE);
+/**
+ * Repair legacy `/tasks?task=` deep links on the caller's reminders to the
+ * pipeline file workspace when the task is file-linked. Bounded; idempotent.
+ * Client may re-invoke while `hasMore`.
+ */
+export const repairDeepLinksForUser = mutation({
+  args: {
+    userKey: v.string(),
+    orgId: v.optional(v.id("organizations")),
+    ...memberUserKeyArg,
+  },
+  returns: v.object({
+    repaired: v.number(),
+    scanned: v.number(),
+    hasMore: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const k = args.userKey.trim();
+    if (!k) return { repaired: 0, scanned: 0, hasMore: false };
+    await assertCallerOwnsUserKey(ctx, k, args.memberUserKey);
 
-      if (rows.length === 0) {
-        return { updated, hasMore: false };
-      }
-
-      let patchedThisPage = 0;
-      for (const r of rows) {
-        if (args.orgId && r.orgId !== args.orgId) continue;
-        // Idempotent: unread index already implies readAt == null.
-        const patch: { readAt: number; dismissedAt?: number } = {
-          readAt: now,
-        };
-        if (hide && r.dismissedAt == null) {
-          patch.dismissedAt = now;
-        }
-        await ctx.db.patch(r._id, patch);
-        updated += 1;
-        patchedThisPage += 1;
-      }
-
-      if (rows.length < CLEAR_ALL_PAGE) {
-        return { updated, hasMore: false };
-      }
-
-      // Org filter can skip an entire page — avoid an idle loop: if nothing
-      // matched this page, stop and let the client decide (rare multi-org).
-      if (patchedThisPage === 0) {
-        return { updated, hasMore: false };
-      }
-    }
-
-    const more = await ctx.db
+    const cap = REPAIR_DEEPLINK_PAGE * REPAIR_DEEPLINK_MAX_PAGES;
+    // bounded: newest reminders first (cap+1 probes hasMore)
+    const batch = await ctx.db
       .query("alerts")
-      .withIndex("by_user_unread", (q) =>
-        q.eq("userKey", k).eq("readAt", undefined),
-      )
-      .take(1);
-    const hasMore =
-      more.length > 0 &&
-      (!args.orgId || more.some((r) => r.orgId === args.orgId));
-    return { updated, hasMore };
+      .withIndex("by_user_created", (iq) => iq.eq("userKey", k))
+      .order("desc")
+      .take(cap + 1);
+    const hasMore = batch.length > cap;
+    const page = batch.slice(0, cap);
+
+    let repaired = 0;
+    let scanned = 0;
+    for (const r of page) {
+      scanned += 1;
+      if (args.orgId && r.orgId !== args.orgId) continue;
+      if (r.entityType !== "task") continue;
+      if (!isLegacyTasksPageDeepLink(r.deepLinkPath)) continue;
+      const before = r.deepLinkPath;
+      const after = await maybeRepairAlertDeepLink(ctx, r);
+      if (after !== before) repaired += 1;
+    }
+    return { repaired, scanned, hasMore };
   },
 });
 

@@ -128,6 +128,7 @@ import {
   PIPELINE_FILE_BLOCK_QUERY,
   PIPELINE_FILE_TAB_QUERY,
   PIPELINE_FILE_DOCUMENT_QUERY,
+  PIPELINE_FILE_TASK_QUERY,
   PIPELINE_HUB_PROJECTION_QUERY,
   PIPELINE_HUB_ENTITY_QUERY,
   PIPELINE_HUB_CLIENT_QUERY,
@@ -986,6 +987,7 @@ function PipelineFileWorkspaceLoaded({
   const deepLinkBlock = searchParams.get(PIPELINE_FILE_BLOCK_QUERY);
   const deepLinkTab = searchParams.get(PIPELINE_FILE_TAB_QUERY);
   const deepLinkDocument = searchParams.get(PIPELINE_FILE_DOCUMENT_QUERY);
+  const deepLinkTask = searchParams.get(PIPELINE_FILE_TASK_QUERY);
   const pipelineReadyId = detail?.pipeline?._id;
 
   useEffect(() => {
@@ -994,6 +996,12 @@ function PipelineFileWorkspaceLoaded({
     if (!normalized) return;
     setWorkspaceActiveTab(normalized);
   }, [pipelineReadyId, deepLinkTab]);
+
+  /** Reminders / Alerts: `?task=` opens the hub task drawer on this file. */
+  useEffect(() => {
+    if (!deepLinkTask?.trim() || pipelineReadyId == null) return;
+    setOpenTaskId(deepLinkTask.trim() as Id<"tasks">);
+  }, [pipelineReadyId, deepLinkTask]);
 
   useEffect(() => {
     if (!deepLinkDocument?.trim() || pipelineReadyId == null) return;

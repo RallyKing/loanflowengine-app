@@ -106,6 +106,8 @@ function TimeAlertsBellInner({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  /** Run legacy deep-link repair once per mounted bell (idempotent; not on every open). */
+  const deepLinkRepairAttemptedRef = useRef(false);
 
   /** Mount the Reminders control for signed-in chrome — never gate UI on JWT. */
   const chromeVisible = authLoaded && isSignedIn && k.length > 0;
@@ -196,7 +198,9 @@ function TimeAlertsBellInner({
 
   const markRead = useMutation(api.alerts.markRead);
   const dismiss = useMutation(api.alerts.dismiss);
+  const markAllReadForUser = useMutation(api.alerts.markAllReadForUser);
   const clearAllForUser = useMutation(api.alerts.clearAllForUser);
+  const repairDeepLinksForUser = useMutation(api.alerts.repairDeepLinksForUser);
 
   useLayoutEffect(() => {
     if (!open || !rootRef.current) return;
@@ -231,11 +235,9 @@ function TimeAlertsBellInner({
   };
 
   const openRow = async (row: AlertRow) => {
-    if (row.readAt == null) {
-      await markRead({ id: row._id, memberUserKey: k });
-    }
-    // Task deep links use `/tasks?task=` — Tasks page opens the drawer from searchParams.
-    const path = row.deepLinkPath?.trim() ?? "";
+    // markRead also repairs legacy `/tasks?task=` links → `/pipeline/{fileId}?block=tasks&task=…`
+    const result = await markRead({ id: row._id, memberUserKey: k });
+    const path = (result?.deepLinkPath || row.deepLinkPath || "").trim();
     if (path && isInternalAppPath(path)) {
       router.push(path);
     }
@@ -262,11 +264,39 @@ function TimeAlertsBellInner({
     }
   };
 
+  const orgScope = activeOrganizationId
+    ? { orgId: activeOrganizationId }
+    : {};
+
   /**
-   * Server-side clear — zeros the unread badge for this user (paginated,
-   * idempotent). Does not depend on the list query having loaded (client-only
-   * mark-all over `allItems` left the badge at 85 when the panel was stuck or
-   * unread exceeded LIST_LIMIT).
+   * Mark all unread reminders read — badge → 0; rows stay visible (not dismissed).
+   * Paginated server mutation; does not depend on the list query having loaded.
+   */
+  const markAllRead = async () => {
+    if (busy || !queryReady) return;
+    setBusy(true);
+    try {
+      let guard = 0;
+      let hasMore = true;
+      while (hasMore && guard < 20) {
+        guard += 1;
+        const result = await markAllReadForUser({
+          userKey: k,
+          memberUserKey: k,
+          ...orgScope,
+        });
+        hasMore = result.hasMore;
+        if (result.updated === 0) break;
+      }
+      setSelected(new Set());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Clear all — mark read + dismiss/hide. Zeros the badge and removes rows from
+   * the default inbox. Paginated; independent of list load state.
    */
   const clearAll = async () => {
     if (busy || !queryReady) return;
@@ -280,7 +310,7 @@ function TimeAlertsBellInner({
           userKey: k,
           memberUserKey: k,
           hide: true,
-          ...(activeOrganizationId ? { orgId: activeOrganizationId } : {}),
+          ...orgScope,
         });
         hasMore = result.hasMore;
         if (result.updated === 0) break;
@@ -288,6 +318,24 @@ function TimeAlertsBellInner({
       setSelected(new Set());
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** One-shot repair of legacy task deep links when the panel opens (bounded). */
+  const repairDeepLinksOnce = async () => {
+    if (!queryReady) return;
+    let guard = 0;
+    let hasMore = true;
+    while (hasMore && guard < 10) {
+      guard += 1;
+      const result = await repairDeepLinksForUser({
+        userKey: k,
+        memberUserKey: k,
+        ...orgScope,
+      });
+      hasMore = result.hasMore;
+      if (result.repaired === 0 && !hasMore) break;
+      if (result.scanned === 0) break;
     }
   };
 
@@ -319,7 +367,14 @@ function TimeAlertsBellInner({
         aria-label="Reminders"
         aria-expanded={open}
         aria-haspopup="dialog"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next && !deepLinkRepairAttemptedRef.current) {
+            deepLinkRepairAttemptedRef.current = true;
+            void repairDeepLinksOnce();
+          }
+        }}
       >
         <AlarmClock className="h-4 w-4" aria-hidden />
         <span className="hidden sm:inline">Reminders</span>
@@ -346,17 +401,32 @@ function TimeAlertsBellInner({
           </span>
           <div className="flex items-center gap-1">
             {badgeCount > 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs"
-                disabled={busy}
-                data-testid="time-alerts-clear-all"
-                onClick={() => void clearAll()}
-              >
-                Clear all
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={busy}
+                  data-testid="time-alerts-mark-all-read"
+                  title="Mark all reminders read without hiding them"
+                  onClick={() => void markAllRead()}
+                >
+                  Mark all read
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={busy}
+                  data-testid="time-alerts-clear-all"
+                  title="Mark all read and hide them from the inbox"
+                  onClick={() => void clearAll()}
+                >
+                  Clear all
+                </Button>
+              </>
             ) : null}
           </div>
         </div>
