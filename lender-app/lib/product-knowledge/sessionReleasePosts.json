@@ -1,5 +1,15 @@
 [
   {
+    "slug": "2026-10-10-workspace-documents-tab-order",
+    "title": "Documents sits next to Deal Info in the loan file",
+    "summary": "On the pipeline loan file, the primary tabs are now Deal Info, Documents, Financials, Portals & Progress, then Forms & Applications — so the vault is one click from deal details.",
+    "body": [
+      "The tab labels and destinations are unchanged; only the order in the loan file workspace tab bar moved.",
+      "Deep links and hashes that use tab ids (for example documents) still open the same panel."
+    ],
+    "changeType": "improved"
+  },
+  {
     "slug": "2026-10-09-vault-hidden-task-cue",
     "title": "Hidden vault tasks are easier to spot",
     "summary": "In Document Vault, tasks marked Hidden keep a light dashed border and soft stripe so you can tell them apart from Visible tasks without reading the eye button.",
