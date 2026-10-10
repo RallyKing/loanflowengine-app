@@ -1449,3 +1449,29 @@ html[data-panel-slide="none"] .animate-slide-in-up {
 [data-testid="document-editor-crop-viewport"] .reactEasyCrop_CropArea {
   color: transparent !important;
 }
+
+/*
+ * Document vault file-task card — portal-hidden (isPortalVisible === false).
+ * Glance cue only: dashed border (Tailwind) + static diagonal stripe under content.
+ * pointer-events: none so controls stay fully clickable; no motion.
+ */
+[data-file-task-card][data-portal-visible="false"] {
+  isolation: isolate;
+}
+
+[data-file-task-card][data-portal-visible="false"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-color: rgb(var(--muted) / 0.22);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 5px,
+    rgb(var(--muted-fg) / 0.07) 5px,
+    rgb(var(--muted-fg) / 0.07) 6px
+  );
+}

@@ -52,6 +52,7 @@
     "test:document-assignment": "tsx scripts/document-assignment-tests.ts",
     "test:document-task-templates": "tsx scripts/document-task-template-partition-tests.ts",
     "test:vault-explorer-filter": "tsx scripts/vault-explorer-filter-tests.ts",
+    "test:file-task-portal-visibility-cue": "tsx scripts/file-task-portal-visibility-cue-tests.ts",
     "test:regression:unit": "tsx scripts/regression-protection-tests.ts",
     "verify:regression": "npm run audit:no-clerk && tsx scripts/regression-protection-tests.ts",
     "test:regression:e2e": "npm run build && playwright test tests/regression/regression-protection.spec.ts tests/auth/auth-stress.spec.ts tests/regression/multi-session-isolation.spec.ts --project chromium",
