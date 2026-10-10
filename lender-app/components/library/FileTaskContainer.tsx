@@ -23,6 +23,7 @@ import {
   Circle,
   Clock,
   Copy,
+  ExternalLink,
   Eye,
   EyeOff,
   FolderPlus,
@@ -209,6 +210,11 @@ export function FileTaskContainer({
   const isBlockAssignment = taskType === "block_assignment";
   const isQuestionsTask = taskType === "questions";
   const canManageLifecycle = Boolean(memberUserKey);
+  /** Client-instruction website link (config "Website link") — vault-visible for staff. */
+  const instructionUrl =
+    taskType === "client_instruction"
+      ? fileTask.instructionUrl?.trim() || ""
+      : "";
 
   const cardSurfaceClass = isComplete
     ? "border-2 border-emerald-200/80 border-l-4 border-l-emerald-500 bg-emerald-50/50 dark:border-emerald-800/80 dark:border-l-emerald-500 dark:bg-emerald-950/20"
@@ -577,6 +583,23 @@ export function FileTaskContainer({
             ) : null}
           </div>
 
+          {instructionUrl ? (
+            <div className="mt-0.5 min-w-0 pl-[calc(1rem+1.25rem)]">
+              <a
+                href={instructionUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-dlc-sm py-1 pr-1 text-[11px] font-medium text-amber-800 transition-colors duration-dlc-short ease-dlc-standard hover:text-amber-950 hover:underline dark:text-amber-300 dark:hover:text-amber-200"
+                title={instructionUrl}
+                data-testid={`file-task-instruction-url-${fileTask._id}`}
+              >
+                <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="shrink-0">Direct Link</span>
+                <span className="min-w-0 truncate">{instructionUrl}</span>
+              </a>
+            </div>
+          ) : null}
+
           {(canMutate || canManageLifecycle) ? (
             <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 pl-[calc(1rem+1.25rem)]">
               {canMutate ? (
@@ -600,6 +623,7 @@ export function FileTaskContainer({
                 tone="orange"
                 disabled={linkBusy}
                 onClick={() => void handleCopyLink()}
+                title="Copy secure client upload link"
               />
               <MicroAction
                 label={notifySent ? "Sent" : "Notify"}
