@@ -645,10 +645,12 @@ function ClientPortalTaskCard({
     taskType === "block_assignment" &&
     task.assignedBlocks.length > 0 &&
     !needsPassword;
+  const questionItems =
+    unlockedContent?.questionItems ?? task.questionItems ?? [];
+  const questionAnswers =
+    unlockedContent?.questionAnswers ?? task.questionAnswers;
   const showQuestions =
-    taskType === "questions" &&
-    (task.questionItems?.length ?? 0) > 0 &&
-    !needsPassword;
+    taskType === "questions" && questionItems.length > 0 && !needsPassword;
   const instructionText =
     unlockedContent?.clientInstructionText ?? task.clientInstructionText;
   const instructionHref = safeInstructionUrlHref(
@@ -656,6 +658,8 @@ function ClientPortalTaskCard({
   );
   const clientTemplates =
     unlockedContent?.clientTemplates ?? task.clientTemplates;
+  const rejectionNote =
+    unlockedContent?.rejectionNote ?? task.rejectionNote;
   const showInstructionContent =
     taskType === "client_instruction" && !needsPassword;
 
@@ -713,9 +717,9 @@ function ClientPortalTaskCard({
         />
       ) : null}
 
-      {task.rejectionNote && !isPendingReview && !isComplete && !needsPassword ? (
+      {rejectionNote && !isPendingReview && !isComplete && !needsPassword ? (
         <ClientPortalRevisionBanner
-          note={task.rejectionNote}
+          note={rejectionNote}
           className="mt-3"
         />
       ) : null}
@@ -794,8 +798,8 @@ function ClientPortalTaskCard({
         <ClientPortalQuestionsPanel
           bundleToken={bundleToken}
           fileTaskId={task.fileTaskId}
-          questionItems={task.questionItems ?? []}
-          questionAnswers={task.questionAnswers}
+          questionItems={questionItems as FileTaskQuestionItem[]}
+          questionAnswers={questionAnswers}
           taskStatus={task.status}
           disabled={readOnly || isComplete}
           onSubmitted={onBlockSubmitted}

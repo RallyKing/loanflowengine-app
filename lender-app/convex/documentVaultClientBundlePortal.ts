@@ -30,6 +30,7 @@ import {
   prefillValuesForPortalBlock,
 } from "../lib/documentVaultClientBlocks";
 import {
+  fileTaskQuestionAnswerTypeV,
   normalizeAssignedBlockEntriesFromDoc,
   resolveTaskTypeFromDoc,
 } from "./documentVaultTaskTypes";
@@ -973,6 +974,26 @@ export const getUnlockedTaskClientContent = query({
     v.object({
       clientInstructionText: v.optional(v.string()),
       instructionUrl: v.optional(v.string()),
+      rejectionNote: v.optional(v.string()),
+      questionItems: v.optional(
+        v.array(
+          v.object({
+            id: v.string(),
+            prompt: v.string(),
+            answerType: fileTaskQuestionAnswerTypeV,
+            sortOrder: v.number(),
+            required: v.boolean(),
+          }),
+        ),
+      ),
+      questionAnswers: v.optional(
+        v.array(
+          v.object({
+            questionId: v.string(),
+            value: v.string(),
+          }),
+        ),
+      ),
       clientTemplates: v.optional(
         v.array(
           v.object({
@@ -1022,9 +1043,30 @@ export const getUnlockedTaskClientContent = query({
       });
     }
 
+    const questionItems =
+      task.taskType === "questions"
+        ? (task.questionItems ?? []).map((q) => ({
+            id: q.id,
+            prompt: q.prompt,
+            answerType: q.answerType,
+            sortOrder: q.sortOrder,
+            required: q.required !== false,
+          }))
+        : undefined;
+    const questionAnswers =
+      task.taskType === "questions"
+        ? (task.questionAnswers ?? []).map((a) => ({
+            questionId: a.questionId,
+            value: a.value,
+          }))
+        : undefined;
+
     return {
       clientInstructionText: task.clientInstructionText?.trim() || undefined,
       instructionUrl: safeInstructionUrlHref(task.instructionUrl),
+      rejectionNote: task.rejectionNote?.trim() || undefined,
+      questionItems,
+      questionAnswers,
       clientTemplates:
         clientTemplates.length > 0 ? clientTemplates : undefined,
     };

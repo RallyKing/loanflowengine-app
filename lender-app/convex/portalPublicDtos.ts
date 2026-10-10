@@ -38,8 +38,10 @@ export function portalPublicTaskRow(
   const passwordProtected = Boolean(
     task.accessPasswordHash?.trim() && task.accessPasswordSalt?.trim(),
   );
+  // Password-gated tasks: omit sensitive content from the public bundle DTO.
+  // Unlocked clients fetch via getUnlockedTaskClientContent (+ proofs).
   const questionItems =
-    task.taskType === "questions"
+    task.taskType === "questions" && !passwordProtected
       ? (task.questionItems ?? []).map((q) => ({
           id: q.id,
           prompt: q.prompt,
@@ -48,8 +50,6 @@ export function portalPublicTaskRow(
           required: q.required !== false,
         }))
       : undefined;
-  // Do not leak saved answers until the per-task password gate is unlocked
-  // (client hydrates answers only when passwordProtected is false).
   const questionAnswers =
     task.taskType === "questions" && !passwordProtected
       ? (task.questionAnswers ?? []).map((a) => ({
@@ -57,8 +57,6 @@ export function portalPublicTaskRow(
           value: a.value,
         }))
       : undefined;
-  // Same gate for instruction body/URL/templates — bundle token alone must not
-  // reveal password-protected client_instruction content.
   const instructionText =
     !passwordProtected
       ? task.clientInstructionText?.trim() || undefined
@@ -69,6 +67,9 @@ export function portalPublicTaskRow(
     !passwordProtected && clientTemplates.length > 0
       ? clientTemplates
       : undefined;
+  const rejectionNote = !passwordProtected
+    ? task.rejectionNote?.trim() || undefined
+    : undefined;
   return {
     fileTaskId: task._id,
     title: task.title,
@@ -77,7 +78,7 @@ export function portalPublicTaskRow(
     taskType: task.taskType ?? "document_upload",
     clientInstructionText: instructionText,
     instructionUrl,
-    rejectionNote: task.rejectionNote?.trim() || undefined,
+    rejectionNote,
     clientTemplates: templates,
     questionItems,
     questionAnswers,
