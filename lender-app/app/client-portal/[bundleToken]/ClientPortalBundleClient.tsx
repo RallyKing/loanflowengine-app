@@ -620,6 +620,23 @@ function ClientPortalTaskCard({
   const isComplete = task.status === "complete";
   const isPendingReview = task.status === "pending_review";
   const needsPassword = Boolean(task.passwordProtected) && !unlocked;
+  const accessProof = readPortalAccessProof(bundleToken);
+  const taskAccessProof = readPortalTaskAccessProof(
+    bundleToken,
+    String(task.fileTaskId),
+  );
+  // Password-gated fields are redacted from getBundleByToken; fetch after unlock.
+  const unlockedContent = useQuery(
+    api.documentVaultClientBundlePortal.getUnlockedTaskClientContent,
+    unlocked && task.passwordProtected
+      ? {
+          bundleToken,
+          fileTaskId: task.fileTaskId,
+          accessProof: accessProof ?? undefined,
+          taskAccessProof: taskAccessProof ?? undefined,
+        }
+      : "skip",
+  );
   const canUpload =
     taskType === "document_upload" && !readOnly && !isComplete && !needsPassword;
   const canCompleteInstruction =
@@ -632,7 +649,13 @@ function ClientPortalTaskCard({
     taskType === "questions" &&
     (task.questionItems?.length ?? 0) > 0 &&
     !needsPassword;
-  const instructionHref = safeInstructionUrlHref(task.instructionUrl);
+  const instructionText =
+    unlockedContent?.clientInstructionText ?? task.clientInstructionText;
+  const instructionHref = safeInstructionUrlHref(
+    unlockedContent?.instructionUrl ?? task.instructionUrl,
+  );
+  const clientTemplates =
+    unlockedContent?.clientTemplates ?? task.clientTemplates;
   const showInstructionContent =
     taskType === "client_instruction" && !needsPassword;
 
@@ -698,9 +721,9 @@ function ClientPortalTaskCard({
       ) : null}
 
       {!needsPassword &&
-      task.clientTemplates &&
-      task.clientTemplates.length > 0 ? (
-        <FileTaskClientTemplateDownloads templates={task.clientTemplates} />
+      clientTemplates &&
+      clientTemplates.length > 0 ? (
+        <FileTaskClientTemplateDownloads templates={clientTemplates} />
       ) : null}
 
       {showInstructionContent && instructionHref ? (
@@ -714,9 +737,9 @@ function ClientPortalTaskCard({
         </a>
       ) : null}
 
-      {showInstructionContent && task.clientInstructionText ? (
+      {showInstructionContent && instructionText ? (
         <div className="mt-3 rounded-dlc-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-foreground whitespace-pre-wrap">
-          {task.clientInstructionText}
+          {instructionText}
         </div>
       ) : null}
 

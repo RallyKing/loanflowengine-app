@@ -650,9 +650,7 @@ export const updateTemplate = mutation({
     const nextInstructionUrl =
       args.instructionUrl !== undefined
         ? safeInstructionUrlHref(args.instructionUrl)
-        : tpl.instructionUrl
-          ? safeInstructionUrlHref(tpl.instructionUrl) ?? tpl.instructionUrl
-          : undefined;
+        : safeInstructionUrlHref(tpl.instructionUrl);
     const nextBlockEntries =
       args.assignedBlockEntries !== undefined
         ? persistAssignedBlocksPatch(args.assignedBlockEntries).assignedBlockEntries

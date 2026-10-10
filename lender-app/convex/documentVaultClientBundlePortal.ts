@@ -60,6 +60,7 @@ import {
 } from "./portalBundleTaskScope";
 import { recordClientVaultUpload } from "./documentVaultActivity";
 import { vaultDocumentOutboundFileName } from "../lib/library/vaultOutboundFileName";
+import { safeInstructionUrlHref } from "../lib/documentVaultTaskTypes";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 const BUNDLE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -323,15 +324,18 @@ export const getBundleByToken = query({
         size: number;
         url: string;
       }> = [];
-      for (const att of task.clientTemplateAttachments ?? []) {
-        const url = await ctx.storage.getUrl(att.storageId);
-        if (!url) continue;
-        clientTemplates.push({
-          fileName: att.fileName,
-          mimeType: att.mimeType,
-          size: att.size,
-          url,
-        });
+      // Skip signed template URLs when password-gated (DTO also redacts).
+      if (!passwordProtected) {
+        for (const att of task.clientTemplateAttachments ?? []) {
+          const url = await ctx.storage.getUrl(att.storageId);
+          if (!url) continue;
+          clientTemplates.push({
+            fileName: att.fileName,
+            mimeType: att.mimeType,
+            size: att.size,
+            url,
+          });
+        }
       }
       tasks.push(
         portalPublicTaskRow(
@@ -949,6 +953,63 @@ export const getBundleTaskUploadTree = query({
       folders,
       documents,
       taskStatus: task.status,
+    };
+  },
+});
+
+/**
+ * After per-task password unlock: return instruction/template fields that
+ * getBundleByToken redacts while passwordProtected. Requires taskAccessProof.
+ */
+export const getUnlockedTaskClientContent = query({
+  args: {
+    bundleToken: v.string(),
+    fileTaskId: v.id("documentVaultFileTasks"),
+    accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    { bundleToken, fileTaskId, accessProof, taskAccessProof },
+  ) => {
+    const trimmed = normalizePortalToken(bundleToken);
+    if (!trimmed) return null;
+    const auth = await loadBundleByPlain(ctx, trimmed, undefined, accessProof);
+    if (!auth.ok) return null;
+    if (!(await assertBundleTaskInScope(ctx, auth.row, fileTaskId))) {
+      return null;
+    }
+    const task = await ctx.db.get(fileTaskId);
+    if (!task || task.isArchived || !task.isPortalVisible) return null;
+    const passwordGate = await assertFileTaskPasswordAllowed(ctx, {
+      task,
+      tokenHash: auth.row.tokenHash,
+      taskAccessProof,
+    });
+    if (!passwordGate.ok) return null;
+
+    const clientTemplates: Array<{
+      fileName: string;
+      mimeType: string;
+      size: number;
+      url: string;
+    }> = [];
+    for (const att of task.clientTemplateAttachments ?? []) {
+      const url = await ctx.storage.getUrl(att.storageId);
+      if (!url) continue;
+      clientTemplates.push({
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        size: att.size,
+        url,
+      });
+    }
+
+    return {
+      clientInstructionText: task.clientInstructionText?.trim() || undefined,
+      instructionUrl: safeInstructionUrlHref(task.instructionUrl),
+      clientTemplates:
+        clientTemplates.length > 0 ? clientTemplates : undefined,
     };
   },
 });

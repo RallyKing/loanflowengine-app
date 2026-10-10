@@ -473,9 +473,7 @@ export const updateTaskConfig = mutation({
     const instructionUrl =
       args.instructionUrl !== undefined
         ? safeInstructionUrlHref(args.instructionUrl)
-        : task.instructionUrl
-          ? safeInstructionUrlHref(task.instructionUrl) ?? task.instructionUrl
-          : undefined;
+        : safeInstructionUrlHref(task.instructionUrl);
 
     const questionItems =
       taskType === "questions"

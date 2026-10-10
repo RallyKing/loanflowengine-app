@@ -57,16 +57,28 @@ export function portalPublicTaskRow(
           value: a.value,
         }))
       : undefined;
+  // Same gate for instruction body/URL/templates — bundle token alone must not
+  // reveal password-protected client_instruction content.
+  const instructionText =
+    !passwordProtected
+      ? task.clientInstructionText?.trim() || undefined
+      : undefined;
+  const instructionUrl =
+    !passwordProtected ? task.instructionUrl?.trim() || undefined : undefined;
+  const templates =
+    !passwordProtected && clientTemplates.length > 0
+      ? clientTemplates
+      : undefined;
   return {
     fileTaskId: task._id,
     title: task.title,
     isRequired: task.isRequired,
     status: task.status,
     taskType: task.taskType ?? "document_upload",
-    clientInstructionText: task.clientInstructionText?.trim() || undefined,
-    instructionUrl: task.instructionUrl?.trim() || undefined,
+    clientInstructionText: instructionText,
+    instructionUrl,
     rejectionNote: task.rejectionNote?.trim() || undefined,
-    clientTemplates: clientTemplates.length > 0 ? clientTemplates : undefined,
+    clientTemplates: templates,
     questionItems,
     questionAnswers,
     assignedBlockEntries,
