@@ -2406,6 +2406,14 @@ export default defineSchema({
     scheduleAlertFireAt: v.optional(v.number()),
 
     /**
+     * Time Alerts — one-shot scheduler for hub task snooze wake
+     * (`snoozedUntil`). Category `file_snooze_due` (Snooze tab + prefs).
+     */
+    snoozeAlertJobId: v.optional(v.id("_scheduled_functions")),
+    snoozeAlertUserKey: v.optional(v.string()),
+    snoozeAlertFireAt: v.optional(v.number()),
+
+    /**
      * Multi-user scaffolding — see `pipeline.assigneeId` for the same
      * notes. Filters today are no-ops, but the data model is ready.
      */

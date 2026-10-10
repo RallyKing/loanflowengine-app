@@ -672,7 +672,7 @@ function TimeAlertsBellInner({
         </div>
 
         <p className="mt-2 border-t border-border pt-2 text-[10px] text-muted-foreground">
-          File snooze and task due reminders. Notification Alerts stay in the
+          File/task snooze and due reminders. Notification Alerts stay in the
           Alerts bell.{" "}
           <Link
             href={settingsHref("reminders")}

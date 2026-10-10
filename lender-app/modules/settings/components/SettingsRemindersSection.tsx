@@ -26,8 +26,8 @@ const CATEGORY_COPY: Record<
   { label: string; hint: string }
 > = {
   file_snooze_due: {
-    label: "File snooze due",
-    hint: "When a snoozed pipeline file comes due again.",
+    label: "Snooze due",
+    hint: "When a snoozed pipeline file or hub task comes due again.",
   },
   task_due: {
     label: "Task due / reminder",
@@ -138,7 +138,7 @@ export function SettingsRemindersSection() {
     <SettingsSectionCard
       id="reminders"
       title="Reminders"
-      description="Reminder channels for file snooze and task due — separate from Notifications (the Alerts bell)."
+      description="Reminder channels for snooze wake, task due, and schedule — separate from Notifications (the Alerts bell)."
     >
       {!sessionReady ? (
         <p className="text-sm text-muted-foreground">
@@ -158,9 +158,9 @@ export function SettingsRemindersSection() {
           <p className="text-xs text-muted-foreground">
             In-app reminders appear in the Reminders bell (clock icon). Push
             uses this device&apos;s Web Push subscription when enabled below.
-            File snooze fires at snooze end; scheduled triage times use the
-            New Task &quot;Schedule date&quot; picker. Use Send test reminder
-            for the bell, and Send test notification for phone push.
+            File and task snooze fire at snooze end; scheduled triage times use
+            the New Task &quot;Schedule date&quot; picker. Use Send test
+            reminder for the bell, and Send test notification for phone push.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button
