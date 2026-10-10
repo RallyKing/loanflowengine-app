@@ -74,12 +74,11 @@ export function SettingsJumpNav({
                 .map((id) => SETTINGS_SECTIONS.find((s) => s.id === id))
                 .filter((s): s is (typeof SETTINGS_SECTIONS)[number] => {
                   if (s == null || s.jumpHidden) return false;
-                  if (s.id === "platformUsers") return canManagePlatformUsers;
-                  if (
-                    category.adminOnly &&
-                    s.id !== "platformUsers" &&
-                    !isGlobalAdmin
-                  ) {
+                  const sectionId = s.id as SettingsSectionId;
+                  if (sectionId === "platformUsers") {
+                    return canManagePlatformUsers;
+                  }
+                  if (category.adminOnly && !isGlobalAdmin) {
                     return false;
                   }
                   return true;
