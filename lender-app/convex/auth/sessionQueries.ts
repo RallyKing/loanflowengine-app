@@ -1,9 +1,11 @@
 import { v } from "convex/values";
 import { query, mutation } from "../_generated/server";
 import { authUserHasGlobalAdminElevation } from "./globalAdmin";
+import { authUserIsPrimaryPlatformAdmin } from "./primaryPlatformAdmin";
 import { authUserMayInitiateSuperuserImpersonation } from "./superuserAllowlist";
 import { normalizeAuthEmail } from "../../lib/auth/normalizeAuthEmail";
 import { pickCanonicalAuthSession } from "./authSessionPick";
+import { signupAccessAllowsLogin } from "./signupAccess";
 
 function shouldSkipTemporaryAccountLockout(): boolean {
   if (process.env.PLAYWRIGHT_RELAX_LOGIN_RATE_LIMIT === "1") return true;
@@ -56,6 +58,9 @@ export const validateSession = query({
     if (user.credentialVersion !== row.credentialVersion) {
       return { ok: false as const, code: "SESSION_INVALIDATED" as const };
     }
+    if (!signupAccessAllowsLogin(user)) {
+      return { ok: false as const, code: "ACCESS_PENDING" as const };
+    }
 
     const withinPrev =
       row.previousTokenHash === args.tokenHash &&
@@ -90,6 +95,7 @@ export const validateSession = query({
       workspaceRole: workspaceRoleFromMemberRole(member?.role),
       isGlobalAdmin: authUserHasGlobalAdminElevation(user),
       canSuperuserImpersonate: authUserMayInitiateSuperuserImpersonation(user),
+      canManagePlatformUsers: authUserIsPrimaryPlatformAdmin(user),
       idleExpiresAtMs: row.idleExpiresAtMs,
       absoluteExpiresAtMs: row.absoluteExpiresAtMs,
       rememberMe: row.rememberMe,

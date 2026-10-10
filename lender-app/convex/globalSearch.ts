@@ -7,6 +7,7 @@ import {
   filterPipelineRowsForMember,
   filterTaskRowsForMember,
 } from "./organizationAccess";
+import { rowBelongsToOrganizationScope } from "./orgScopeMatching";
 import {
   buildPipelineOwnershipPresentation,
   buildTaskOwnershipPresentation,
@@ -39,12 +40,12 @@ type GlobalSearchHit = {
   matchedRelationship?: string;
 };
 
-/** Org-private lenders or shared catalog rows (`organizationId` unset). */
+/** Fail-closed: exact org or primary-workspace legacy null-org only. */
 function lenderVisibleInOrg(
   l: Doc<"lenders">,
   organizationId: Id<"organizations">,
 ): boolean {
-  return l.organizationId == null || l.organizationId === organizationId;
+  return rowBelongsToOrganizationScope(l.organizationId, organizationId);
 }
 
 /**

@@ -31,6 +31,13 @@ export function notificationDeepLinkHref(row: NotificationRow): string | null {
   if (row.lenderId) {
     return `/lenders?lender=${row.lenderId}`;
   }
+  if (
+    row.category === "status_change" &&
+    typeof row.dedupeKey === "string" &&
+    row.dedupeKey.startsWith("signup-pending:")
+  ) {
+    return "/settings#platformUsers";
+  }
   return null;
 }
 

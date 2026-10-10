@@ -228,6 +228,38 @@ export async function POST(req: Request) {
       );
     }
 
+    if (record.accessStatus === "pending") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "PENDING_APPROVAL",
+          error:
+            "Your account is awaiting review. Someone will get back to you if it is approved.",
+        },
+        { status: 403 },
+      );
+    }
+    if (record.accessStatus === "rejected") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "ACCOUNT_REJECTED",
+          error: "This account request was not approved.",
+        },
+        { status: 403 },
+      );
+    }
+    if (record.accessStatus === "disabled") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "ACCOUNT_DISABLED",
+          error: "This account has been disabled.",
+        },
+        { status: 403 },
+      );
+    }
+
     const EMAIL_VERIFICATION_BLOCKS_LOGIN = false;
     if (
       EMAIL_VERIFICATION_BLOCKS_LOGIN &&
@@ -323,6 +355,22 @@ export async function POST(req: Request) {
       bridgeProof: gateProof.bridgeProof,
     });
     if (!gate.ok) {
+      if (
+        gate.code === "PENDING_APPROVAL" ||
+        gate.code === "ACCOUNT_REJECTED" ||
+        gate.code === "ACCOUNT_DISABLED"
+      ) {
+        const message =
+          gate.code === "PENDING_APPROVAL"
+            ? "Your account is awaiting review. Someone will get back to you if it is approved."
+            : gate.code === "ACCOUNT_REJECTED"
+              ? "This account request was not approved."
+              : "This account has been disabled.";
+        return NextResponse.json(
+          { ok: false, code: gate.code, error: message },
+          { status: 403 },
+        );
+      }
       if (gate.code === "NO_MEMBER" || gate.code === "INACTIVE") {
         const repairProof = signBridge(`login-repair-membership:${record.userId}`);
         void client

@@ -34,3 +34,14 @@ export function authUserIsPrimaryPlatformAdmin(
   const em = normalizeAuthEmail(u.email);
   return Boolean(em && ALIAS_SET.has(em));
 }
+
+/** Pre-insert check from signup identifiers (case-insensitive). */
+export function signupIdentityIsPrimaryPlatformAdmin(
+  username: string,
+  email?: string | null,
+): boolean {
+  const userKey = normalizeUsername(username);
+  if (userKey && ALIAS_SET.has(userKey)) return true;
+  const em = normalizeAuthEmail(email ?? undefined);
+  return Boolean(em && ALIAS_SET.has(em));
+}

@@ -17,6 +17,8 @@ export type ViewerSession = {
   isGlobalAdmin?: boolean;
   /** Canonical primary login only — may start tenant impersonation. */
   canSuperuserImpersonate?: boolean;
+  /** Primary platform admin only — platform-wide signup / account admin. */
+  canManagePlatformUsers?: boolean;
   /** Real home org when impersonating another tenant. */
   homeOrganizationId?: string;
   homeOrganizationName?: string;

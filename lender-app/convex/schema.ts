@@ -451,12 +451,27 @@ export default defineSchema({
     ),
     defaultOrganizationId: v.optional(v.id("organizations")),
     primaryOwner: v.optional(v.boolean()),
+    /**
+     * Self-serve signup gate. Omitted / undefined = approved (legacy + admin-created).
+     * Pending / rejected / disabled cannot authenticate into product features.
+     */
+    accessStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("approved"),
+        v.literal("rejected"),
+        v.literal("disabled"),
+      ),
+    ),
+    accessStatusUpdatedAt: v.optional(v.number()),
+    accessStatusUpdatedByUserId: v.optional(v.id("authUsers")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_normalizedUsername", ["normalizedUsername"])
     .index("by_usernameNormalized", ["usernameNormalized"])
-    .index("by_email", ["email"]),
+    .index("by_email", ["email"])
+    .index("by_accessStatus_createdAt", ["accessStatus", "createdAt"]),
 
   authSessions: defineTable({
     userId: v.id("authUsers"),

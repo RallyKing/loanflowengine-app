@@ -60,6 +60,7 @@ function viewerFromValidated(
     sessionPublicId: v.publicId as string,
     isGlobalAdmin: v.isGlobalAdmin === true,
     canSuperuserImpersonate: v.canSuperuserImpersonate === true,
+    canManagePlatformUsers: v.canManagePlatformUsers === true,
     homeOrganizationId,
     homeOrganizationName,
     impersonation,
