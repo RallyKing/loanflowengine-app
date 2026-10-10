@@ -8,6 +8,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { ClientPortalBlockPanel } from "@/components/library/ClientPortalBlockPanel";
+import { ClientPortalQuestionsPanel } from "@/components/library/ClientPortalQuestionsPanel";
 import { ClientPortalRevisionBanner } from "@/components/library/FileTaskReviewActions";
 import { ClientPortalFolderUploadTree } from "@/components/library/ClientPortalFolderUploadTree";
 import { FileTaskClientTemplateDownloads } from "@/components/library/FileTaskClientTemplateAttach";
@@ -21,6 +22,7 @@ import {
 import { readPortalTaskAccessProof } from "@/lib/portalTaskAccessProof";
 import { postFileToConvexUploadUrl } from "@/lib/uploadToConvexStorage";
 import { resolveTaskType } from "@/lib/documentVaultTaskTypes";
+import type { FileTaskQuestionItem } from "@/lib/fileTaskQuestions";
 import { usePortalSession } from "@/lib/usePortalCollaborationSession";
 import { PortalPageComposition } from "@/components/portal/PortalPageSectionRenderer";
 import type { PortalPageSectionInstance } from "@/lib/portalPageSections";
@@ -575,6 +577,8 @@ type PortalTask = {
     size: number;
     url: string;
   }>;
+  questionItems?: FileTaskQuestionItem[];
+  questionAnswers?: Array<{ questionId: string; value: string }>;
   assignedBlocks: string[];
   rejectionNote?: string;
   blockPrefill: Record<string, Record<string, string>>;
@@ -621,6 +625,10 @@ function ClientPortalTaskCard({
     taskType === "block_assignment" &&
     task.assignedBlocks.length > 0 &&
     !needsPassword;
+  const showQuestions =
+    taskType === "questions" &&
+    (task.questionItems?.length ?? 0) > 0 &&
+    !needsPassword;
 
   return (
     <li
@@ -650,7 +658,7 @@ function ClientPortalTaskCard({
         ) : isPendingReview ? (
           <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-800">
             <Clock className="h-3.5 w-3.5" aria-hidden />
-            {taskType === "block_assignment"
+            {taskType === "block_assignment" || taskType === "questions"
               ? "Submitted — under review"
               : "Under review"}
           </p>
@@ -660,7 +668,9 @@ function ClientPortalTaskCard({
               ? "Action required"
               : taskType === "block_assignment"
                 ? "Fill out the form, then Submit when ready"
-                : "Upload required"}
+                : taskType === "questions"
+                  ? "Answer the questions, then Submit when ready"
+                  : "Upload required"}
           </p>
         )}
       </div>
@@ -743,6 +753,18 @@ function ClientPortalTaskCard({
           bundleToken={bundleToken}
           fileTaskId={task.fileTaskId}
           assignedBlocks={task.assignedBlocks}
+          taskStatus={task.status}
+          disabled={readOnly || isComplete}
+          onSubmitted={onBlockSubmitted}
+        />
+      ) : null}
+
+      {showQuestions ? (
+        <ClientPortalQuestionsPanel
+          bundleToken={bundleToken}
+          fileTaskId={task.fileTaskId}
+          questionItems={task.questionItems ?? []}
+          questionAnswers={task.questionAnswers}
           taskStatus={task.status}
           disabled={readOnly || isComplete}
           onSubmitted={onBlockSubmitted}

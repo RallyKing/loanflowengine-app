@@ -7,7 +7,31 @@ export const fileTaskTypeV = v.union(
   v.literal("client_instruction"),
   v.literal("internal_task"),
   v.literal("block_assignment"),
+  v.literal("questions"),
 );
+
+export const fileTaskQuestionAnswerTypeV = v.union(
+  v.literal("phone"),
+  v.literal("email"),
+  v.literal("single_line"),
+  v.literal("large_text"),
+  v.literal("dollar_amount"),
+);
+
+export const fileTaskQuestionItemV = v.object({
+  id: v.string(),
+  prompt: v.string(),
+  answerType: fileTaskQuestionAnswerTypeV,
+  sortOrder: v.number(),
+  required: v.optional(v.boolean()),
+});
+
+export const fileTaskQuestionAnswerV = v.object({
+  questionId: v.string(),
+  value: v.string(),
+  updatedAt: v.number(),
+  updatedBy: v.optional(v.union(v.literal("client"), v.literal("broker"))),
+});
 
 export const assignedBlockEntryV = v.object({
   blockId: v.string(),

@@ -1,3 +1,5 @@
+import type { FileTaskQuestionItem } from "@/lib/fileTaskQuestions";
+import { validateQuestionItemsConfig } from "@/lib/fileTaskQuestions";
 import type { PipelineBlockId } from "@/lib/pipelineBlockRegistry";
 
 /** Polymorphic document vault file task kinds. */
@@ -6,6 +8,7 @@ export const FILE_TASK_TYPES = [
   "client_instruction",
   "internal_task",
   "block_assignment",
+  "questions",
 ] as const;
 
 export type FileTaskType = (typeof FILE_TASK_TYPES)[number];
@@ -30,6 +33,7 @@ export const FILE_TASK_TYPE_LABELS: Record<FileTaskType, string> = {
   client_instruction: "Client instruction",
   internal_task: "Internal task",
   block_assignment: "Block assignment",
+  questions: "Question(s)",
 };
 
 export const FILE_TASK_TYPE_DESCRIPTIONS: Record<FileTaskType, string> = {
@@ -39,6 +43,8 @@ export const FILE_TASK_TYPE_DESCRIPTIONS: Record<FileTaskType, string> = {
   internal_task: "Broker-only checklist item — never shown in the client portal.",
   block_assignment:
     "Client completes specific pipeline data blocks in your chosen order.",
+  questions:
+    "Ask the borrower one or more structured questions (phone, email, text, dollar amount).",
 };
 
 export function isFileTaskType(value: string): value is FileTaskType {
@@ -116,6 +122,7 @@ export type FileTaskTypeConfigInput = {
   clientInstructionText?: string;
   instructionUrl?: string;
   assignedBlockEntries?: AssignedBlockEntry[];
+  questionItems?: FileTaskQuestionItem[];
   description?: string;
   dueDate?: number;
   priority?: FileTaskPriority;
@@ -136,6 +143,9 @@ export function validateTaskTypeConfig(
     if (count === 0) {
       return "Select at least one pipeline block for block assignment tasks.";
     }
+  }
+  if (config.taskType === "questions") {
+    return validateQuestionItemsConfig(config.questionItems);
   }
   return null;
 }

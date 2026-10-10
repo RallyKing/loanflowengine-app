@@ -42,6 +42,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { api } from "@/convex/_generated/api";
 import { Input } from "@/components/ui/Input";
 import { FileTaskReviewActions } from "@/components/library/FileTaskReviewActions";
+import { FileTaskQuestionsAnswersPanel } from "@/components/library/FileTaskQuestionsAnswersPanel";
 import { cn } from "@/lib/cn";
 import {
   vaultFileTaskDropId,
@@ -206,6 +207,7 @@ export function FileTaskContainer({
   const isPendingReview = fileTask.status === "pending_review";
   const taskType = resolveTaskType(fileTask.taskType);
   const isBlockAssignment = taskType === "block_assignment";
+  const isQuestionsTask = taskType === "questions";
   const canManageLifecycle = Boolean(memberUserKey);
 
   const cardSurfaceClass = isComplete
@@ -514,7 +516,7 @@ export function FileTaskContainer({
                   type="button"
                   className="inline-flex min-w-0 max-w-full shrink items-center gap-1"
                   onClick={() => {
-                    if (isBlockAssignment) {
+                    if (isBlockAssignment || isQuestionsTask) {
                       onToggleExpand();
                       return;
                     }
@@ -755,9 +757,21 @@ export function FileTaskContainer({
                 Revision note: {fileTask.rejectionNote}
               </p>
             ) : null}
+            {isQuestionsTask ? (
+              <div className="border-b border-border/40 px-3 py-3">
+                <FileTaskQuestionsAnswersPanel
+                  fileTaskId={fileTask._id}
+                  taskTitle={fileTask.title}
+                  questionItems={fileTask.questionItems}
+                  questionAnswers={fileTask.questionAnswers}
+                  memberUserKey={memberUserKey}
+                  canEdit={canMutate}
+                />
+              </div>
+            ) : null}
             <div className="min-w-0">{children}</div>
 
-            {canMutate ? (
+            {canMutate && !isQuestionsTask ? (
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/30 px-2 pt-1 pb-1.5">
                 <input
                   ref={uploadInputRef}

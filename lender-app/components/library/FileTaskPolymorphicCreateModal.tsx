@@ -10,6 +10,10 @@ import {
   type AssignedBlockEntry,
   type FileTaskType,
 } from "@/lib/documentVaultTaskTypes";
+import {
+  emptyFileTaskQuestion,
+  type FileTaskQuestionItem,
+} from "@/lib/fileTaskQuestions";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 
 export type FileTaskPolymorphicCreateModalProps = {
@@ -20,6 +24,7 @@ export type FileTaskPolymorphicCreateModalProps = {
     taskType: FileTaskType;
     clientInstructionText?: string;
     assignedBlockEntries?: AssignedBlockEntry[];
+    questionItems?: FileTaskQuestionItem[];
     isRequired: boolean;
     isPortalVisible: boolean;
   }) => Promise<void>;
@@ -34,6 +39,9 @@ export function FileTaskPolymorphicCreateModal({
   const [taskType, setTaskType] = useState<FileTaskType>("document_upload");
   const [instruction, setInstruction] = useState("");
   const [blocks, setBlocks] = useState<AssignedBlockEntry[]>([]);
+  const [questions, setQuestions] = useState<FileTaskQuestionItem[]>([
+    emptyFileTaskQuestion(1000),
+  ]);
   const [isRequired, setIsRequired] = useState(true);
   const [isPortalVisible, setIsPortalVisible] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -43,6 +51,7 @@ export function FileTaskPolymorphicCreateModal({
     setTaskType("document_upload");
     setInstruction("");
     setBlocks([]);
+    setQuestions([emptyFileTaskQuestion(1000)]);
     setIsRequired(true);
     setIsPortalVisible(true);
   };
@@ -77,6 +86,8 @@ export function FileTaskPolymorphicCreateModal({
           onClientInstructionTextChange={setInstruction}
           assignedBlockEntries={blocks}
           onAssignedBlockEntriesChange={setBlocks}
+          questionItems={questions}
+          onQuestionItemsChange={setQuestions}
           isRequired={isRequired}
           onRequiredChange={setIsRequired}
           isPortalVisible={isPortalVisible}
@@ -100,6 +111,7 @@ export function FileTaskPolymorphicCreateModal({
                 taskType,
                 clientInstructionText: instruction,
                 assignedBlockEntries: blocks,
+                questionItems: questions,
               });
               if (err) {
                 showOperationalToast({
@@ -118,6 +130,8 @@ export function FileTaskPolymorphicCreateModal({
                     taskType === "client_instruction" ? instruction.trim() : undefined,
                   assignedBlockEntries:
                     taskType === "block_assignment" ? blocks : undefined,
+                  questionItems:
+                    taskType === "questions" ? questions : undefined,
                   isRequired,
                   isPortalVisible:
                     taskType === "internal_task" ? false : isPortalVisible,

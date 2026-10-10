@@ -35,6 +35,10 @@ import {
   folderTreeToRows,
   type FolderTemplateNode,
 } from "@/lib/library/folderTemplateTypes";
+import {
+  emptyFileTaskQuestion,
+  type FileTaskQuestionItem,
+} from "@/lib/fileTaskQuestions";
 
 export type TaskTemplateManagerProps = {
   open: boolean;
@@ -67,6 +71,7 @@ const EMPTY_TEMPLATE_DRAFT = {
   priority: "" as FileTaskPriority | "",
   dueOffsetDays: null as number | null,
   assignedBlockEntries: [] as AssignedBlockEntry[],
+  questionItems: [emptyFileTaskQuestion(1000)] as FileTaskQuestionItem[],
   folderTemplateNodes: [] as FolderTemplateNode[],
   clientTemplateAttachments: [] as FileTaskClientTemplateAttachment[],
 };
@@ -85,6 +90,10 @@ function templateDraftFromDoc(tpl: Doc<"documentTaskTemplates">) {
     priority: (tpl.priority ?? "") as FileTaskPriority | "",
     dueOffsetDays: tpl.dueOffsetDays ?? null,
     assignedBlockEntries: normalizeAssignedBlockEntries(tpl),
+    questionItems:
+      tpl.questionItems && tpl.questionItems.length > 0
+        ? [...tpl.questionItems].sort((a, b) => a.sortOrder - b.sortOrder)
+        : ([emptyFileTaskQuestion(1000)] as FileTaskQuestionItem[]),
     folderTemplateNodes: folderRowsToTree(tpl.folderTemplate ?? []),
     clientTemplateAttachments: (tpl.clientTemplateAttachments ?? []).map(
       (a) => ({
@@ -140,6 +149,9 @@ export function TaskTemplateManager({
   const [assignedBlockEntries, setAssignedBlockEntries] = useState<
     AssignedBlockEntry[]
   >(EMPTY_TEMPLATE_DRAFT.assignedBlockEntries);
+  const [questionItems, setQuestionItems] = useState<FileTaskQuestionItem[]>(
+    EMPTY_TEMPLATE_DRAFT.questionItems,
+  );
   const [folderTemplateNodes, setFolderTemplateNodes] = useState<
     FolderTemplateNode[]
   >(EMPTY_TEMPLATE_DRAFT.folderTemplateNodes);
@@ -178,6 +190,7 @@ export function TaskTemplateManager({
     setPriority(EMPTY_TEMPLATE_DRAFT.priority);
     setDueOffsetDays(EMPTY_TEMPLATE_DRAFT.dueOffsetDays);
     setAssignedBlockEntries(EMPTY_TEMPLATE_DRAFT.assignedBlockEntries);
+    setQuestionItems(EMPTY_TEMPLATE_DRAFT.questionItems);
     setFolderTemplateNodes(EMPTY_TEMPLATE_DRAFT.folderTemplateNodes);
     setClientTemplateAttachments(EMPTY_TEMPLATE_DRAFT.clientTemplateAttachments);
   }, []);
@@ -194,6 +207,7 @@ export function TaskTemplateManager({
     setPriority(draft.priority);
     setDueOffsetDays(draft.dueOffsetDays);
     setAssignedBlockEntries(draft.assignedBlockEntries);
+    setQuestionItems(draft.questionItems);
     setFolderTemplateNodes(draft.folderTemplateNodes);
     setClientTemplateAttachments(draft.clientTemplateAttachments);
   }, []);
@@ -362,6 +376,7 @@ export function TaskTemplateManager({
         clientInstructionText,
         instructionUrl,
         assignedBlockEntries,
+        questionItems,
         description: templateDescription,
         priority: priority || undefined,
         dueDate: undefined,
@@ -391,6 +406,7 @@ export function TaskTemplateManager({
             : undefined,
         assignedBlockEntries:
           taskType === "block_assignment" ? assignedBlockEntries : undefined,
+        questionItems: taskType === "questions" ? questionItems : undefined,
         folderTemplate:
           taskType === "document_upload"
             ? folderTreeToRows(folderTemplateNodes)
@@ -785,6 +801,8 @@ export function TaskTemplateManager({
                     onInstructionUrlChange={setInstructionUrl}
                     assignedBlockEntries={assignedBlockEntries}
                     onAssignedBlockEntriesChange={setAssignedBlockEntries}
+                    questionItems={questionItems}
+                    onQuestionItemsChange={setQuestionItems}
                     folderTemplateNodes={folderTemplateNodes}
                     onFolderTemplateNodesChange={setFolderTemplateNodes}
                     clientTemplateAttachments={clientTemplateAttachments}
@@ -835,6 +853,8 @@ export function TaskTemplateManager({
                 onInstructionUrlChange={setInstructionUrl}
                 assignedBlockEntries={assignedBlockEntries}
                 onAssignedBlockEntriesChange={setAssignedBlockEntries}
+                questionItems={questionItems}
+                onQuestionItemsChange={setQuestionItems}
                 folderTemplateNodes={folderTemplateNodes}
                 onFolderTemplateNodesChange={setFolderTemplateNodes}
                 clientTemplateAttachments={clientTemplateAttachments}
@@ -947,6 +967,8 @@ function TemplateEditorPanel({
   onInstructionUrlChange,
   assignedBlockEntries,
   onAssignedBlockEntriesChange,
+  questionItems,
+  onQuestionItemsChange,
   folderTemplateNodes,
   onFolderTemplateNodesChange,
   clientTemplateAttachments,
@@ -979,6 +1001,8 @@ function TemplateEditorPanel({
   onInstructionUrlChange: (v: string) => void;
   assignedBlockEntries: AssignedBlockEntry[];
   onAssignedBlockEntriesChange: (entries: AssignedBlockEntry[]) => void;
+  questionItems: FileTaskQuestionItem[];
+  onQuestionItemsChange: (items: FileTaskQuestionItem[]) => void;
   folderTemplateNodes: FolderTemplateNode[];
   onFolderTemplateNodesChange: (nodes: FolderTemplateNode[]) => void;
   clientTemplateAttachments: FileTaskClientTemplateAttachment[];
@@ -1043,6 +1067,8 @@ function TemplateEditorPanel({
         onInstructionUrlChange={onInstructionUrlChange}
         assignedBlockEntries={assignedBlockEntries}
         onAssignedBlockEntriesChange={onAssignedBlockEntriesChange}
+        questionItems={questionItems}
+        onQuestionItemsChange={onQuestionItemsChange}
         folderTemplateNodes={folderTemplateNodes}
         onFolderTemplateNodesChange={onFolderTemplateNodesChange}
         clientTemplateAttachments={clientTemplateAttachments}

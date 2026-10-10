@@ -3320,6 +3320,7 @@ function LibraryDocumentsWorkspaceBody({
               clientInstructionText: payload.clientInstructionText,
               instructionUrl: payload.instructionUrl,
               assignedBlockEntries: payload.assignedBlockEntries,
+              questionItems: payload.questionItems,
               clientTemplateAttachments: payload.clientTemplateAttachments?.map(
                 (a) => ({
                   storageId: a.storageId as Id<"_storage">,
