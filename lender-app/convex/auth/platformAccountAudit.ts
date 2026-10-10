@@ -159,9 +159,14 @@ const selfUsageEventType = v.union(
   v.literal("data_export"),
 );
 
+/** Cap client-reported usage events per caller (anti-flood for owner log book). */
+const SELF_USAGE_RATE_WINDOW_MS = 15 * 60 * 1000;
+const SELF_USAGE_MAX_PER_WINDOW = 40;
+
 /**
  * Authenticated caller records their own high-value usage event
  * (client-side CSV/ZIP exports, vault ZIP downloads). One event per action.
+ * Rate-limited so a buggy client cannot flood platformAccountAuditEvents.
  */
 export const recordSelfUsageEvent = mutation({
   args: {
@@ -170,9 +175,33 @@ export const recordSelfUsageEvent = mutation({
     summary: v.string(),
     detail: v.optional(v.string()),
   },
-  returns: v.object({ ok: v.literal(true) }),
+  returns: v.object({
+    ok: v.literal(true),
+    skipped: v.optional(v.literal("rate_limited")),
+  }),
   handler: async (ctx, args) => {
     const key = await requireAuthenticatedCaller(ctx, args.memberUserKey);
+    const now = Date.now();
+    const windowStart =
+      Math.floor(now / SELF_USAGE_RATE_WINDOW_MS) * SELF_USAGE_RATE_WINDOW_MS;
+    const rateKey = `platform_usage:${key}`;
+    const bucket = await ctx.db
+      .query("authRateBuckets")
+      .withIndex("by_key_window", (q) =>
+        q.eq("key", rateKey).eq("windowStartMs", windowStart),
+      )
+      .first();
+    if (!bucket) {
+      await ctx.db.insert("authRateBuckets", {
+        key: rateKey,
+        windowStartMs: windowStart,
+        count: 1,
+      });
+    } else if (bucket.count >= SELF_USAGE_MAX_PER_WINDOW) {
+      return { ok: true as const, skipped: "rate_limited" as const };
+    } else {
+      await ctx.db.patch(bucket._id, { count: bucket.count + 1 });
+    }
     await recordPlatformAccountAuditForUserKey(ctx, {
       userKey: key,
       actorUserKey: key,
