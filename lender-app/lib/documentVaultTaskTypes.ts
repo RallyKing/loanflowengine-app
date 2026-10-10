@@ -128,6 +128,32 @@ export type FileTaskTypeConfigInput = {
   priority?: FileTaskPriority;
 };
 
+/**
+ * Clickable http(s) href for client-instruction website links.
+ * Rejects javascript:/data:/other schemes (XSS via `<a href>`).
+ */
+export function safeInstructionUrlHref(
+  raw: string | undefined | null,
+): string | undefined {
+  if (raw == null) return undefined;
+  const trimmed = String(raw).trim();
+  if (!trimmed || /\s/.test(trimmed)) return undefined;
+  if (trimmed.length > 2000) return undefined;
+  try {
+    const withProtocol = /^https?:\/\//i.test(trimmed)
+      ? trimmed
+      : `https://${trimmed}`;
+    const u = new URL(withProtocol);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return undefined;
+    const host = u.hostname.trim();
+    if (!host) return undefined;
+    if (host !== "localhost" && !host.includes(".")) return undefined;
+    return u.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export function validateTaskTypeConfig(
   config: FileTaskTypeConfigInput,
 ): string | null {
@@ -136,6 +162,9 @@ export function validateTaskTypeConfig(
     const url = config.instructionUrl?.trim() ?? "";
     if (!text && !url) {
       return "Add instruction text or a website link for client instruction tasks.";
+    }
+    if (url && !safeInstructionUrlHref(url)) {
+      return "Enter a valid http(s) website link.";
     }
   }
   if (config.taskType === "block_assignment") {

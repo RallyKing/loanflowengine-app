@@ -21,7 +21,10 @@ import {
 } from "@/lib/portalAccessProof";
 import { readPortalTaskAccessProof } from "@/lib/portalTaskAccessProof";
 import { postFileToConvexUploadUrl } from "@/lib/uploadToConvexStorage";
-import { resolveTaskType } from "@/lib/documentVaultTaskTypes";
+import {
+  resolveTaskType,
+  safeInstructionUrlHref,
+} from "@/lib/documentVaultTaskTypes";
 import type { FileTaskQuestionItem } from "@/lib/fileTaskQuestions";
 import { usePortalSession } from "@/lib/usePortalCollaborationSession";
 import { PortalPageComposition } from "@/components/portal/PortalPageSectionRenderer";
@@ -629,6 +632,9 @@ function ClientPortalTaskCard({
     taskType === "questions" &&
     (task.questionItems?.length ?? 0) > 0 &&
     !needsPassword;
+  const instructionHref = safeInstructionUrlHref(task.instructionUrl);
+  const showInstructionContent =
+    taskType === "client_instruction" && !needsPassword;
 
   return (
     <li
@@ -691,13 +697,15 @@ function ClientPortalTaskCard({
         />
       ) : null}
 
-      {task.clientTemplates && task.clientTemplates.length > 0 ? (
+      {!needsPassword &&
+      task.clientTemplates &&
+      task.clientTemplates.length > 0 ? (
         <FileTaskClientTemplateDownloads templates={task.clientTemplates} />
       ) : null}
 
-      {taskType === "client_instruction" && task.instructionUrl ? (
+      {showInstructionContent && instructionHref ? (
         <a
-          href={task.instructionUrl}
+          href={instructionHref}
           target="_blank"
           rel="noopener noreferrer"
           className="mt-3 inline-flex text-sm font-medium text-primary hover:underline"
@@ -706,7 +714,7 @@ function ClientPortalTaskCard({
         </a>
       ) : null}
 
-      {taskType === "client_instruction" && task.clientInstructionText ? (
+      {showInstructionContent && task.clientInstructionText ? (
         <div className="mt-3 rounded-dlc-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-foreground whitespace-pre-wrap">
           {task.clientInstructionText}
         </div>

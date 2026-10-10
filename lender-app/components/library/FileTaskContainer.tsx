@@ -63,6 +63,7 @@ import { FileTaskRowMetaBadges } from "@/components/library/FileTaskExecutionMod
 import {
   FILE_TASK_TYPE_LABELS,
   resolveTaskType,
+  safeInstructionUrlHref,
   type AssignedBlockEntry,
 } from "@/lib/documentVaultTaskTypes";
 
@@ -211,10 +212,12 @@ export function FileTaskContainer({
   const isQuestionsTask = taskType === "questions";
   const canManageLifecycle = Boolean(memberUserKey);
   /** Client-instruction website link (config "Website link") — vault-visible for staff. */
-  const instructionUrl =
+  const instructionHref =
     taskType === "client_instruction"
-      ? fileTask.instructionUrl?.trim() || ""
-      : "";
+      ? safeInstructionUrlHref(fileTask.instructionUrl)
+      : undefined;
+  const instructionUrlLabel =
+    fileTask.instructionUrl?.trim() || instructionHref || "";
 
   const cardSurfaceClass = isComplete
     ? "border-2 border-emerald-200/80 border-l-4 border-l-emerald-500 bg-emerald-50/50 dark:border-emerald-800/80 dark:border-l-emerald-500 dark:bg-emerald-950/20"
@@ -583,19 +586,19 @@ export function FileTaskContainer({
             ) : null}
           </div>
 
-          {instructionUrl ? (
+          {instructionHref ? (
             <div className="mt-0.5 min-w-0 pl-[calc(1rem+1.25rem)]">
               <a
-                href={instructionUrl}
+                href={instructionHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-dlc-sm py-1 pr-1 text-[11px] font-medium text-amber-800 transition-colors duration-dlc-short ease-dlc-standard hover:text-amber-950 hover:underline dark:text-amber-300 dark:hover:text-amber-200"
-                title={instructionUrl}
+                title={instructionUrlLabel}
                 data-testid={`file-task-instruction-url-${fileTask._id}`}
               >
                 <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 <span className="shrink-0">Direct Link</span>
-                <span className="min-w-0 truncate">{instructionUrl}</span>
+                <span className="min-w-0 truncate">{instructionUrlLabel}</span>
               </a>
             </div>
           ) : null}
