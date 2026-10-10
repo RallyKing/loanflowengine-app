@@ -16,6 +16,7 @@ import {
   FILE_TASK_TYPE_LABELS,
   assignedBlockIdsOrdered,
   resolveTaskType,
+  safeInstructionUrlHref,
   type FileTaskPriority,
 } from "@/lib/documentVaultTaskTypes";
 import { cn } from "@/lib/cn";
@@ -87,6 +88,7 @@ export function FileTaskExecutionModal({
   const dueLabel = formatDueDate(fileTask.dueDate);
   const assignedIds = assignedBlockIdsOrdered(fileTask);
   const isPendingReview = fileTask.status === "pending_review";
+  const instructionHref = safeInstructionUrlHref(fileTask.instructionUrl);
 
   if (!open) return null;
 
@@ -188,15 +190,15 @@ export function FileTaskExecutionModal({
 
           {taskType === "client_instruction" ? (
             <div className="space-y-3">
-              {fileTask.instructionUrl ? (
+              {instructionHref ? (
                 <a
-                  href={fileTask.instructionUrl}
+                  href={instructionHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
                 >
                   <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  {fileTask.instructionUrl}
+                  {fileTask.instructionUrl?.trim() || instructionHref}
                 </a>
               ) : null}
               {fileTask.clientInstructionText ? (

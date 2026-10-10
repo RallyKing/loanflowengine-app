@@ -376,5 +376,15 @@
       "Templates can carry Question(s) definitions onto live files. Storage merges by question id so re-saves are retry-safe."
     ],
     "changeType": "added"
+  },
+  {
+    "slug": "2026-10-09-vault-client-instruction-direct-link",
+    "title": "Client instruction Direct Links show on vault task cards",
+    "summary": "When a Client instruction file task has a website / Direct Link URL, the document vault card shows that link so you can open it without digging through the task toolbar or execution modal.",
+    "body": [
+      "Client instruction tasks store an optional website link (payment portal, credit pull, etc.). That URL already appeared in the client portal and the task detail modal; it was easy to miss on the vault card itself.",
+      "The vault task card now shows a clickable Direct Link row with the truncated URL whenever the task is a Client instruction and a link is configured. Staff see it in the internal vault; portal visibility and client-only rules are unchanged."
+    ],
+    "changeType": "improved"
   }
 ]

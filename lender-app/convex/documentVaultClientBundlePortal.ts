@@ -30,6 +30,7 @@ import {
   prefillValuesForPortalBlock,
 } from "../lib/documentVaultClientBlocks";
 import {
+  fileTaskQuestionAnswerTypeV,
   normalizeAssignedBlockEntriesFromDoc,
   resolveTaskTypeFromDoc,
 } from "./documentVaultTaskTypes";
@@ -60,6 +61,7 @@ import {
 } from "./portalBundleTaskScope";
 import { recordClientVaultUpload } from "./documentVaultActivity";
 import { vaultDocumentOutboundFileName } from "../lib/library/vaultOutboundFileName";
+import { safeInstructionUrlHref } from "../lib/documentVaultTaskTypes";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 const BUNDLE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -323,15 +325,18 @@ export const getBundleByToken = query({
         size: number;
         url: string;
       }> = [];
-      for (const att of task.clientTemplateAttachments ?? []) {
-        const url = await ctx.storage.getUrl(att.storageId);
-        if (!url) continue;
-        clientTemplates.push({
-          fileName: att.fileName,
-          mimeType: att.mimeType,
-          size: att.size,
-          url,
-        });
+      // Skip signed template URLs when password-gated (DTO also redacts).
+      if (!passwordProtected) {
+        for (const att of task.clientTemplateAttachments ?? []) {
+          const url = await ctx.storage.getUrl(att.storageId);
+          if (!url) continue;
+          clientTemplates.push({
+            fileName: att.fileName,
+            mimeType: att.mimeType,
+            size: att.size,
+            url,
+          });
+        }
       }
       tasks.push(
         portalPublicTaskRow(
@@ -949,6 +954,121 @@ export const getBundleTaskUploadTree = query({
       folders,
       documents,
       taskStatus: task.status,
+    };
+  },
+});
+
+/**
+ * After per-task password unlock: return instruction/template fields that
+ * getBundleByToken redacts while passwordProtected. Requires taskAccessProof.
+ */
+export const getUnlockedTaskClientContent = query({
+  args: {
+    bundleToken: v.string(),
+    fileTaskId: v.id("documentVaultFileTasks"),
+    accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      clientInstructionText: v.optional(v.string()),
+      instructionUrl: v.optional(v.string()),
+      rejectionNote: v.optional(v.string()),
+      questionItems: v.optional(
+        v.array(
+          v.object({
+            id: v.string(),
+            prompt: v.string(),
+            answerType: fileTaskQuestionAnswerTypeV,
+            sortOrder: v.number(),
+            required: v.boolean(),
+          }),
+        ),
+      ),
+      questionAnswers: v.optional(
+        v.array(
+          v.object({
+            questionId: v.string(),
+            value: v.string(),
+          }),
+        ),
+      ),
+      clientTemplates: v.optional(
+        v.array(
+          v.object({
+            fileName: v.string(),
+            mimeType: v.string(),
+            size: v.number(),
+            url: v.string(),
+          }),
+        ),
+      ),
+    }),
+  ),
+  handler: async (
+    ctx,
+    { bundleToken, fileTaskId, accessProof, taskAccessProof },
+  ) => {
+    const trimmed = normalizePortalToken(bundleToken);
+    if (!trimmed) return null;
+    const auth = await loadBundleByPlain(ctx, trimmed, undefined, accessProof);
+    if (!auth.ok) return null;
+    if (!(await assertBundleTaskInScope(ctx, auth.row, fileTaskId))) {
+      return null;
+    }
+    const task = await ctx.db.get(fileTaskId);
+    if (!task || task.isArchived || !task.isPortalVisible) return null;
+    const passwordGate = await assertFileTaskPasswordAllowed(ctx, {
+      task,
+      tokenHash: auth.row.tokenHash,
+      taskAccessProof,
+    });
+    if (!passwordGate.ok) return null;
+
+    const clientTemplates: Array<{
+      fileName: string;
+      mimeType: string;
+      size: number;
+      url: string;
+    }> = [];
+    for (const att of task.clientTemplateAttachments ?? []) {
+      const url = await ctx.storage.getUrl(att.storageId);
+      if (!url) continue;
+      clientTemplates.push({
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        size: att.size,
+        url,
+      });
+    }
+
+    const questionItems =
+      task.taskType === "questions"
+        ? (task.questionItems ?? []).map((q) => ({
+            id: q.id,
+            prompt: q.prompt,
+            answerType: q.answerType,
+            sortOrder: q.sortOrder,
+            required: q.required !== false,
+          }))
+        : undefined;
+    const questionAnswers =
+      task.taskType === "questions"
+        ? (task.questionAnswers ?? []).map((a) => ({
+            questionId: a.questionId,
+            value: a.value,
+          }))
+        : undefined;
+
+    return {
+      clientInstructionText: task.clientInstructionText?.trim() || undefined,
+      instructionUrl: safeInstructionUrlHref(task.instructionUrl),
+      rejectionNote: task.rejectionNote?.trim() || undefined,
+      questionItems,
+      questionAnswers,
+      clientTemplates:
+        clientTemplates.length > 0 ? clientTemplates : undefined,
     };
   },
 });

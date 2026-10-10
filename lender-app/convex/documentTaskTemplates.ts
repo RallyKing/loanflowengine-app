@@ -28,6 +28,7 @@ import {
 import { syncVaultFileTaskDueAlert } from "./alertSchedule";
 import { requireAuthenticatedCaller } from "./callerAuth";
 import { sanitizeQuestionItems } from "../lib/fileTaskQuestions";
+import { safeInstructionUrlHref } from "../lib/documentVaultTaskTypes";
 import { partitionDocumentTaskTemplates } from "../lib/library/partitionDocumentTaskTemplates";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
@@ -63,6 +64,9 @@ function validateTemplateTaskConfig(args: {
     const url = args.instructionUrl?.trim() ?? "";
     if (!text && !url) {
       throw new Error("Add instruction text or a website link.");
+    }
+    if (url && !safeInstructionUrlHref(url)) {
+      throw new Error("Enter a valid http(s) website link.");
     }
   }
   if (taskType === "block_assignment") {
@@ -590,7 +594,7 @@ export const createTemplate = mutation({
           : undefined,
       instructionUrl:
         taskType === "client_instruction"
-          ? args.instructionUrl?.trim().slice(0, 2000) || undefined
+          ? safeInstructionUrlHref(args.instructionUrl)
           : undefined,
       questionItems:
         questionItems && questionItems.length > 0 ? questionItems : undefined,
@@ -645,8 +649,8 @@ export const updateTemplate = mutation({
         : tpl.clientInstructionText;
     const nextInstructionUrl =
       args.instructionUrl !== undefined
-        ? args.instructionUrl.trim().slice(0, 2000) || undefined
-        : tpl.instructionUrl;
+        ? safeInstructionUrlHref(args.instructionUrl)
+        : safeInstructionUrlHref(tpl.instructionUrl);
     const nextBlockEntries =
       args.assignedBlockEntries !== undefined
         ? persistAssignedBlocksPatch(args.assignedBlockEntries).assignedBlockEntries

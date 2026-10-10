@@ -38,8 +38,10 @@ export function portalPublicTaskRow(
   const passwordProtected = Boolean(
     task.accessPasswordHash?.trim() && task.accessPasswordSalt?.trim(),
   );
+  // Password-gated tasks: omit sensitive content from the public bundle DTO.
+  // Unlocked clients fetch via getUnlockedTaskClientContent (+ proofs).
   const questionItems =
-    task.taskType === "questions"
+    task.taskType === "questions" && !passwordProtected
       ? (task.questionItems ?? []).map((q) => ({
           id: q.id,
           prompt: q.prompt,
@@ -48,8 +50,6 @@ export function portalPublicTaskRow(
           required: q.required !== false,
         }))
       : undefined;
-  // Do not leak saved answers until the per-task password gate is unlocked
-  // (client hydrates answers only when passwordProtected is false).
   const questionAnswers =
     task.taskType === "questions" && !passwordProtected
       ? (task.questionAnswers ?? []).map((a) => ({
@@ -57,16 +57,29 @@ export function portalPublicTaskRow(
           value: a.value,
         }))
       : undefined;
+  const instructionText =
+    !passwordProtected
+      ? task.clientInstructionText?.trim() || undefined
+      : undefined;
+  const instructionUrl =
+    !passwordProtected ? task.instructionUrl?.trim() || undefined : undefined;
+  const templates =
+    !passwordProtected && clientTemplates.length > 0
+      ? clientTemplates
+      : undefined;
+  const rejectionNote = !passwordProtected
+    ? task.rejectionNote?.trim() || undefined
+    : undefined;
   return {
     fileTaskId: task._id,
     title: task.title,
     isRequired: task.isRequired,
     status: task.status,
     taskType: task.taskType ?? "document_upload",
-    clientInstructionText: task.clientInstructionText?.trim() || undefined,
-    instructionUrl: task.instructionUrl?.trim() || undefined,
-    rejectionNote: task.rejectionNote?.trim() || undefined,
-    clientTemplates: clientTemplates.length > 0 ? clientTemplates : undefined,
+    clientInstructionText: instructionText,
+    instructionUrl,
+    rejectionNote,
+    clientTemplates: templates,
     questionItems,
     questionAnswers,
     assignedBlockEntries,

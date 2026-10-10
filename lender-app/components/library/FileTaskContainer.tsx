@@ -23,6 +23,7 @@ import {
   Circle,
   Clock,
   Copy,
+  ExternalLink,
   Eye,
   EyeOff,
   FolderPlus,
@@ -62,6 +63,7 @@ import { FileTaskRowMetaBadges } from "@/components/library/FileTaskExecutionMod
 import {
   FILE_TASK_TYPE_LABELS,
   resolveTaskType,
+  safeInstructionUrlHref,
   type AssignedBlockEntry,
 } from "@/lib/documentVaultTaskTypes";
 
@@ -209,6 +211,13 @@ export function FileTaskContainer({
   const isBlockAssignment = taskType === "block_assignment";
   const isQuestionsTask = taskType === "questions";
   const canManageLifecycle = Boolean(memberUserKey);
+  /** Client-instruction website link (config "Website link") — vault-visible for staff. */
+  const instructionHref =
+    taskType === "client_instruction"
+      ? safeInstructionUrlHref(fileTask.instructionUrl)
+      : undefined;
+  const instructionUrlLabel =
+    fileTask.instructionUrl?.trim() || instructionHref || "";
 
   const cardSurfaceClass = isComplete
     ? "border-2 border-emerald-200/80 border-l-4 border-l-emerald-500 bg-emerald-50/50 dark:border-emerald-800/80 dark:border-l-emerald-500 dark:bg-emerald-950/20"
@@ -577,6 +586,23 @@ export function FileTaskContainer({
             ) : null}
           </div>
 
+          {instructionHref ? (
+            <div className="mt-0.5 min-w-0 pl-[calc(1rem+1.25rem)]">
+              <a
+                href={instructionHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-dlc-sm py-1 pr-1 text-[11px] font-medium text-amber-800 transition-colors duration-dlc-short ease-dlc-standard hover:text-amber-950 hover:underline dark:text-amber-300 dark:hover:text-amber-200"
+                title={instructionUrlLabel}
+                data-testid={`file-task-instruction-url-${fileTask._id}`}
+              >
+                <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="shrink-0">Direct Link</span>
+                <span className="min-w-0 truncate">{instructionUrlLabel}</span>
+              </a>
+            </div>
+          ) : null}
+
           {(canMutate || canManageLifecycle) ? (
             <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 pl-[calc(1rem+1.25rem)]">
               {canMutate ? (
@@ -600,6 +626,7 @@ export function FileTaskContainer({
                 tone="orange"
                 disabled={linkBusy}
                 onClick={() => void handleCopyLink()}
+                title="Copy secure client upload link"
               />
               <MicroAction
                 label={notifySent ? "Sent" : "Notify"}

@@ -23,6 +23,7 @@ import {
   sanitizeQuestionItems,
   type FileTaskQuestionItem,
 } from "../lib/fileTaskQuestions";
+import { safeInstructionUrlHref } from "../lib/documentVaultTaskTypes";
 import {
   clientPortalBlockLabel,
   isClientPortalAssignableBlock,
@@ -87,6 +88,9 @@ function validateTaskConfig(args: {
     const url = args.instructionUrl?.trim() ?? "";
     if (!text && !url) {
       throw new Error("Add instruction text or a website link.");
+    }
+    if (url && !safeInstructionUrlHref(url)) {
+      throw new Error("Enter a valid http(s) website link.");
     }
   }
   if (taskType === "block_assignment") {
@@ -379,7 +383,7 @@ export const createWithConfig = mutation({
         : undefined;
     const instructionUrl =
       taskType === "client_instruction"
-        ? args.instructionUrl?.trim().slice(0, 2000) || undefined
+        ? safeInstructionUrlHref(args.instructionUrl)
         : undefined;
 
     let clientTemplateAttachments: ClientTemplateAttachment[] | undefined;
@@ -468,8 +472,8 @@ export const updateTaskConfig = mutation({
         : task.clientInstructionText;
     const instructionUrl =
       args.instructionUrl !== undefined
-        ? args.instructionUrl.trim().slice(0, 2000) || undefined
-        : task.instructionUrl;
+        ? safeInstructionUrlHref(args.instructionUrl)
+        : safeInstructionUrlHref(task.instructionUrl);
 
     const questionItems =
       taskType === "questions"
