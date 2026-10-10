@@ -12,10 +12,17 @@ import { purgeLibraryDocumentIfOrphaned } from "./libraryDocumentsCleanup";
 import {
   assignedBlockEntryV,
   fileTaskPriorityV,
+  fileTaskQuestionAnswerV,
+  fileTaskQuestionItemV,
   fileTaskTypeV,
   normalizeAssignedBlockEntriesFromDoc,
   persistAssignedBlocksPatch,
 } from "./documentVaultTaskTypes";
+import {
+  mergeQuestionAnswers,
+  sanitizeQuestionItems,
+  type FileTaskQuestionItem,
+} from "../lib/fileTaskQuestions";
 import {
   clientPortalBlockLabel,
   isClientPortalAssignableBlock,
@@ -72,6 +79,7 @@ function validateTaskConfig(args: {
   clientInstructionText?: string;
   instructionUrl?: string;
   assignedBlockEntries?: { blockId: string; sortOrder: number }[];
+  questionItems?: FileTaskQuestionItem[];
 }): void {
   const taskType = args.taskType ?? "document_upload";
   if (taskType === "client_instruction") {
@@ -90,6 +98,22 @@ function validateTaskConfig(args: {
       throw new Error("Select at least one pipeline block.");
     }
   }
+  if (taskType === "questions") {
+    const items = sanitizeQuestionItems(args.questionItems);
+    if (items.length === 0) {
+      throw new Error("Add at least one question.");
+    }
+  }
+}
+
+/** Keep answers for surviving question ids; drop orphans. Never wipe values. */
+function retainAnswersForQuestions(
+  items: FileTaskQuestionItem[],
+  existing: Doc<"documentVaultFileTasks">["questionAnswers"],
+): Doc<"documentVaultFileTasks">["questionAnswers"] {
+  const allowed = new Set(items.map((q) => q.id));
+  const kept = (existing ?? []).filter((a) => allowed.has(a.questionId));
+  return kept.length > 0 ? kept : undefined;
 }
 
 function portalVisibleForTaskType(
@@ -320,6 +344,7 @@ export const createWithConfig = mutation({
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
     assignedBlockEntries: v.optional(v.array(assignedBlockEntryV)),
+    questionItems: v.optional(v.array(fileTaskQuestionItemV)),
     clientTemplateAttachments: v.optional(v.array(clientTemplateAttachmentV)),
     isRequired: v.optional(v.boolean()),
     isPortalVisible: v.optional(v.boolean()),
@@ -333,11 +358,16 @@ export const createWithConfig = mutation({
 
     const taskType = args.taskType;
     const blockPatch = persistAssignedBlocksPatch(args.assignedBlockEntries ?? []);
+    const questionItems =
+      taskType === "questions"
+        ? sanitizeQuestionItems(args.questionItems)
+        : undefined;
     validateTaskConfig({
       taskType,
       clientInstructionText: args.clientInstructionText,
       instructionUrl: args.instructionUrl,
       assignedBlockEntries: blockPatch.assignedBlockEntries,
+      questionItems,
     });
 
     const key = args.memberUserKey?.trim() || "__system__";
@@ -372,6 +402,10 @@ export const createWithConfig = mutation({
       taskType,
       clientInstructionText: instruction,
       instructionUrl,
+      questionItems:
+        taskType === "questions" && questionItems && questionItems.length > 0
+          ? questionItems
+          : undefined,
       clientTemplateAttachments,
       ...blockPatch,
       isRequired: args.isRequired ?? true,
@@ -404,6 +438,7 @@ export const updateTaskConfig = mutation({
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
     assignedBlockEntries: v.optional(v.array(assignedBlockEntryV)),
+    questionItems: v.optional(v.array(fileTaskQuestionItemV)),
     clientTemplateAttachments: v.optional(v.array(clientTemplateAttachmentV)),
     title: v.optional(v.string()),
     description: v.optional(v.string()),
@@ -436,11 +471,21 @@ export const updateTaskConfig = mutation({
         ? args.instructionUrl.trim().slice(0, 2000) || undefined
         : task.instructionUrl;
 
+    const questionItems =
+      taskType === "questions"
+        ? sanitizeQuestionItems(
+            args.questionItems !== undefined
+              ? args.questionItems
+              : task.questionItems,
+          )
+        : [];
+
     validateTaskConfig({
       taskType,
       clientInstructionText: instruction,
       instructionUrl,
       assignedBlockEntries: blockPatch.assignedBlockEntries,
+      questionItems: taskType === "questions" ? questionItems : undefined,
     });
 
     const patch: Partial<Doc<"documentVaultFileTasks">> = {
@@ -459,6 +504,22 @@ export const updateTaskConfig = mutation({
     } else {
       patch.clientInstructionText = undefined;
       patch.instructionUrl = undefined;
+    }
+    if (taskType === "questions") {
+      patch.questionItems = questionItems;
+      // Preserve answers for kept question ids; never wipe on re-save.
+      patch.questionAnswers = retainAnswersForQuestions(
+        questionItems,
+        task.questionAnswers,
+      );
+    } else if (
+      args.taskType !== undefined &&
+      args.taskType !== "questions" &&
+      args.questionItems !== undefined
+    ) {
+      // Explicit non-questions type with empty items clears definitions only;
+      // answers stay until pruned by a questions save (no wipe on type flip).
+      patch.questionItems = undefined;
     }
     if (args.dueDate !== undefined) {
       patch.dueDate = args.dueDate === null ? undefined : args.dueDate;
@@ -526,6 +587,69 @@ export const updateTaskConfig = mutation({
     }
 
     return { ok: true as const, fileTaskId: args.fileTaskId };
+  },
+});
+
+/**
+ * Broker/team edits of Question(s) answers — merge by questionId, skip no-ops.
+ */
+export const upsertQuestionAnswers = mutation({
+  args: {
+    fileTaskId: v.id("documentVaultFileTasks"),
+    answers: v.array(
+      v.object({
+        questionId: v.string(),
+        value: v.string(),
+      }),
+    ),
+    ...memberKeyArg,
+  },
+  returns: v.object({
+    ok: v.literal(true),
+    changed: v.boolean(),
+    answers: v.optional(v.array(fileTaskQuestionAnswerV)),
+  }),
+  handler: async (ctx, args) => {
+    const task = await loadTaskOrThrow(ctx, args.fileTaskId);
+    const pipeline = await loadPipelineOrThrow(ctx, task.pipelineFileId);
+    await assertCanMutatePipelineRow(ctx, pipeline, args.memberUserKey);
+
+    const taskType = task.taskType ?? "document_upload";
+    if (taskType !== "questions") {
+      throw new Error("This task is not a Question(s) task.");
+    }
+    const questionItems = sanitizeQuestionItems(task.questionItems);
+    if (questionItems.length === 0) {
+      throw new Error("No questions configured on this task.");
+    }
+
+    const now = Date.now();
+    const { answers, changed } = mergeQuestionAnswers({
+      questionItems,
+      existing: task.questionAnswers,
+      patch: args.answers,
+      updatedBy: "broker",
+      now,
+    });
+
+    if (!changed) {
+      return {
+        ok: true as const,
+        changed: false,
+        answers: task.questionAnswers,
+      };
+    }
+
+    await ctx.db.patch(task._id, {
+      questionAnswers: answers.length > 0 ? answers : undefined,
+      updatedAt: now,
+    });
+
+    return {
+      ok: true as const,
+      changed: true,
+      answers: answers.length > 0 ? answers : undefined,
+    };
   },
 });
 

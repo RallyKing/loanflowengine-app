@@ -37,6 +37,11 @@ import { ensureExclusiveBlockAssignmentTask } from "./documentVaultFileTasks";
 import { embeddedDealPayloadIsSubstantive } from "../lib/file/embeddedDealPresence";
 import { clientLinkEmailItemFromFileTask } from "../lib/clientLinkEmailCopy";
 import {
+  mergeQuestionAnswers,
+  sanitizeQuestionItems,
+  validateClientQuestionSubmission,
+} from "../lib/fileTaskQuestions";
+import {
   portalBlockPrefillForTask,
   portalDealSheetDtoFromSources,
   portalPublicTaskRow,
@@ -801,7 +806,11 @@ async function authorizeBundleTaskUpload(
 function assertTaskAllowsUpload(
   taskType: ReturnType<typeof resolveTaskTypeFromDoc>,
 ): void {
-  if (taskType === "client_instruction" || taskType === "internal_task") {
+  if (
+    taskType === "client_instruction" ||
+    taskType === "internal_task" ||
+    taskType === "questions"
+  ) {
     throw new Error("This task does not accept file uploads.");
   }
 }
@@ -966,6 +975,131 @@ export const markClientInstructionComplete = mutation({
       updatedAt: now,
     });
     return { ok: true as const, status: "complete" as const };
+  },
+});
+
+const questionAnswerPatchV = v.object({
+  questionId: v.string(),
+  value: v.string(),
+});
+
+/**
+ * Draft persistence for Question(s) — merge by id, no status promotion.
+ */
+export const autosaveQuestionAnswersFromBundle = mutation({
+  args: {
+    bundleToken: v.string(),
+    fileTaskId: v.id("documentVaultFileTasks"),
+    answers: v.array(questionAnswerPatchV),
+    accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
+  },
+  returns: v.object({ ok: v.literal(true), changed: v.boolean() }),
+  handler: async (
+    ctx,
+    { bundleToken, fileTaskId, answers, accessProof, taskAccessProof },
+  ) => {
+    const { task, taskType } = await authorizeBundleTaskUpload(
+      ctx,
+      bundleToken,
+      fileTaskId,
+      accessProof,
+      taskAccessProof,
+    );
+    if (taskType !== "questions") {
+      throw new Error("This task is not a Question(s) task.");
+    }
+    if (task.status === "complete") {
+      throw new Error("This task is complete.");
+    }
+    const questionItems = sanitizeQuestionItems(task.questionItems);
+    const now = Date.now();
+    const merged = mergeQuestionAnswers({
+      questionItems,
+      existing: task.questionAnswers,
+      patch: answers,
+      updatedBy: "client",
+      now,
+    });
+    if (!merged.changed) {
+      return { ok: true as const, changed: false };
+    }
+    await ctx.db.patch(task._id, {
+      questionAnswers: merged.answers.length > 0 ? merged.answers : undefined,
+      updatedAt: now,
+    });
+    return { ok: true as const, changed: true };
+  },
+});
+
+/** Submit Question(s) answers → pending_review (required fields enforced). */
+export const submitQuestionAnswersFromBundle = mutation({
+  args: {
+    bundleToken: v.string(),
+    fileTaskId: v.id("documentVaultFileTasks"),
+    answers: v.array(questionAnswerPatchV),
+    accessProof: v.optional(v.string()),
+    taskAccessProof: v.optional(v.string()),
+  },
+  returns: v.object({
+    ok: v.literal(true),
+    status: v.literal("pending_review"),
+  }),
+  handler: async (
+    ctx,
+    { bundleToken, fileTaskId, answers, accessProof, taskAccessProof },
+  ) => {
+    const { task, taskType, pipeline } = await authorizeBundleTaskUpload(
+      ctx,
+      bundleToken,
+      fileTaskId,
+      accessProof,
+      taskAccessProof,
+    );
+    if (taskType !== "questions") {
+      throw new Error("This task is not a Question(s) task.");
+    }
+    if (task.status === "complete") {
+      throw new Error("This task is complete.");
+    }
+    const questionItems = sanitizeQuestionItems(task.questionItems);
+    if (questionItems.length === 0) {
+      throw new Error("No questions configured on this task.");
+    }
+    const validationError = validateClientQuestionSubmission({
+      items: questionItems,
+      answers,
+    });
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
+    const now = Date.now();
+    const merged = mergeQuestionAnswers({
+      questionItems,
+      existing: task.questionAnswers,
+      patch: answers,
+      updatedBy: "client",
+      now,
+    });
+
+    const wasIncomplete = task.status === "incomplete";
+    await ctx.db.patch(task._id, {
+      questionAnswers: merged.answers.length > 0 ? merged.answers : undefined,
+      status: "pending_review",
+      rejectionNote: undefined,
+      updatedAt: now,
+    });
+
+    if (wasIncomplete) {
+      await recordClientVaultUpload(ctx, {
+        pipeline,
+        task,
+        fileName: `Questions: ${task.title}`,
+      });
+    }
+
+    return { ok: true as const, status: "pending_review" as const };
   },
 });
 

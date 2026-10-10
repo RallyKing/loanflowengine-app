@@ -3,6 +3,7 @@
 import { Input } from "@/components/ui/Input";
 import { FileTaskAtomicBlockBuilder } from "@/components/library/FileTaskAtomicBlockBuilder";
 import { FileTaskClientTemplateAttach } from "@/components/library/FileTaskClientTemplateAttach";
+import { FileTaskQuestionsEditor } from "@/components/library/FileTaskQuestionsEditor";
 import { RelativeDueOffsetInput } from "@/components/library/RelativeDueOffsetInput";
 import { TaskTemplateFolderEditor } from "@/components/library/TaskTemplateFolderEditor";
 import {
@@ -15,6 +16,7 @@ import {
   type FileTaskPriority,
   type FileTaskType,
 } from "@/lib/documentVaultTaskTypes";
+import type { FileTaskQuestionItem } from "@/lib/fileTaskQuestions";
 import type { FileTaskClientTemplateAttachment } from "@/lib/fileTaskClientTemplates";
 import { taskTypeAllowsClientTemplates } from "@/lib/fileTaskClientTemplates";
 import type { FolderTemplateNode } from "@/lib/library/folderTemplateTypes";
@@ -30,6 +32,8 @@ export type FileTaskTypeConfiguratorProps = {
   onClientInstructionTextChange: (value: string) => void;
   assignedBlockEntries: AssignedBlockEntry[];
   onAssignedBlockEntriesChange: (entries: AssignedBlockEntry[]) => void;
+  questionItems?: FileTaskQuestionItem[];
+  onQuestionItemsChange?: (items: FileTaskQuestionItem[]) => void;
   folderTemplateNodes?: FolderTemplateNode[];
   onFolderTemplateNodesChange?: (nodes: FolderTemplateNode[]) => void;
   pipelineFileId?: Id<"pipeline">;
@@ -68,6 +72,8 @@ export function FileTaskTypeConfigurator({
   onClientInstructionTextChange,
   assignedBlockEntries,
   onAssignedBlockEntriesChange,
+  questionItems = [],
+  onQuestionItemsChange,
   folderTemplateNodes = [],
   onFolderTemplateNodesChange,
   pipelineFileId,
@@ -335,6 +341,19 @@ export function FileTaskTypeConfigurator({
               />
             </div>
           ) : null}
+
+          {taskType === "questions" && onQuestionItemsChange ? (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {FILE_TASK_TYPE_DESCRIPTIONS.questions}
+              </p>
+              <FileTaskQuestionsEditor
+                value={questionItems}
+                onChange={onQuestionItemsChange}
+                disabled={disabled}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -410,6 +429,14 @@ export function FileTaskTypeConfigurator({
           onChange={onAssignedBlockEntriesChange}
           pipelineFileId={pipelineFileId}
           memberUserKey={memberUserKey}
+          disabled={disabled}
+        />
+      ) : null}
+
+      {taskType === "questions" && onQuestionItemsChange ? (
+        <FileTaskQuestionsEditor
+          value={questionItems}
+          onChange={onQuestionItemsChange}
           disabled={disabled}
         />
       ) : null}

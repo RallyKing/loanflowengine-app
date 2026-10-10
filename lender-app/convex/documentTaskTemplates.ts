@@ -13,6 +13,7 @@ import { seedDocumentTaskTemplatesForOrg } from "./documentTaskTemplateSeed";
 import {
   assignedBlockEntryV,
   fileTaskPriorityV,
+  fileTaskQuestionItemV,
   fileTaskTypeV,
   persistAssignedBlocksPatch,
 } from "./documentVaultTaskTypes";
@@ -26,6 +27,7 @@ import {
 } from "./clientTemplateAttachments";
 import { syncVaultFileTaskDueAlert } from "./alertSchedule";
 import { requireAuthenticatedCaller } from "./callerAuth";
+import { sanitizeQuestionItems } from "../lib/fileTaskQuestions";
 
 const memberKeyArg = { memberUserKey: v.optional(v.string()) };
 
@@ -52,6 +54,7 @@ function validateTemplateTaskConfig(args: {
   clientInstructionText?: string;
   instructionUrl?: string;
   assignedBlockEntries?: { blockId: string; sortOrder: number }[];
+  questionItems?: Doc<"documentTaskTemplates">["questionItems"];
 }): void {
   const taskType = args.taskType ?? "document_upload";
   if (taskType === "client_instruction") {
@@ -65,6 +68,11 @@ function validateTemplateTaskConfig(args: {
     const count = args.assignedBlockEntries?.length ?? 0;
     if (count === 0) {
       throw new Error("Select at least one pipeline block.");
+    }
+  }
+  if (taskType === "questions") {
+    if (sanitizeQuestionItems(args.questionItems).length === 0) {
+      throw new Error("Add at least one question.");
     }
   }
 }
@@ -344,6 +352,10 @@ export const injectTemplates = mutation({
         taskTypeAllowsClientTemplateAttachments(taskType)
           ? copyClientTemplateAttachments(template.clientTemplateAttachments)
           : undefined;
+      const questionItems =
+        taskType === "questions"
+          ? sanitizeQuestionItems(template.questionItems)
+          : undefined;
       const id = await ctx.db.insert("documentVaultFileTasks", {
         pipelineFileId,
         title: template.title,
@@ -357,6 +369,8 @@ export const injectTemplates = mutation({
             : undefined,
         instructionUrl:
           taskType === "client_instruction" ? template.instructionUrl : undefined,
+        questionItems:
+          questionItems && questionItems.length > 0 ? questionItems : undefined,
         clientTemplateAttachments,
         isRequired: template.isRequired,
         isPortalVisible:
@@ -511,6 +525,7 @@ export const createTemplate = mutation({
     taskType: v.optional(fileTaskTypeV),
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
+    questionItems: v.optional(v.array(fileTaskQuestionItemV)),
     clientTemplateAttachments: v.optional(v.array(clientTemplateAttachmentV)),
     assignedBlockEntries: v.optional(v.array(assignedBlockEntryV)),
     assignedBlocks: v.optional(v.array(v.string())),
@@ -547,11 +562,16 @@ export const createTemplate = mutation({
             assignedBlockEntries: undefined,
             assignedBlocks: undefined,
           };
+    const questionItems =
+      taskType === "questions"
+        ? sanitizeQuestionItems(args.questionItems)
+        : undefined;
     validateTemplateTaskConfig({
       taskType,
       clientInstructionText: args.clientInstructionText,
       instructionUrl: args.instructionUrl,
       assignedBlockEntries: blockPatch.assignedBlockEntries,
+      questionItems,
     });
     const folderRows =
       taskType === "document_upload"
@@ -581,6 +601,8 @@ export const createTemplate = mutation({
         taskType === "client_instruction"
           ? args.instructionUrl?.trim().slice(0, 2000) || undefined
           : undefined,
+      questionItems:
+        questionItems && questionItems.length > 0 ? questionItems : undefined,
       clientTemplateAttachments,
       isRequired: args.isRequired,
       isPortalVisible:
@@ -612,6 +634,7 @@ export const updateTemplate = mutation({
     taskType: v.optional(fileTaskTypeV),
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
+    questionItems: v.optional(v.array(fileTaskQuestionItemV)),
     clientTemplateAttachments: v.optional(v.array(clientTemplateAttachmentV)),
     assignedBlockEntries: v.optional(v.array(assignedBlockEntryV)),
     assignedBlocks: v.optional(v.array(v.string())),
@@ -644,6 +667,14 @@ export const updateTemplate = mutation({
               })),
             ).assignedBlockEntries
           : tpl.assignedBlockEntries;
+    const nextQuestionItems =
+      taskType === "questions"
+        ? sanitizeQuestionItems(
+            args.questionItems !== undefined
+              ? args.questionItems
+              : tpl.questionItems,
+          )
+        : undefined;
 
     validateTemplateTaskConfig({
       taskType,
@@ -651,6 +682,7 @@ export const updateTemplate = mutation({
       instructionUrl: nextInstructionUrl,
       assignedBlockEntries:
         taskType === "block_assignment" ? nextBlockEntries : undefined,
+      questionItems: nextQuestionItems,
     });
 
     const patch: Partial<Doc<"documentTaskTemplates">> = {
@@ -678,6 +710,14 @@ export const updateTemplate = mutation({
     } else if (args.taskType !== undefined) {
       patch.clientInstructionText = undefined;
       patch.instructionUrl = undefined;
+    }
+    if (taskType === "questions") {
+      patch.questionItems =
+        nextQuestionItems && nextQuestionItems.length > 0
+          ? nextQuestionItems
+          : undefined;
+    } else if (args.taskType !== undefined) {
+      patch.questionItems = undefined;
     }
     if (args.dueDate !== undefined) {
       patch.dueDate = args.dueDate === null ? undefined : args.dueDate;

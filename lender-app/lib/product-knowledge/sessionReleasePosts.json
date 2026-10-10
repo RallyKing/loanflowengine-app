@@ -365,5 +365,16 @@
       "Each action writes one slim audit row (summary + short detail). Routine edits and keystrokes are not logged. Only the primary platform admin can read the log."
     ],
     "changeType": "improved"
+  },
+  {
+    "slug": "2026-10-10-file-task-questions",
+    "title": "Question(s) file tasks for borrower Q&A",
+    "summary": "Create file tasks that ask borrowers structured questions (phone, email, text, dollar amount). Answers save in Convex, show in the client portal, and export to a Q&A PDF after submit.",
+    "body": [
+      "In Create file task, choose Question(s) and add one or more prompts with an answer type. Tasks appear in the client portal as a clear Q&A form with draft autosave and Submit.",
+      "Brokers can expand the task to edit answers without wiping other fields. After answers exist, use the PDF control for a question-and-answer style download—same idea as other vault PDF actions.",
+      "Templates can carry Question(s) definitions onto live files. Storage merges by question id so re-saves are retry-safe."
+    ],
+    "changeType": "added"
   }
 ]

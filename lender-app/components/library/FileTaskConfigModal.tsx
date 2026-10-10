@@ -5,6 +5,7 @@ import { OverlayShell } from "@/components/ui/OverlayShell";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { FileTaskAtomicBlockBuilder } from "@/components/library/FileTaskAtomicBlockBuilder";
+import { FileTaskQuestionsEditor } from "@/components/library/FileTaskQuestionsEditor";
 import {
   defaultPortalVisibleForTaskType,
   FILE_TASK_PRIORITIES,
@@ -17,6 +18,10 @@ import {
   type FileTaskPriority,
   type FileTaskType,
 } from "@/lib/documentVaultTaskTypes";
+import {
+  emptyFileTaskQuestion,
+  type FileTaskQuestionItem,
+} from "@/lib/fileTaskQuestions";
 import { cn } from "@/lib/cn";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 import type { DocumentVaultFileTaskRow } from "@/components/library/FileTaskContainer";
@@ -34,6 +39,7 @@ export type FileTaskConfigPayload = {
   clientInstructionText?: string;
   instructionUrl?: string;
   assignedBlockEntries?: AssignedBlockEntry[];
+  questionItems?: FileTaskQuestionItem[];
   clientTemplateAttachments?: FileTaskClientTemplateAttachment[];
   isRequired: boolean;
   isPortalVisible: boolean;
@@ -85,6 +91,10 @@ function buildInitialState(task?: DocumentVaultFileTaskRow) {
             sortOrder: (index + 1) * 1000,
           }))
       : ([] as AssignedBlockEntry[]),
+    questions:
+      task?.questionItems && task.questionItems.length > 0
+        ? [...task.questionItems].sort((a, b) => a.sortOrder - b.sortOrder)
+        : ([emptyFileTaskQuestion(1000)] as FileTaskQuestionItem[]),
     templates: (task?.clientTemplateAttachments ?? []).map((a) => ({
       storageId: String(a.storageId),
       fileName: a.fileName,
@@ -116,6 +126,9 @@ export function FileTaskConfigModal({
   const [instruction, setInstruction] = useState("");
   const [instructionUrl, setInstructionUrl] = useState("");
   const [blocks, setBlocks] = useState<AssignedBlockEntry[]>([]);
+  const [questions, setQuestions] = useState<FileTaskQuestionItem[]>([
+    emptyFileTaskQuestion(1000),
+  ]);
   const [templates, setTemplates] = useState<FileTaskClientTemplateAttachment[]>(
     [],
   );
@@ -134,6 +147,7 @@ export function FileTaskConfigModal({
     setInstruction(initial.instruction);
     setInstructionUrl(initial.instructionUrl);
     setBlocks(initial.blocks);
+    setQuestions(initial.questions);
     setTemplates(initial.templates);
     setIsRequired(initial.isRequired);
     setIsPortalVisible(initial.isPortalVisible);
@@ -392,6 +406,18 @@ export function FileTaskConfigModal({
               />
             </div>
           ) : null}
+          {taskType === "questions" ? (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {FILE_TASK_TYPE_DESCRIPTIONS.questions}
+              </p>
+              <FileTaskQuestionsEditor
+                value={questions}
+                onChange={setQuestions}
+                disabled={busy}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -411,6 +437,7 @@ export function FileTaskConfigModal({
                 clientInstructionText: instruction,
                 instructionUrl,
                 assignedBlockEntries: blocks,
+                questionItems: questions,
               });
               if (err) {
                 showOperationalToast({
@@ -434,6 +461,8 @@ export function FileTaskConfigModal({
                       : undefined,
                   assignedBlockEntries:
                     taskType === "block_assignment" ? blocks : undefined,
+                  questionItems:
+                    taskType === "questions" ? questions : undefined,
                   clientTemplateAttachments: taskTypeAllowsClientTemplates(
                     taskType,
                   )

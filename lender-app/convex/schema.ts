@@ -3234,12 +3234,47 @@ export default defineSchema({
         v.literal("client_instruction"),
         v.literal("internal_task"),
         v.literal("block_assignment"),
+        v.literal("questions"),
       ),
     ),
     /** Rich text / markdown instruction for client_instruction tasks. */
     clientInstructionText: v.optional(v.string()),
     /** External URL for client_instruction tasks (payment portal, etc.). */
     instructionUrl: v.optional(v.string()),
+    /**
+     * Question(s) task — ordered prompts the borrower answers in the portal.
+     * Bounded (see MAX_FILE_TASK_QUESTIONS); answers merge by question id.
+     */
+    questionItems: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          prompt: v.string(),
+          answerType: v.union(
+            v.literal("phone"),
+            v.literal("email"),
+            v.literal("single_line"),
+            v.literal("large_text"),
+            v.literal("dollar_amount"),
+          ),
+          sortOrder: v.number(),
+          required: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    /** Durable Q&A values keyed by questionItems[].id — never wipe on re-save. */
+    questionAnswers: v.optional(
+      v.array(
+        v.object({
+          questionId: v.string(),
+          value: v.string(),
+          updatedAt: v.number(),
+          updatedBy: v.optional(
+            v.union(v.literal("client"), v.literal("broker")),
+          ),
+        }),
+      ),
+    ),
     /**
      * Broker-attached template / reference files for client-visible requests
      * (document_upload / client_instruction). Stored in Convex `_storage`.
@@ -3330,10 +3365,29 @@ export default defineSchema({
         v.literal("client_instruction"),
         v.literal("internal_task"),
         v.literal("block_assignment"),
+        v.literal("questions"),
       ),
     ),
     clientInstructionText: v.optional(v.string()),
     instructionUrl: v.optional(v.string()),
+    /** Question(s) template prompts — copied onto live tasks on apply. */
+    questionItems: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          prompt: v.string(),
+          answerType: v.union(
+            v.literal("phone"),
+            v.literal("email"),
+            v.literal("single_line"),
+            v.literal("large_text"),
+            v.literal("dollar_amount"),
+          ),
+          sortOrder: v.number(),
+          required: v.optional(v.boolean()),
+        }),
+      ),
+    ),
     /**
      * Broker-attached template / reference files for client-visible request
      * templates (document_upload / client_instruction). Carried onto live
