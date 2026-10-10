@@ -294,6 +294,10 @@ function LibraryDocumentsWorkspaceBody({
   }, [proof, memberUserKey]);
 
   const rows = useQuery(api.libraryDocuments.listForProof, listArgs);
+  const logDocumentAccess = useMutation(api.libraryDocuments.logDocumentAccess);
+  const recordSelfUsageEvent = useMutation(
+    api.auth.platformAccountAudit.recordSelfUsageEvent,
+  );
   const generateUploadUrl = useMutation(api.libraryDocuments.generateUploadUrl);
   const resolveEditorImageUrl = useMutation(
     api.libraryDocuments.resolveEditorImageUrl,
@@ -1465,6 +1469,15 @@ function LibraryDocumentsWorkspaceBody({
             });
           }
         });
+        void recordSelfUsageEvent({
+          memberUserKey,
+          eventType: "document_download",
+          summary: "Vault ZIP download",
+          detail:
+            rows.length === 1
+              ? rows[0]!.title.slice(0, 80)
+              : `${rows.length} files`,
+        }).catch(() => {});
         showOperationalToast({
           title: "Download started",
           description:
@@ -1485,7 +1498,7 @@ function LibraryDocumentsWorkspaceBody({
         setBulkBusy(false);
       }
     },
-    [memberUserKey, resolveVaultDownloadItems],
+    [memberUserKey, recordSelfUsageEvent, resolveVaultDownloadItems],
   );
 
   const handleBulkDownload = useCallback(async () => {
@@ -1594,6 +1607,12 @@ function LibraryDocumentsWorkspaceBody({
             });
           }
         });
+        void recordSelfUsageEvent({
+          memberUserKey,
+          eventType: "document_download",
+          summary: "Vault folder ZIP download",
+          detail: `${folderName.slice(0, 60)} (${rows.length} files)`,
+        }).catch(() => {});
         showOperationalToast({
           title: "Download started",
           description: `${folderName} (${rows.length} file${rows.length === 1 ? "" : "s"})`,
@@ -1612,7 +1631,13 @@ function LibraryDocumentsWorkspaceBody({
         setBulkBusy(false);
       }
     },
-    [buildVaultDownloadItem, bulkSelectableRows, memberUserKey, vaultFolders],
+    [
+      buildVaultDownloadItem,
+      bulkSelectableRows,
+      memberUserKey,
+      recordSelfUsageEvent,
+      vaultFolders,
+    ],
   );
 
   const handleDownloadOriginal = useCallback(
@@ -1636,6 +1661,12 @@ function LibraryDocumentsWorkspaceBody({
           urlResult.url,
           vaultDocumentOutboundFileName(doc),
         );
+        void logDocumentAccess({
+          documentId: doc._id,
+          ...(vaultPipelineFileId ? { pipelineFileId: vaultPipelineFileId } : {}),
+          action: "download",
+          memberUserKey,
+        }).catch(() => {});
         showOperationalToast({
           title: "Download started",
           description: doc.title,
@@ -1653,7 +1684,7 @@ function LibraryDocumentsWorkspaceBody({
         setDownloadingDocId(null);
       }
     },
-    [convex, memberUserKey],
+    [convex, logDocumentAccess, memberUserKey, vaultPipelineFileId],
   );
 
   const handleDownloadAsPdf = useCallback(
@@ -1679,6 +1710,12 @@ function LibraryDocumentsWorkspaceBody({
           contentType: doc.latestContentType,
           fileName: vaultDocumentOutboundFileName(doc),
         });
+        void logDocumentAccess({
+          documentId: doc._id,
+          ...(vaultPipelineFileId ? { pipelineFileId: vaultPipelineFileId } : {}),
+          action: "download",
+          memberUserKey,
+        }).catch(() => {});
         showOperationalToast({
           title: "PDF download started",
           description: doc.title,
@@ -1690,7 +1727,7 @@ function LibraryDocumentsWorkspaceBody({
         setExportingPdfDocId(null);
       }
     },
-    [convex, memberUserKey],
+    [convex, logDocumentAccess, memberUserKey, vaultPipelineFileId],
   );
 
   const handleDownloadDocument = useCallback(

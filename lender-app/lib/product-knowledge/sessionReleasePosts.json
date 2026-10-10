@@ -355,5 +355,15 @@
       "Password override hashes on the server (auth-bridge protected), writes an audit event without the secret, and signs the user out of all sessions so they must log in again."
     ],
     "changeType": "added"
+  },
+  {
+    "slug": "2026-10-10-platform-usage-audit-hooks",
+    "title": "Users & access log book now includes downloads, imports, and exports",
+    "summary": "The owner activity timeline also records vault downloads, lender CSV imports, new pipeline files, and lender/pipeline data exports — still owner-only, no secrets.",
+    "body": [
+      "Expand a user under Settings → Users & access to see downloads (single file or ZIP), lender catalog imports, pipeline file creates, and CSV/TSV/JSON exports alongside login and access events.",
+      "Each action writes one slim audit row (summary + short detail). Routine edits and keystrokes are not logged. Only the primary platform admin can read the log."
+    ],
+    "changeType": "improved"
   }
 ]

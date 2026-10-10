@@ -538,6 +538,9 @@ export function PipelinePageClient() {
   const patchPipelineMut = useMutation(api.pipeline.patch);
   const patchDealMut = useMutation(api.pipeline.patchDeal);
   const setClientMomentumMut = useMutation(api.pipeline.setClientMomentum);
+  const recordSelfUsageEvent = useMutation(
+    api.auth.platformAccountAudit.recordSelfUsageEvent,
+  );
 
   useEffect(() => {
     if (canUseHub) {
@@ -1528,7 +1531,15 @@ export function PipelinePageClient() {
       "text/csv;charset=utf-8",
       { utf8Bom: true }
     );
-  }, [filtered, pipelineExportTags]);
+    if (memberUserKey) {
+      void recordSelfUsageEvent({
+        memberUserKey,
+        eventType: "data_export",
+        summary: "Pipeline CSV export",
+        detail: `${filtered.length} rows`,
+      }).catch(() => {});
+    }
+  }, [filtered, memberUserKey, pipelineExportTags, recordSelfUsageEvent]);
 
   const exportPipelineTsv = useCallback(() => {
     downloadTextFile(
@@ -1537,7 +1548,15 @@ export function PipelinePageClient() {
       "text/tab-separated-values;charset=utf-8",
       { utf8Bom: false }
     );
-  }, [filtered, pipelineExportTags]);
+    if (memberUserKey) {
+      void recordSelfUsageEvent({
+        memberUserKey,
+        eventType: "data_export",
+        summary: "Pipeline TSV export",
+        detail: `${filtered.length} rows`,
+      }).catch(() => {});
+    }
+  }, [filtered, memberUserKey, pipelineExportTags, recordSelfUsageEvent]);
 
   const exportPipelineJson = useCallback(() => {
     downloadTextFile(
@@ -1546,7 +1565,15 @@ export function PipelinePageClient() {
       "application/json;charset=utf-8",
       { utf8Bom: false }
     );
-  }, [filtered, pipelineExportTags]);
+    if (memberUserKey) {
+      void recordSelfUsageEvent({
+        memberUserKey,
+        eventType: "data_export",
+        summary: "Pipeline JSON export",
+        detail: `${filtered.length} rows`,
+      }).catch(() => {});
+    }
+  }, [filtered, memberUserKey, pipelineExportTags, recordSelfUsageEvent]);
 
   const copyPipelineTsv = useCallback(async () => {
     try {

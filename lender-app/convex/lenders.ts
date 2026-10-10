@@ -20,6 +20,7 @@ import {
   listIncompleteCore,
 } from "./lenderWriteStats";
 import { appendLenderFeed } from "./activityFeed";
+import { recordPlatformAccountAuditForUserKey } from "./auth/platformAccountAudit";
 import {
   normalizePhone,
   normalizeEmail,
@@ -1482,8 +1483,13 @@ export const bulkUpsert = mutation({
     organizationId: v.id("organizations"),
     memberUserKey: v.string(),
     records: v.array(v.object(lenderInput)),
+    /**
+     * When false, skip platform audit (CSV uploader emits one summary event
+     * after all chunks). Default true for any other caller.
+     */
+    emitPlatformAudit: v.optional(v.boolean()),
   },
-  handler: async (ctx, { organizationId, memberUserKey, records }) => {
+  handler: async (ctx, { organizationId, memberUserKey, records, emitPlatformAudit }) => {
     await assertLenderMutationAuth(ctx, organizationId, memberUserKey, "lenders.manage");
     let inserted = 0;
     let updated = 0;
@@ -1526,6 +1532,15 @@ export const bulkUpsert = mutation({
         if (after) await applyLenderWrite(ctx, null, after);
         inserted += 1;
       }
+    }
+    if (records.length > 0 && emitPlatformAudit !== false) {
+      await recordPlatformAccountAuditForUserKey(ctx, {
+        userKey: memberUserKey,
+        actorUserKey: memberUserKey,
+        eventType: "lender_import",
+        summary: "Lender catalog import",
+        detail: `${inserted} inserted, ${updated} updated (${records.length} rows)`,
+      });
     }
     return { inserted, updated, total: records.length };
   },
