@@ -50,6 +50,7 @@
     "test:ai-due-diligence": "tsx scripts/ai-due-diligence-tests.ts",
     "test:document-creator": "tsx scripts/document-vault-creator-tests.ts",
     "test:document-assignment": "tsx scripts/document-assignment-tests.ts",
+    "test:document-task-templates": "tsx scripts/document-task-template-partition-tests.ts",
     "test:vault-explorer-filter": "tsx scripts/vault-explorer-filter-tests.ts",
     "test:regression:unit": "tsx scripts/regression-protection-tests.ts",
     "verify:regression": "npm run audit:no-clerk && tsx scripts/regression-protection-tests.ts",

@@ -39,6 +39,7 @@ import {
   emptyFileTaskQuestion,
   type FileTaskQuestionItem,
 } from "@/lib/fileTaskQuestions";
+import { templateStackLabel } from "@/lib/library/partitionDocumentTaskTemplates";
 
 export type TaskTemplateManagerProps = {
   open: boolean;
@@ -258,12 +259,10 @@ export function TaskTemplateManager({
     const inStack = new Set(
       (activeStack?.templates ?? []).map((t) => String(t._id)),
     );
-    return [
-      ...library.individualTemplates,
-      ...library.stacks.flatMap((s) =>
-        String(s._id) !== String(stackSelection.stackId) ? s.templates : [],
-      ),
-    ].filter((t) => !inStack.has(String(t._id)));
+    // individualTemplates is the full org library (includes other stacks).
+    return library.individualTemplates.filter(
+      (t) => !inStack.has(String(t._id)),
+    );
   }, [library, activeStack, stackSelection]);
 
   useEffect(() => {
@@ -592,13 +591,17 @@ export function TaskTemplateManager({
               <ul className="space-y-0.5">
                 {library.individualTemplates.length === 0 ? (
                   <li className="px-2 py-3 text-xs text-muted-foreground">
-                    No individual tasks yet.
+                    No task templates yet. Create one here or inside a stack.
                   </li>
                 ) : (
                   library.individualTemplates.map((tpl) => {
                     const selected =
                       templateSelection?.mode === "edit" &&
                       String(templateSelection.templateId) === String(tpl._id);
+                    const stackLabel = templateStackLabel(
+                      tpl.stackId ? String(tpl.stackId) : undefined,
+                      library.stacks,
+                    );
                     return (
                       <li key={tpl._id}>
                         <button
@@ -614,6 +617,15 @@ export function TaskTemplateManager({
                           <span className="block truncate text-sm font-medium">
                             {tpl.title}
                           </span>
+                          {stackLabel ? (
+                            <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                              In stack: {stackLabel}
+                            </span>
+                          ) : (
+                            <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                              Standalone
+                            </span>
+                          )}
                           {(tpl.clientTemplateAttachments?.length ?? 0) > 0 ? (
                             <span className="mt-0.5 block text-[10px] text-muted-foreground">
                               {tpl.clientTemplateAttachments!.length} client
@@ -774,11 +786,18 @@ export function TaskTemplateManager({
                         }}
                       >
                         <option value="">Choose task to add…</option>
-                        {availableForStack.map((t) => (
-                          <option key={t._id} value={t._id}>
-                            {t.title}
-                          </option>
-                        ))}
+                        {availableForStack.map((t) => {
+                          const label = templateStackLabel(
+                            t.stackId ? String(t.stackId) : undefined,
+                            library.stacks,
+                          );
+                          return (
+                            <option key={t._id} value={t._id}>
+                              {t.title}
+                              {label ? ` (${label})` : ""}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
                   ) : null}
