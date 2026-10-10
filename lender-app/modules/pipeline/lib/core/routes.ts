@@ -18,6 +18,8 @@ export const PIPELINE_FILE_BLOCK_QUERY = "block" as const;
 export const PIPELINE_FILE_TAB_QUERY = "tab" as const;
 /** Highlights / opens a Document Vault library document on the documents tab. */
 export const PIPELINE_FILE_DOCUMENT_QUERY = "document" as const;
+/** Opens the hub task drawer on the file workspace (Reminders deep links). */
+export const PIPELINE_FILE_TASK_QUERY = "task" as const;
 /** Auto-expand a project block on `/pipeline/client/[clientId]`. */
 export const PIPELINE_CLIENT_PROJECT_QUERY = "project" as const;
 
@@ -158,6 +160,8 @@ export function pipelineDealEditorHref(
     tab?: string;
     /** Library document id to highlight/open on the documents tab. */
     documentId?: string;
+    /** Hub task id to open in the file workspace task drawer. */
+    taskId?: string;
   },
 ): string {
   const q = new URLSearchParams();
@@ -181,6 +185,9 @@ export function pipelineDealEditorHref(
   }
   if (returnHub?.documentId?.trim()) {
     q.set(PIPELINE_FILE_DOCUMENT_QUERY, returnHub.documentId.trim());
+  }
+  if (returnHub?.taskId?.trim()) {
+    q.set(PIPELINE_FILE_TASK_QUERY, returnHub.taskId.trim());
   }
   const qs = q.toString();
   return `/pipeline/${encodeURIComponent(fileId)}${qs ? `?${qs}` : ""}`;

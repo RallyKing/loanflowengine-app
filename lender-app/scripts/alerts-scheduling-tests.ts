@@ -26,10 +26,13 @@ import {
   fileSnoozeDeepLink,
   hubTaskDeepLink,
   isInternalAppPath,
+  isLegacyTasksPageDeepLink,
+  vaultFileTaskDeepLink,
 } from "../lib/alerts/internalPath";
 
 function testInternalPaths() {
   assert.equal(isInternalAppPath("/pipeline/abc"), true);
+  assert.equal(isInternalAppPath("/pipeline/abc?block=tasks&task=xyz"), true);
   assert.equal(isInternalAppPath("/tasks?task=xyz"), true);
   assert.equal(isInternalAppPath("//evil.com"), false);
   assert.equal(isInternalAppPath("https://evil.com"), false);
@@ -39,7 +42,23 @@ function testInternalPaths() {
   assert.equal(isInternalAppPath("/tasks\\x"), false);
   assert.throws(() => assertInternalAppPath("https://x"));
   assert.equal(fileSnoozeDeepLink("fid"), "/pipeline/fid");
-  assert.equal(hubTaskDeepLink("tid"), "/tasks?task=tid");
+  assert.equal(
+    hubTaskDeepLink("fid", "tid"),
+    "/pipeline/fid?block=tasks&task=tid",
+  );
+  assert.equal(hubTaskDeepLink("fid"), "/pipeline/fid?block=tasks");
+  assert.equal(
+    vaultFileTaskDeepLink("fid"),
+    "/pipeline/fid?tab=documents",
+  );
+  assert.equal(isLegacyTasksPageDeepLink("/tasks?task=tid"), true);
+  assert.equal(isLegacyTasksPageDeepLink("/pipeline/fid?block=tasks"), false);
+  // Ron Rasberry-style Convex file id shape
+  const ronFile = "jx73pa3as5e8ap648d6b27ynzs87jww4";
+  assert.equal(
+    hubTaskDeepLink(ronFile, "task123"),
+    `/pipeline/${ronFile}?block=tasks&task=task123`,
+  );
 }
 
 function testDedupe() {

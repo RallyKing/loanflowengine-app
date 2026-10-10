@@ -14,6 +14,7 @@ import {
   shouldScheduleOneShot,
 } from "../lib/alerts/fireValidity";
 import {
+  assertInternalAppPath,
   fileSnoozeDeepLink,
   hubTaskDeepLink,
   vaultFileTaskDeepLink,
@@ -29,6 +30,40 @@ async function cancelJob(
   } catch {
     // Already finished or cancelled — ignore.
   }
+}
+
+/**
+ * Resolve the pipeline file for a hub task so Reminders open the file
+ * workspace (not `/tasks`). Prefer `relatedFileId`, then a `fileTasks` edge.
+ */
+export async function resolveHubTaskPipelineFileId(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+): Promise<Id<"pipeline"> | null> {
+  const row = await ctx.db.get(taskId);
+  if (!row) return null;
+  if (row.relatedFileId) return row.relatedFileId;
+  // bounded: at most one edge lookup for deep-link resolution
+  const edge = await ctx.db
+    .query("fileTasks")
+    .withIndex("by_entity", (q) => q.eq("taskId", taskId))
+    .first();
+  return edge?.fileId ?? null;
+}
+
+/** Canonical deep link for a hub task reminder (file workspace when linked). */
+export async function resolveHubTaskDeepLinkPath(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+): Promise<string> {
+  const fileId = await resolveHubTaskPipelineFileId(ctx, taskId);
+  if (fileId) {
+    return hubTaskDeepLink(String(fileId), String(taskId));
+  }
+  // Orphan task with no file link — Tasks page is the only safe surface.
+  return assertInternalAppPath(
+    `/tasks?task=${encodeURIComponent(String(taskId))}`,
+  );
 }
 
 export async function clearPipelineSnoozeAlert(
@@ -248,7 +283,7 @@ async function scheduleHubTaskOneShot(
             Math.abs(Math.trunc(args.dueDate) - fireAt) <= 1000;
           return `${dueMatches ? "Due" : "Reminder"}: ${label}`;
         })();
-  const deepLinkPath = hubTaskDeepLink(entityId);
+  const deepLinkPath = await resolveHubTaskDeepLinkPath(ctx, args.taskId);
 
   const jobId =
     args.kind === "due"
