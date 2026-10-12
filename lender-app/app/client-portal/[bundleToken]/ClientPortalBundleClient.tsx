@@ -31,6 +31,10 @@ import { PortalPageComposition } from "@/components/portal/PortalPageSectionRend
 import type { PortalPageSectionInstance } from "@/lib/portalPageSections";
 import { defaultStatusSteps } from "@/lib/portalSectionConfig";
 
+/** Public bundle/token portal footer copy. */
+const CLIENT_PORTAL_FOOTER_COPY =
+  "Direct upload portal - Submitted items will be reviewed";
+
 type ClientPortalBundleClientProps = {
   bundleToken: string;
   companySlug?: string;
@@ -558,7 +562,7 @@ function ClientPortalBundleLoaded({
         )}
 
         <p className="mt-8 text-center text-[11px] text-muted-foreground">
-          Secure portal · Your broker will review submitted items
+          {CLIENT_PORTAL_FOOTER_COPY}
         </p>
       </div>
     </div>
