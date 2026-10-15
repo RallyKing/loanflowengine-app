@@ -172,7 +172,11 @@ export const listByFile = query({
   },
 });
 
-/** Phase 39.5 — CRM contacts linked to a pipeline file (for vault import/save modals). */
+/**
+ * Phase 39.5 — CRM contacts linked to a pipeline file (for vault import/save modals).
+ * Soft-fails to `[]` on access denial so public client-portal embeds (e.g. Track Record)
+ * do not throw a Convex Server Error into the React error boundary.
+ */
 export const listLinkedContactsForFile = query({
   args: {
     fileId: v.id("pipeline"),
@@ -181,7 +185,17 @@ export const listLinkedContactsForFile = query({
   handler: async (ctx, { fileId, memberUserKey }) => {
     const file = await ctx.db.get(fileId);
     if (!file) return [];
-    await assertCanReadPipelineRow(ctx, file, memberUserKey);
+    try {
+      await assertCanReadPipelineRow(ctx, file, memberUserKey);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[contactFileLinks.listLinkedContactsForFile] access denied", {
+        fileId: String(fileId),
+        organizationId: file.organizationId ?? null,
+        message,
+      });
+      return [];
+    }
     const links = await ctx.db
       .query("contactFileLinks")
       .withIndex("by_file", (q) => q.eq("fileId", fileId))
@@ -201,7 +215,7 @@ export const listLinkedContactsForFile = query({
       if (!contact) continue;
       out.push({
         contactId: contact._id,
-        name: contact.name.trim() || "Contact",
+        name: (typeof contact.name === "string" ? contact.name.trim() : "") || "Contact",
         role: link.role,
       });
     }
