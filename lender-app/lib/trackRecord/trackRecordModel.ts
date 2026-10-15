@@ -362,7 +362,8 @@ export function allTrackRecordAssociatedContactIds(input: {
 
 /**
  * Normalize free-text / locale dates to `YYYY-MM-DD` for `<input type="date">`.
- * Returns "" when empty or unparseable (caller keeps prior display via raw value).
+ * Returns "" when empty or unparseable — UI must keep a text fallback for raw
+ * non-empty values (see TrackRecordDateCell).
  */
 export function toTrackRecordDateInputValue(
   value: string | undefined | null,
@@ -380,11 +381,8 @@ export function toTrackRecordDateInputValue(
       return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     }
   }
-  const parsed = Date.parse(raw);
-  if (!Number.isFinite(parsed)) return "";
-  const d = new Date(parsed);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  // Do not Date.parse arbitrary strings — timezone shifts and false positives.
+  return "";
 }
 
 /** True when any guarantor owns the row but Project Type is blank (Excel counts stay 0). */

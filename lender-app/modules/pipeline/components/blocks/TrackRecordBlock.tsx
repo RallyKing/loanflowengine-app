@@ -53,6 +53,7 @@ import {
   formatTrackRecordUsd,
   normalizeTrackRecordMeta,
   toTrackRecordDateInputValue,
+  trackRecordRowNeedsProjectTypeForExperience,
   type DealTrackRecordRow,
   type TrackRecordBlockMeta,
   type TrackRecordGuarantorSlot,
@@ -67,6 +68,39 @@ const OWNED_KEYS = [
   "ownedByGuarantor3",
   "ownedByGuarantor4",
 ] as const;
+
+/** Date cell: prefer `<input type="date">`; keep text if legacy value won't parse. */
+function TrackRecordDateCell(props: {
+  value: string | undefined;
+  disabled?: boolean;
+  "aria-label": string;
+  onChange: (next: string | undefined) => void;
+}) {
+  const raw = (props.value ?? "").trim();
+  const normalized = toTrackRecordDateInputValue(raw);
+  if (raw && !normalized) {
+    return (
+      <input
+        type="text"
+        className={cn(CELL, "w-36")}
+        value={props.value ?? ""}
+        disabled={props.disabled}
+        aria-label={props["aria-label"]}
+        onChange={(e) => props.onChange(e.target.value || undefined)}
+      />
+    );
+  }
+  return (
+    <input
+      type="date"
+      className={cn(CELL, "w-36")}
+      value={normalized}
+      disabled={props.disabled}
+      aria-label={props["aria-label"]}
+      onChange={(e) => props.onChange(e.target.value || undefined)}
+    />
+  );
+}
 
 export type TrackRecordBlockProps = {
   contactId?: Id<"contacts"> | null;
@@ -187,33 +221,34 @@ export function TrackRecordBlock({
     [contactNameById],
   );
 
-  const flushDualWrite = useCallback(
-    (nextRows: DealTrackRecordRow[], nextMeta: TrackRecordBlockMeta) => {
-      const id = fileIdRef.current;
-      const save = saveDualWriteRef.current;
-      if (readOnly || !id || !save) return;
-      void save({
-        fileId: id,
-        trackRecord: nextRows,
-        trackRecordMeta: nextMeta,
-        ...(memberUserKeyRef.current
-          ? { preferencesAccountId: memberUserKeyRef.current }
-          : {}),
-      })
-        .then(() => {
+  const flushDualWritePending = useCallback(() => {
+    const id = fileIdRef.current;
+    const save = saveDualWriteRef.current;
+    const snapshot = pendingDualWriteRef.current;
+    if (readOnly || !id || !save || !snapshot) return;
+    void save({
+      fileId: id,
+      trackRecord: snapshot.rows,
+      trackRecordMeta: snapshot.meta,
+      ...(memberUserKeyRef.current
+        ? { preferencesAccountId: memberUserKeyRef.current }
+        : {}),
+    })
+      .then(() => {
+        // Only clear if nothing newer was staged while this flush was in flight.
+        if (pendingDualWriteRef.current === snapshot) {
           dirtyRef.current = false;
           pendingDualWriteRef.current = null;
-        })
-        .catch(() => {
-          showOperationalToast({
-            title: "Could not save Track Record",
-            description: "Try again. Your last edits may not have synced.",
-            variant: "destructive",
-          });
+        }
+      })
+      .catch(() => {
+        showOperationalToast({
+          title: "Could not save Track Record",
+          description: "Try again. Your last edits may not have synced.",
+          variant: "destructive",
         });
-    },
-    [readOnly],
-  );
+      });
+  }, [readOnly]);
 
   const persist = useCallback(
     (nextRows: DealTrackRecordRow[], nextMeta: TrackRecordBlockMeta) => {
@@ -227,14 +262,14 @@ export function TrackRecordBlock({
       if (readOnly || !fileId) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        flushDualWrite(nextRows, nextMeta);
+        flushDualWritePending();
       }, 450);
     },
-    [fileId, flushDualWrite, readOnly, update],
+    [fileId, flushDualWritePending, readOnly, update],
   );
 
-  const flushDualWriteRef = useRef(flushDualWrite);
-  flushDualWriteRef.current = flushDualWrite;
+  const flushDualWritePendingRef = useRef(flushDualWritePending);
+  flushDualWritePendingRef.current = flushDualWritePending;
 
   // Unmount-only flush of pending dual-write (contact sticky sync). Deal draft
   // flush is owned by useDealWorkspaceEditor; this timer must not discard work.
@@ -244,9 +279,8 @@ export function TrackRecordBlock({
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
-      const pending = pendingDualWriteRef.current;
-      if (pending && dirtyRef.current) {
-        flushDualWriteRef.current(pending.rows, pending.meta);
+      if (dirtyRef.current && pendingDualWriteRef.current) {
+        flushDualWritePendingRef.current();
       }
     },
     [],
@@ -708,8 +742,7 @@ export function TrackRecordBlock({
                     className={cn(
                       CELL,
                       "w-40",
-                      !row.projectType &&
-                        OWNED_KEYS.some((k) => row[k] === "Yes") &&
+                      trackRecordRowNeedsProjectTypeForExperience(row) &&
                         "border-amber-500/60",
                     )}
                     value={row.projectType ?? ""}
@@ -739,17 +772,11 @@ export function TrackRecordBlock({
                   />
                 </td>
                 <td className="px-1">
-                  <input
-                    type="date"
-                    className={cn(CELL, "w-36")}
-                    value={toTrackRecordDateInputValue(row.acquisitionDate)}
+                  <TrackRecordDateCell
+                    value={row.acquisitionDate}
                     disabled={readOnly}
                     aria-label={`Acquisition date ${i + 1}`}
-                    onChange={(e) =>
-                      setRow(i, {
-                        acquisitionDate: e.target.value || undefined,
-                      })
-                    }
+                    onChange={(next) => setRow(i, { acquisitionDate: next })}
                   />
                 </td>
                 <td className="px-1">
@@ -795,17 +822,11 @@ export function TrackRecordBlock({
                   </select>
                 </td>
                 <td className="px-1">
-                  <input
-                    type="date"
-                    className={cn(CELL, "w-36")}
-                    value={toTrackRecordDateInputValue(row.dateSoldOrLeased)}
+                  <TrackRecordDateCell
+                    value={row.dateSoldOrLeased}
                     disabled={readOnly}
                     aria-label={`Date sold or leased ${i + 1}`}
-                    onChange={(e) =>
-                      setRow(i, {
-                        dateSoldOrLeased: e.target.value || undefined,
-                      })
-                    }
+                    onChange={(next) => setRow(i, { dateSoldOrLeased: next })}
                   />
                 </td>
                 <td className="px-1">
@@ -853,7 +874,12 @@ export function TrackRecordBlock({
               </tr>
             ))}
             <tr className="font-semibold">
-              <td colSpan={13} className="px-2 py-2 text-right">
+              {/*
+                Columns before Acquisition price:
+                checkbox, #, address, city, ST, zip, type, #1–#4, project type,
+                title, acquisition date = 14.
+              */}
+              <td colSpan={14} className="px-2 py-2 text-right">
                 Totals
               </td>
               <td className="px-2 py-2 text-right tabular-nums">
