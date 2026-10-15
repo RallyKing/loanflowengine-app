@@ -1,11 +1,12 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { query, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   assertOrgMember,
+  filterPipelineRowsForMember,
+  pipelineFileReadable,
   resolveMemberUserKey,
 } from "./organizationAccess";
-import { pipelineFileReadable } from "./resourceAccess";
 import { readTaskColorPresetsForOrg } from "./organizationSettings";
 import { loadTriageLabelsForOrg } from "./organizationTriageLabels";
 import { safeResolveFileHierarchy } from "./pipelineHierarchyCompat";
@@ -18,6 +19,12 @@ import { normalizeTriageLabelHex, resolveTriageLabelHex } from "../lib/triageLab
 import { taskParticipatesInTriageBubble } from "../lib/pipeline/triageHighlightParticipation";
 import { resolveTriageLabelSeverityWeight } from "../lib/pipeline/triageSeverityWeight";
 import { resolveTriageEvaluationTime } from "../lib/triageClock";
+import { takeRelatedTasksForFile } from "./lib/pipelineFileEdgeReads";
+import { PIPELINE_TABLE_PREVIEW_MAX_ROWS } from "../lib/pipeline/tablePreviewReadBounds";
+import { PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID } from "./auth/platformGodMode";
+
+/** Parallelize per-file task takes without one giant Promise.all on huge hubs. */
+const HUB_TRIAGE_FILE_BATCH = 64;
 
 const orgArgs = {
   organizationId: v.id("organizations"),
@@ -126,15 +133,72 @@ function buildEntry(
   };
 }
 
+/** Visible hub files for triage — capped, ACL-filtered, no org-wide task scan. */
+async function loadVisibleHubFilesForTriage(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  memberUserKey: string,
+): Promise<Doc<"pipeline">[]> {
+  // bounded: hub triage file set (PIPELINE_TABLE_PREVIEW_MAX_ROWS)
+  const scoped = await ctx.db
+    .query("pipeline")
+    .withIndex("by_organization_createdAt", (q) =>
+      q.eq("organizationId", organizationId),
+    )
+    .order("desc")
+    .take(PIPELINE_TABLE_PREVIEW_MAX_ROWS);
+  const withLegacy =
+    organizationId === PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID
+      ? scoped.concat(
+          await ctx.db
+            .query("pipeline")
+            .withIndex("by_organization_createdAt", (q) =>
+              q.eq("organizationId", undefined),
+            )
+            .order("desc")
+            .take(PIPELINE_TABLE_PREVIEW_MAX_ROWS),
+        )
+      : scoped;
+  withLegacy.sort((a, b) => b._creationTime - a._creationTime);
+  const active = withLegacy.filter((r) => r.archivedAt == null);
+  const visible = await filterPipelineRowsForMember(
+    ctx,
+    active,
+    organizationId,
+    memberUserKey,
+  );
+  return visible.slice(0, PIPELINE_TABLE_PREVIEW_MAX_ROWS);
+}
+
 /**
  * Phase 24.2A — reactive triage bubbling (no colors stored on files/projects/clients).
  *
  * Task → file (max severityWeight among labeled open tasks on file)
  * File → project (max among file winners in project)
  * Project → client (max among project winners under client)
+ *
+ * Tasks are loaded per visible file via `by_relatedFile` (capped), never
+ * org-wide `tasks.by_organization` collect.
  */
+/**
+ * Prefer stamped clientId+projectId for bubble keys (matches hub tree for
+ * record-backed rows). Partial stamps still fall through to hierarchy so
+ * synthetic legacy keys stay correct.
+ */
+function fileMetaFromStampedIds(
+  file: Doc<"pipeline">,
+): { projectKey: string; clientKey: string } | null {
+  if (file.clientId && file.projectId) {
+    return {
+      clientKey: String(file.clientId),
+      projectKey: String(file.projectId),
+    };
+  }
+  return null;
+}
+
 async function buildHubTriageHighlightMap(
-  ctx: Parameters<typeof assertOrgMember>[0],
+  ctx: QueryCtx,
   organizationId: Id<"organizations">,
   memberUserKey: string,
   nowBucket: number | undefined,
@@ -143,27 +207,11 @@ async function buildHubTriageHighlightMap(
   const triageLabels = await loadTriageLabelsForOrg(ctx, organizationId);
   const now = resolveTriageEvaluationTime(nowBucket);
 
-  const tasks = await ctx.db
-    .query("tasks")
-    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .collect();
-
-  /** Phase 24.5 — triage bubbles use pipeline file read ACL, not task ownership. */
-  const fileReadableCache = new Map<string, boolean>();
-  async function viewerCanReadTaskFile(fileId: Id<"pipeline">): Promise<boolean> {
-    const cacheKey = String(fileId);
-    if (fileReadableCache.has(cacheKey)) {
-      return fileReadableCache.get(cacheKey)!;
-    }
-    const file = await ctx.db.get(fileId);
-    if (!file || file.organizationId !== organizationId) {
-      fileReadableCache.set(cacheKey, false);
-      return false;
-    }
-    const ok = await pipelineFileReadable(ctx, file, memberUserKey);
-    fileReadableCache.set(cacheKey, ok);
-    return ok;
-  }
+  const visibleFiles = await loadVisibleHubFilesForTriage(
+    ctx,
+    organizationId,
+    memberUserKey,
+  );
 
   const files: Record<string, TriageHighlightEntry> = {};
   const fileCounts: Record<string, TaskRollupCounts> = {};
@@ -172,13 +220,16 @@ async function buildHubTriageHighlightMap(
     { projectKey: string; clientKey: string }
   >();
 
-  async function ensureFileMeta(fileId: Id<"pipeline">): Promise<void> {
-    if (fileMeta.has(fileId)) return;
-    const file = await ctx.db.get(fileId);
-    if (!file) return;
+  async function ensureFileMeta(file: Doc<"pipeline">): Promise<void> {
+    if (fileMeta.has(file._id)) return;
+    const stamped = fileMetaFromStampedIds(file);
+    if (stamped) {
+      fileMeta.set(file._id, stamped);
+      return;
+    }
     try {
       const hierarchy = await safeResolveFileHierarchy(ctx, file);
-      fileMeta.set(fileId, {
+      fileMeta.set(file._id, {
         projectKey: hubProjectKeyFromHierarchy(hierarchy),
         clientKey: hubClientKeyFromHierarchy(hierarchy),
       });
@@ -187,40 +238,53 @@ async function buildHubTriageHighlightMap(
     }
   }
 
-  for (const task of tasks) {
-    if (!task.relatedFileId) continue;
+  // Was a sequential `for await` over every visible file — dominant triage
+  // latency once per-file `by_relatedFile` takes replaced the org task scan.
+  for (let i = 0; i < visibleFiles.length; i += HUB_TRIAGE_FILE_BATCH) {
+    const batch = visibleFiles.slice(i, i + HUB_TRIAGE_FILE_BATCH);
+    const loaded = await Promise.all(
+      batch.map(async (file) => ({
+        file,
+        tasks: await takeRelatedTasksForFile(ctx, file._id),
+      })),
+    );
 
-    const isOpen = task.status === "todo" || task.status === "in_progress";
-    const isSnoozedNow =
-      typeof task.snoozedUntil === "number" && task.snoozedUntil > now;
-    const countsOpen = isOpen && !isSnoozedNow;
-    const isLabeledBubble =
-      taskParticipatesInTriageBubble(task, now) && Boolean(task.triageLabelId);
+    for (const { file, tasks } of loaded) {
+      const fileKey = String(file._id);
 
-    if (!countsOpen && !isLabeledBubble) continue;
-    if (!(await viewerCanReadTaskFile(task.relatedFileId))) continue;
+      for (const task of tasks) {
+        if (task.organizationId !== organizationId) continue;
 
-    const fileId = task.relatedFileId;
-    const fileKey = String(fileId);
+        const isOpen = task.status === "todo" || task.status === "in_progress";
+        const isSnoozedNow =
+          typeof task.snoozedUntil === "number" && task.snoozedUntil > now;
+        const countsOpen = isOpen && !isSnoozedNow;
+        const isLabeledBubble =
+          taskParticipatesInTriageBubble(task, now) &&
+          Boolean(task.triageLabelId);
 
-    if (countsOpen) {
-      const overdue =
-        typeof task.dueDate === "number" && task.dueDate < now ? 1 : 0;
-      fileCounts[fileKey] = mergeRollupCounts(fileCounts[fileKey], {
-        open: 1,
-        overdue,
-        topStatus: task.status === "in_progress" ? "in_progress" : "todo",
-      });
-      await ensureFileMeta(fileId);
-    }
+        if (!countsOpen && !isLabeledBubble) continue;
 
-    if (isLabeledBubble && task.triageLabelId) {
-      const label = triageLabels.get(String(task.triageLabelId));
-      if (!label) continue;
-      const entry = buildEntry(task, label, presets);
-      if (!entry) continue;
-      files[fileKey] = pickStrongerEntry(files[fileKey], entry);
-      await ensureFileMeta(fileId);
+        if (countsOpen) {
+          const overdue =
+            typeof task.dueDate === "number" && task.dueDate < now ? 1 : 0;
+          fileCounts[fileKey] = mergeRollupCounts(fileCounts[fileKey], {
+            open: 1,
+            overdue,
+            topStatus: task.status === "in_progress" ? "in_progress" : "todo",
+          });
+          await ensureFileMeta(file);
+        }
+
+        if (isLabeledBubble && task.triageLabelId) {
+          const label = triageLabels.get(String(task.triageLabelId));
+          if (!label) continue;
+          const entry = buildEntry(task, label, presets);
+          if (!entry) continue;
+          files[fileKey] = pickStrongerEntry(files[fileKey], entry);
+          await ensureFileMeta(file);
+        }
+      }
     }
   }
 
@@ -267,6 +331,38 @@ async function buildHubTriageHighlightMap(
   };
 }
 
+/** Single-file triage — `by_relatedFile` only; never builds the hub map. */
+async function buildFileTriageHighlight(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  memberUserKey: string,
+  pipelineFileId: Id<"pipeline">,
+  nowBucket: number | undefined,
+): Promise<TriageHighlightEntry | null> {
+  const file = await ctx.db.get(pipelineFileId);
+  if (!file || file.organizationId !== organizationId) return null;
+  if (!(await pipelineFileReadable(ctx, file, memberUserKey))) return null;
+
+  const presets = await readTaskColorPresetsForOrg(ctx, organizationId);
+  const triageLabels = await loadTriageLabelsForOrg(ctx, organizationId);
+  const now = resolveTriageEvaluationTime(nowBucket);
+  const tasks = await takeRelatedTasksForFile(ctx, pipelineFileId);
+
+  let winner: TriageHighlightEntry | null = null;
+  for (const task of tasks) {
+    if (task.organizationId !== organizationId) continue;
+    if (!taskParticipatesInTriageBubble(task, now) || !task.triageLabelId) {
+      continue;
+    }
+    const label = triageLabels.get(String(task.triageLabelId));
+    if (!label) continue;
+    const entry = buildEntry(task, label, presets);
+    if (!entry) continue;
+    winner = pickStrongerEntry(winner ?? undefined, entry);
+  }
+  return winner;
+}
+
 /** Batch map for hub, board, and workspace — one subscription bubbles file → project → client. */
 export const getHubTriageHighlightMap = query({
   args: { ...orgArgs, ...triageTimeArgs },
@@ -293,7 +389,7 @@ export const getHubTriageHighlightMap = query({
   },
 });
 
-/** File-level highlight (workspace + loan stack). */
+/** File-level highlight (workspace + loan stack) — file-scoped reads only. */
 export const getFileTriageHighlight = query({
   args: {
     ...orgArgs,
@@ -305,13 +401,13 @@ export const getFileTriageHighlight = query({
     if (!key) return null;
     await assertOrgMember(ctx, args.organizationId, key);
     const bucket = triageBucketFromArgs(args);
-    const map = await buildHubTriageHighlightMap(
+    return await buildFileTriageHighlight(
       ctx,
       args.organizationId,
       key,
+      args.pipelineFileId,
       bucket,
     );
-    return map.files[String(args.pipelineFileId)] ?? null;
   },
 });
 
