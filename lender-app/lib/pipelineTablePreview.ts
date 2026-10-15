@@ -73,8 +73,11 @@ export type PipelineTablePreviewRow = Omit<PipelineListRow, "fundingAmount"> & {
   netToUserDisplay: string;
   /** Legacy `pipeline.notes` string (export/search only — UI uses `fileNotesCount`). */
   notesDisplay: string;
-  /** Phase 19.5 — relational audit log entry count (`pipelineFileNotes`). */
-  fileNotesCount: number;
+  /**
+   * Phase 19.5 — relational audit log entry count (`pipelineFileNotes`).
+   * First paint omits until `listTablePreviewEnrichment` merges in.
+   */
+  fileNotesCount?: number;
   searchText: string;
   /** True when the current member may edit org-scoped file fields (not view-only). */
   canEditFile: boolean;
@@ -87,11 +90,11 @@ export type PipelineTablePreviewRow = Omit<PipelineListRow, "fundingAmount"> & {
   projectDisplayTitle: string;
   /** Phase 14 — linked clients on loan file (primary first). */
   linkedClients?: import("@/lib/pipelineClientRelationships").LinkedClientSummary[];
-  /** Phase 14 — linked clients on parent project. */
+  /** Phase 14 — linked clients on parent project (deferred via enrichment). */
   projectLinkedClients?: import("@/lib/pipelineClientRelationships").LinkedClientSummary[];
-  /** Phase 14 Step 3 — project capital stack rollup (when `projectId` set). */
+  /** Phase 14 Step 3 — project capital stack rollup (deferred via enrichment). */
   projectCapitalRollup?: import("@/lib/projectCapitalStack").ProjectCapitalRollup;
-  /** Phase 15 Step 4 — indexed graph link badges (from junction + legacy dual-read). */
+  /** Phase 15 Step 4 — indexed graph link badges (deferred via enrichment). */
   graphLinks?: import("@/convex/pipelineGraphPreviewLinks").PipelineRowGraphLinks;
   /** Phase 26.3 — chosen lender, else newest active (non-declined) for table at-a-glance. */
   primaryLender?: import("@/lib/pipeline/resolvePrimaryTableLender").PrimaryTableLenderPreview | null;

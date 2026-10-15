@@ -12,6 +12,7 @@ import {
   type ResourceAccessLevel,
   type ResourceType,
 } from "./resourceAccess";
+import { callerHasUnrestrictedOrgDataAccess } from "./viewerOrgAccess";
 import {
   resolveDisplayUsernameForUserKey,
   resolveDisplayUsernameMap,
@@ -65,12 +66,13 @@ async function sharePermissionForViewer(
   resourceId: string,
   viewerKey: string,
 ): Promise<"view" | "edit" | null> {
+  // bounded: per-resource share rows (hub ownership path)
   const rows = await ctx.db
     .query("resourceShares")
     .withIndex("by_resource", (q) =>
       q.eq("resourceType", resourceType).eq("resourceId", resourceId),
     )
-    .collect();
+    .take(200);
   const hit = rows.find(
     (r) =>
       r.organizationId === organizationId && r.sharedUserId === viewerKey,
@@ -85,12 +87,13 @@ export async function listResourceCollaborators(
   resourceId: string,
   ownerUserId: string,
 ): Promise<ResourceCollaborator[]> {
+  // bounded: per-resource share rows (hub ownership path)
   const rows = await ctx.db
     .query("resourceShares")
     .withIndex("by_resource", (q) =>
       q.eq("resourceType", resourceType).eq("resourceId", resourceId),
     )
-    .collect();
+    .take(200);
   const scoped = rows.filter((r) => r.organizationId === organizationId);
   const out: ResourceCollaborator[] = [];
   for (const r of scoped) {
@@ -178,6 +181,13 @@ export async function buildPipelineOwnershipPresentation(
   ctx: QueryCtx | MutationCtx,
   file: Doc<"pipeline">,
   memberUserKey: string | undefined,
+  options?: {
+    /**
+     * When the caller already resolved unrestricted access once for the batch
+     * (hub `listTablePreview`), skip re-checking GodMode/admin on every row.
+     */
+    knownUnrestrictedAccess?: boolean;
+  },
 ): Promise<ResourceOwnershipPresentation | null> {
   const viewerKey = await resolveViewerKey(ctx, memberUserKey);
   const ownerUserId = resolveRowOwnerUserId(file);
@@ -186,6 +196,28 @@ export async function buildPipelineOwnershipPresentation(
     ctx,
     ownerUserId,
   );
+  /**
+   * GodMode / platform admins: skip per-file share collects + collaborator
+   * fan-out. Hub listTablePreview was blowing the Convex 4096-doc read limit
+   * by running listResourceCollaborators + hierarchy share walks on every row.
+   */
+  const unrestricted =
+    options?.knownUnrestrictedAccess === true ||
+    (await callerHasUnrestrictedOrgDataAccess(ctx, viewerKey));
+  if (unrestricted) {
+    const isOwner = ownerUserId === viewerKey;
+    return {
+      ownershipLine: `Owned by ${ownerDisplayUsername}`,
+      badge: isOwner ? "owner" : null,
+      ownerUserId,
+      ownerDisplayUsername,
+      viewerAccessLevel: "edit",
+      isOwner,
+      isSharedViewer: false,
+      collaboratorCount: 0,
+      hierarchyAccessLabel: null,
+    };
+  }
   const level = await resolvePipelineAccessLevel(ctx, file, memberUserKey);
   const isOwner = ownerUserId === viewerKey;
   const orgId = file.organizationId;

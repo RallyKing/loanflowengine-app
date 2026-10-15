@@ -11,6 +11,20 @@ import {
   isReferralPartnerFileAssociation,
   isReferralPartnerRoleId,
 } from "../lib/contact/contactRoles";
+import {
+  takeContactFileLinksForFile,
+  takeFileClientsForFile,
+  takeFileLendersForFile,
+  takeFileProjectsForFile,
+  takeFileTasksForFile,
+  takeFileTeamMembersForFile,
+  takeRelatedTasksForFile,
+} from "./lib/pipelineFileEdgeReads";
+import {
+  PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP,
+  PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP,
+  PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP,
+} from "../lib/pipeline/tablePreviewReadBounds";
 
 export type PipelineGraphEntityLink = {
   id: string;
@@ -112,31 +126,33 @@ export async function batchGraphLinksForPipelineFiles(
     hierarchyExtras.map((h) => [String(h.fileId), h]),
   );
 
-  const orgStr = String(organizationId);
-  const filterOrg = <T extends { organizationId: Id<"organizations"> }>(
-    rows: T[],
-  ) => rows.filter((r) => String(r.organizationId) === orgStr);
+  // Per visible file via `by_file` + take(N) — not org-wide junction collects.
+  const edgeBuckets = await Promise.all(
+    files.map(async (f) => {
+      const [fc, fp, fl, ft, ftask, cfl, relatedTasks] = await Promise.all([
+        takeFileClientsForFile(ctx, f._id),
+        takeFileProjectsForFile(ctx, f._id),
+        takeFileLendersForFile(ctx, f._id),
+        takeFileTeamMembersForFile(ctx, f._id),
+        takeFileTasksForFile(ctx, f._id),
+        takeContactFileLinksForFile(ctx, f._id),
+        takeRelatedTasksForFile(ctx, f._id),
+      ]);
+      return { fileId: f._id, fc, fp, fl, ft, ftask, cfl, relatedTasks };
+    }),
+  );
 
-  const fcAll = filterOrg(await ctx.db.query("fileClients").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const fpAll = filterOrg(await ctx.db.query("fileProjects").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const flAll = filterOrg(await ctx.db.query("fileLenders").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
+  const fcAll = edgeBuckets.flatMap((b) => b.fc);
+  const fpAll = edgeBuckets.flatMap((b) => b.fp);
+  const flAll = edgeBuckets.flatMap((b) => b.fl);
   /** Phase 25.6 — referrals are CFL-only; junction table disabled for hub graph. */
   const frAll: Array<{
     fileId: Id<"pipeline">;
     contactId: Id<"contacts">;
   }> = [];
-  const ftAll = filterOrg(await ctx.db.query("fileTeamMembers").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
-  const ftaskAll = filterOrg(await ctx.db.query("fileTasks").collect()).filter(
-    (r) => fileIdSet.has(String(r.fileId)),
-  );
+  const ftAll = edgeBuckets.flatMap((b) => b.ft);
+  const ftaskAll = edgeBuckets.flatMap((b) => b.ftask);
+  const cflAll = edgeBuckets.flatMap((b) => b.cfl);
 
   const clientIds = new Set<string>();
   const projectIds = new Set<string>();
@@ -161,45 +177,63 @@ export async function batchGraphLinksForPipelineFiles(
   for (const r of frAll) contactIds.add(String(r.contactId));
   for (const r of ftaskAll) taskIds.add(String(r.taskId));
   for (const r of ftAll) userKeys.add(r.userKey.trim());
-
-  const cflAll = (await ctx.db.query("contactFileLinks").collect()).filter((l) =>
-    fileIdSet.has(String(l.fileId)),
-  );
   for (const link of cflAll) {
     contactIds.add(String(link.contactId));
   }
-
-  const orgTasks = (
-    await ctx.db
-      .query("tasks")
-      .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-      .collect()
-  ).filter((t) => String(t.organizationId) === orgStr);
-  for (const task of orgTasks) {
-    if (!task.relatedFileId) continue;
-    if (!fileIdSet.has(String(task.relatedFileId))) continue;
-    taskIds.add(String(task._id));
+  for (const bucket of edgeBuckets) {
+    for (const task of bucket.relatedTasks) {
+      if (task.organizationId !== organizationId) continue;
+      if (!fileIdSet.has(String(task.relatedFileId))) continue;
+      taskIds.add(String(task._id));
+    }
   }
+
+  const clientIdList = [...clientIds].slice(
+    0,
+    PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP,
+  );
+  const projectIdList = [...projectIds].slice(
+    0,
+    PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP,
+  );
+  const lenderIdList = [...lenderIds].slice(
+    0,
+    PIPELINE_GRAPH_MISSING_ENTITY_LABEL_GET_CAP,
+  );
+  const contactIdsForLabels = [...contactIds].slice(
+    0,
+    PIPELINE_GRAPH_CONTACT_LABEL_GET_CAP,
+  );
+  const memberKeysForLabels = [...userKeys].slice(
+    0,
+    PIPELINE_GRAPH_MEMBER_LABEL_GET_CAP,
+  );
 
   const clientNames = new Map<string, string>();
   await Promise.all(
-    [...clientIds].map(async (id) => {
+    clientIdList.map(async (id) => {
       const doc = await ctx.db.get(id as Id<"clients">);
       if (doc) clientNames.set(id, doc.displayName?.trim() || "Client");
     }),
   );
+  for (const id of clientIds) {
+    if (!clientNames.has(id)) clientNames.set(id, "Client");
+  }
 
   const projectNames = new Map<string, string>();
   await Promise.all(
-    [...projectIds].map(async (id) => {
+    projectIdList.map(async (id) => {
       const doc = await ctx.db.get(id as Id<"projects">);
       if (doc) projectNames.set(id, doc.title?.trim() || "Project");
     }),
   );
+  for (const id of projectIds) {
+    if (!projectNames.has(id)) projectNames.set(id, "Project");
+  }
 
   const lenderNames = new Map<string, string>();
   await Promise.all(
-    [...lenderIds].map(async (id) => {
+    lenderIdList.map(async (id) => {
       const doc = await ctx.db.get(id as Id<"lenders">);
       if (doc) {
         lenderNames.set(
@@ -209,12 +243,15 @@ export async function batchGraphLinksForPipelineFiles(
       }
     }),
   );
+  for (const id of lenderIds) {
+    if (!lenderNames.has(id)) lenderNames.set(id, "Lender");
+  }
 
   const contactNames = new Map<string, string>();
   const contactDocs = new Map<string, Doc<"contacts">>();
   const contactReferralFlags = new Map<string, boolean>();
   await Promise.all(
-    [...contactIds].map(async (id) => {
+    contactIdsForLabels.map(async (id) => {
       const doc = await ctx.db.get(id as Id<"contacts">);
       if (doc) {
         contactDocs.set(id, doc);
@@ -237,7 +274,7 @@ export async function batchGraphLinksForPipelineFiles(
   );
 
   const memberLabels = new Map<string, string>();
-  for (const uk of userKeys) {
+  for (const uk of memberKeysForLabels) {
     const authUser = await ctx.db.get(uk as Id<"authUsers">);
     if (authUser) {
       memberLabels.set(
@@ -247,6 +284,9 @@ export async function batchGraphLinksForPipelineFiles(
     } else {
       memberLabels.set(uk, uk);
     }
+  }
+  for (const uk of userKeys) {
+    if (!memberLabels.has(uk)) memberLabels.set(uk, uk);
   }
 
   const fcByFile = new Map<string, typeof fcAll>();
@@ -293,13 +333,16 @@ export async function batchGraphLinksForPipelineFiles(
   }
 
   const legacyTasksByFile = new Map<string, Doc<"tasks">[]>();
-  for (const task of orgTasks) {
-    if (!task.relatedFileId) continue;
-    const fid = String(task.relatedFileId);
-    if (!fileIdSet.has(fid)) continue;
-    const list = legacyTasksByFile.get(fid) ?? [];
-    list.push(task);
-    legacyTasksByFile.set(fid, list);
+  for (const bucket of edgeBuckets) {
+    for (const task of bucket.relatedTasks) {
+      if (task.organizationId !== organizationId) continue;
+      if (!task.relatedFileId) continue;
+      const fid = String(task.relatedFileId);
+      if (!fileIdSet.has(fid)) continue;
+      const list = legacyTasksByFile.get(fid) ?? [];
+      list.push(task);
+      legacyTasksByFile.set(fid, list);
+    }
   }
 
   const cflByFile = new Map<string, typeof cflAll>();
