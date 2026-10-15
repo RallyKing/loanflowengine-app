@@ -180,7 +180,8 @@ async function loadBundleByPlain(
 export const resolveClientTemplateDownload = query({
   args: {
     bundleToken: v.string(),
-    storageId: v.id("_storage"),
+    /** String (not v.id) so bogus email links return status, not ArgumentValidationError. */
+    storageId: v.string(),
     companySlug: v.optional(v.string()),
     /** Caller-supplied clock — never Date.now() inside the query handler. */
     now: v.number(),
@@ -188,6 +189,10 @@ export const resolveClientTemplateDownload = query({
   handler: async (ctx, { bundleToken, storageId, companySlug, now }) => {
     const trimmed = normalizePortalToken(bundleToken);
     if (!trimmed || trimmed.length > 128) {
+      return { status: "invalid" as const };
+    }
+    const storageKey = storageId.trim();
+    if (!/^[a-zA-Z0-9_-]{16,128}$/.test(storageKey)) {
       return { status: "invalid" as const };
     }
     const tokenHash = await sha256Hex(trimmed);
@@ -218,7 +223,7 @@ export const resolveClientTemplateDownload = query({
       const task = await ctx.db.get(taskId);
       if (!task || task.isArchived) continue;
       for (const att of task.clientTemplateAttachments ?? []) {
-        if (att.storageId !== storageId) continue;
+        if (String(att.storageId) !== storageKey) continue;
         const url = await ctx.storage.getUrl(att.storageId);
         if (!url) return { status: "not_found" as const };
         return {

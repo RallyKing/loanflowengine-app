@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 import { getConvexHttpClient } from "@/lib/convexServerClient";
 import { normalizePortalToken } from "@/lib/portalToken";
 
@@ -41,7 +40,7 @@ export async function GET(
       api.documentVaultClientBundlePortal.resolveClientTemplateDownload,
       {
         bundleToken,
-        storageId: storageId as Id<"_storage">,
+        storageId,
         companySlug,
         now: Date.now(),
       },
@@ -54,16 +53,6 @@ export async function GET(
     return NextResponse.redirect(result.url, 302);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    // Invalid Convex Id / argument validation → treat as missing (fail closed).
-    if (
-      /ArgumentValidationError|invalid.*id|does not match|Value does not match/i.test(
-        message,
-      )
-    ) {
-      return new NextResponse("Template not available for this link.", {
-        status: 404,
-      });
-    }
     console.error("[client-template-download]", message);
     return new NextResponse("Could not resolve template download.", {
       status: 502,
