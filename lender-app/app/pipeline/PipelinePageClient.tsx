@@ -11,10 +11,16 @@ import {
   useState,
   startTransition,
 } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQueries, useQuery, type RequestForQueries } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
+import {
+  isTablePreviewEnrichmentAligned,
+  isTablePreviewRowsFullyEnriched,
+  mergeTablePreviewEnrichment,
+  type PipelineTablePreviewEnrichmentRow,
+} from "@/lib/pipeline/mergeTablePreviewEnrichment";
 import {
   NewPipelineHierarchyCreateDialog,
   type HierarchyCreateContext,
@@ -501,7 +507,62 @@ export function PipelinePageClient() {
       memberUserKey,
     };
   }, [orgQueryReady, showArchived, activeOrganizationId, memberUserKey]);
-  const rows = useQuery(api.pipeline.listTablePreview, listPreviewArgs);
+  /**
+   * Soft-fail hub core via `useQueries` (returns `Error` instead of throwing into
+   * the route error boundary). Server still must stay under Convex op limits —
+   * this only keeps chrome usable when a transient Server Error slips through.
+   */
+  const corePreviewQueries = useMemo((): RequestForQueries => {
+    if (listPreviewArgs === "skip") return {};
+    return {
+      core: {
+        query: api.pipeline.listTablePreview,
+        args: listPreviewArgs,
+      },
+    };
+  }, [listPreviewArgs]);
+  const corePreviewResults = useQueries(corePreviewQueries);
+  const rowsCoreRaw =
+    listPreviewArgs === "skip" ? undefined : corePreviewResults.core;
+  const listPreviewError =
+    rowsCoreRaw instanceof Error ? rowsCoreRaw : undefined;
+  const rowsCore =
+    rowsCoreRaw instanceof Error
+      ? undefined
+      : (rowsCoreRaw as PipelineTablePreviewRow[] | undefined);
+  /**
+   * Enrichment is best-effort (`useQueries` returns `Error` so the hub keeps
+   * painting when graph/read-budget enrichment fails). Deferred until core
+   * rows land so it does not compete with `listTablePreview` on first paint.
+   */
+  const coreRowsReady = rowsCore !== undefined;
+  const enrichmentQueries = useMemo((): RequestForQueries => {
+    if (listPreviewArgs === "skip" || !coreRowsReady) return {};
+    return {
+      enrichment: {
+        query: api.pipeline.listTablePreviewEnrichment,
+        args: listPreviewArgs,
+      },
+    };
+  }, [listPreviewArgs, coreRowsReady]);
+  const enrichmentResults = useQueries(enrichmentQueries);
+  const rowsEnrichmentRaw =
+    listPreviewArgs === "skip" || !coreRowsReady
+      ? undefined
+      : enrichmentResults.enrichment;
+  const rowsEnrichment =
+    rowsEnrichmentRaw instanceof Error
+      ? undefined
+      : (rowsEnrichmentRaw as PipelineTablePreviewEnrichmentRow[] | undefined);
+  const enrichmentAligned =
+    rowsCore !== undefined &&
+    isTablePreviewEnrichmentAligned(rowsCore, rowsEnrichment);
+  const rows = useMemo(() => {
+    if (rowsCore === undefined) return undefined;
+    return enrichmentAligned
+      ? mergeTablePreviewEnrichment(rowsCore, rowsEnrichment)
+      : rowsCore;
+  }, [rowsCore, rowsEnrichment, enrichmentAligned]);
   const referralPartnerListArgs = useMemo(() => {
     if (!orgQueryReady || !activeOrganizationId || !memberUserKey) return "skip" as const;
     return {
@@ -579,7 +640,17 @@ export function PipelinePageClient() {
     }
   }, [canUseHub, rows]);
 
-  const baseRows = rows ?? cachedRows;
+  const lastGoodRowsRef = useRef<PipelineTablePreviewRow[] | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    if (rows !== undefined) lastGoodRowsRef.current = rows;
+  }, [rows]);
+
+  const baseRows =
+    rows ??
+    (listPreviewError ? lastGoodRowsRef.current : undefined) ??
+    cachedRows;
   const resolvedRows: PipelineTablePreviewRow[] =
     optimisticRows ?? baseRows ?? EMPTY_PIPELINE;
 
@@ -723,7 +794,22 @@ export function PipelinePageClient() {
     [router, hubReturnParams],
   );
 
-  const listLoading = canUseHub ? rows === undefined : !cacheReady;
+  const listLoading = canUseHub
+    ? rowsCore === undefined && !listPreviewError
+    : !cacheReady;
+  /**
+   * Capital / client-involvement filters and note-count UI need enrichment.
+   * Live: enrichment must cover every current core file id with complete
+   * sentinels on every row (incomplete / graph-omitted snapshots stay gated).
+   */
+  const enrichmentReady = canUseHub
+    ? enrichmentAligned &&
+      rows !== undefined &&
+      isTablePreviewRowsFullyEnriched(rows)
+    : cacheReady &&
+      isTablePreviewRowsFullyEnriched(
+        (optimisticRows ?? cachedRows ?? EMPTY_PIPELINE) as PipelineTablePreviewRow[],
+      );
 
   usePipelineHubLayoutShiftTracker(
     hubListRef,
@@ -782,15 +868,18 @@ export function PipelinePageClient() {
     if (filterProjectKey) {
       out = out.filter((r) => hubRowProjectKey(r) === filterProjectKey);
     }
-    if (clientInvolvementFilters.clientId) {
+    // Defer capital + client-involvement filters until enrichment has merged
+    // (or offline cache). Applying early match-alls / false empties.
+    if (enrichmentReady && clientInvolvementFilters.clientId) {
       out = out.filter((r) =>
         rowMatchesClientInvolvementFilter(r, clientInvolvementFilters),
       );
     }
     if (
-      capitalStackFilters.fundingHealth !== "any" ||
-      capitalStackFilters.gapThreshold > 0 ||
-      capitalStackFilters.sourceType !== "any"
+      enrichmentReady &&
+      (capitalStackFilters.fundingHealth !== "any" ||
+        capitalStackFilters.gapThreshold > 0 ||
+        capitalStackFilters.sourceType !== "any")
     ) {
       out = out.filter((r) => rowMatchesCapitalStackFilter(r, capitalStackFilters));
     }
@@ -864,6 +953,7 @@ export function PipelinePageClient() {
     filterProjectKey,
     clientInvolvementFilters,
     capitalStackFilters,
+    enrichmentReady,
   ]);
 
   const graphIndex = useMemo(
@@ -1753,6 +1843,19 @@ export function PipelinePageClient() {
         PHASE_24_4D_ISOLATION.omitOperationalOrientationStrip ? "omitted" : "rendered"
       }
     >
+      {listPreviewError ? (
+        <div
+          role="alert"
+          className="rounded-dlc-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
+          data-testid="pipeline-hub-list-preview-error"
+        >
+          Pipeline list could not refresh
+          {listPreviewError.message
+            ? ` (${listPreviewError.message.slice(0, 160)})`
+            : ""}
+          . Showing cached rows when available — try again shortly.
+        </div>
+      ) : null}
       <div className="flex min-h-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1 className={hubPageTitleClass}>

@@ -1,4 +1,4 @@
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
@@ -90,6 +90,8 @@ import {
   resolveOrgPipelineFileAccessLevel,
   sessionKeyIsGlobalAdmin,
 } from "./organizationAccess";
+import { callerHasUnrestrictedOrgDataAccess } from "./viewerOrgAccess";
+import { PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID } from "./auth/platformGodMode";
 import {
   pipelineHierarchyFkArgs,
   resolvePipelineHierarchyForCreate,
@@ -111,6 +113,13 @@ import {
   syncCapitalSourcesFromProjectLoans,
 } from "./projectCapitalStack";
 import { batchGraphLinksForPipelineFiles } from "./pipelineGraphPreviewLinks";
+import {
+  takeContactFileLinksForFile,
+  takeFileLendersForFile,
+} from "./lib/pipelineFileEdgeReads";
+import {
+  PIPELINE_TABLE_PREVIEW_MAX_ROWS,
+} from "../lib/pipeline/tablePreviewReadBounds";
 
 /** Org-scoped files must record the authenticated creator as canonical owner. */
 function ownerFieldsForOrgCreate(
@@ -444,6 +453,65 @@ async function tryInsertLedgerWhenMarkedPaid(
   });
 }
 
+/**
+ * Hard cap on rows pulled by an org-scoped pipeline list scan. A single
+ * organization's pipeline is far below this; the cap only prevents a
+ * pathological org from turning a list subscription into an effectively
+ * unbounded read (see docs/governance/resource-consumption-policy.md). Mirrors
+ * `TASKS_GET_ALL_MAX_ROWS` in `tasks.ts`.
+ */
+const PIPELINE_LIST_MAX_ROWS = 20_000;
+
+/**
+ * Org-scoped pipeline rows for list/table surfaces, newest-first by
+ * `_creationTime` — identical ordering to the previous
+ * `ctx.db.query("pipeline").order("desc").collect()` full-table scan, but read
+ * through the `by_organization_createdAt` index so a hub subscription only
+ * touches the requesting org's rows instead of every organization's rows.
+ *
+ * Legacy rows with no `organizationId` belong to the primary workspace
+ * (`rowBelongsToOrganizationScope`), so they are folded in only for the primary
+ * default org — preserving `filterPipelineByOrgScope` semantics exactly.
+ *
+ * Callers still run `filterPipelineRowsForMember` afterward for owner/share/
+ * hierarchy ACL, which also re-applies org scoping (idempotent here).
+ */
+async function collectOrgScopedPipelineRows(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  maxRows: number = PIPELINE_LIST_MAX_ROWS,
+): Promise<Doc<"pipeline">[]> {
+  const scoped = await ctx.db
+    .query("pipeline")
+    .withIndex("by_organization_createdAt", (q) =>
+      q.eq("organizationId", organizationId),
+    )
+    .order("desc")
+    .take(maxRows);
+  if (
+    organizationId !== PRIMARY_PLATFORM_DEFAULT_ORGANIZATION_ID ||
+    scoped.length >= maxRows
+  ) {
+    return scoped;
+  }
+  // bounded: only fill remaining slots with legacy unstamped rows
+  const legacy = await ctx.db
+    .query("pipeline")
+    .withIndex("by_organization_createdAt", (q) =>
+      q.eq("organizationId", undefined),
+    )
+    .order("desc")
+    .take(maxRows - scoped.length);
+  const rows = scoped.concat(legacy);
+  rows.sort((a, b) => b._creationTime - a._creationTime);
+  return rows;
+}
+
+/**
+ * All pipeline rows, newest first. Archived rows are hidden by default —
+ * pass `includeArchived: true` to surface them (e.g. the "Show archived"
+ * toggle on the pipeline page).
+ */
 // ---------- Queries ----------
 
 /**
@@ -458,12 +526,16 @@ export const getAll = query({
   },
   handler: async (ctx, { includeArchived, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
-    let out = includeArchived ? rows : rows.filter((r) => r.archivedAt == null);
-    const god = await sessionKeyIsGlobalAdmin(ctx, memberUserKey);
-    out = god ? out : filterPipelineByOrgScope(out, organizationId);
-    out = await filterPipelineRowsForMember(ctx, out, organizationId, memberUserKey);
-    return out;
+    const rows = await collectOrgScopedPipelineRows(ctx, organizationId);
+    const out = includeArchived
+      ? rows
+      : rows.filter((r) => r.archivedAt == null);
+    return await filterPipelineRowsForMember(
+      ctx,
+      out,
+      organizationId,
+      memberUserKey,
+    );
   },
 });
 
@@ -799,9 +871,11 @@ function buildTablePreviewRow(
 }
 
 /**
- * Pipeline list + joined intake + selected lender labels for the table/board.
- * Prefer this over `listLight` on the pipeline page so columns stay in sync
- * with intake; other callers keep using `listLight` for a slimmer payload.
+ * First-paint hub table / board rows: ACL, hierarchy labels, deal columns,
+ * primary lender. Heavy enrichment (graphLinks, capital rollups, note counts,
+ * projectLinkedClients) lives in `listTablePreviewEnrichment` so the hub can
+ * paint before those docs land — and so each query stays under the Convex
+ * 4096-document read limit.
  */
 export const listTablePreview = query({
   args: {
@@ -818,39 +892,42 @@ export const listTablePreview = query({
   },
   handler: async (ctx, { includeArchived, organizationId, memberUserKey }) => {
     await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
-    const rows = await ctx.db.query("pipeline").order("desc").collect();
+    const rows = await collectOrgScopedPipelineRows(
+      ctx,
+      organizationId,
+      PIPELINE_TABLE_PREVIEW_MAX_ROWS,
+    );
     const filtered = rows.filter(
       (r) => includeArchived || r.archivedAt == null,
     );
-    const orgScoped = filterPipelineByOrgScope(filtered, organizationId);
-    const visible = await filterPipelineRowsForMember(
+    const aclVisible = await filterPipelineRowsForMember(
       ctx,
-      orgScoped,
+      filtered,
       organizationId,
+      memberUserKey,
+    );
+    /** Hub cannot paginate; hard-cap so joins stay proportional to visible rows. */
+    const visible = aclVisible.slice(0, PIPELINE_TABLE_PREVIEW_MAX_ROWS);
+    const unrestricted = await callerHasUnrestrictedOrgDataAccess(
+      ctx,
       memberUserKey,
     );
     const intakeIds = new Set<Id<"intakeSheets">>();
     const lenderIds = new Set<Id<"lenders">>();
-    const fileIdSet = new Set(visible.map((r) => String(r._id)));
-    const orgStr = String(organizationId);
     for (const r of visible) {
       if (r.intakeSheetId) intakeIds.add(r.intakeSheetId);
       if (r.selectedLenderId) lenderIds.add(r.selectedLenderId);
       for (const lid of r.lenders ?? []) lenderIds.add(lid);
     }
     const fileLenderEdgesByFile = new Map<string, Doc<"fileLenders">[]>();
-    const allFileLenders = (await ctx.db.query("fileLenders").collect()).filter(
-      (edge) =>
-        fileIdSet.has(String(edge.fileId)) &&
-        String(edge.organizationId) === orgStr,
+    // Per visible file via `by_file` + take(N) — not org-wide junction collect.
+    await Promise.all(
+      visible.map(async (p) => {
+        const edges = await takeFileLendersForFile(ctx, p._id);
+        fileLenderEdgesByFile.set(String(p._id), edges);
+        for (const edge of edges) lenderIds.add(edge.lenderId);
+      }),
     );
-    for (const edge of allFileLenders) {
-      const key = String(edge.fileId);
-      const bucket = fileLenderEdgesByFile.get(key) ?? [];
-      bucket.push(edge);
-      fileLenderEdgesByFile.set(key, bucket);
-      lenderIds.add(edge.lenderId);
-    }
     const intakeDocs = await Promise.all(
       [...intakeIds].map((id) => ctx.db.get(id)),
     );
@@ -874,14 +951,18 @@ export const listTablePreview = query({
         doc.company?.trim() || doc.contactName?.trim() || "Lender",
       );
     }
-    const editAccess = await Promise.all(
-      visible.map((row) =>
-        resolveOrgPipelineFileAccessLevel(ctx, row, memberUserKey),
-      ),
-    );
+    const editAccess = unrestricted
+      ? visible.map(() => "edit" as const)
+      : await Promise.all(
+          visible.map((row) =>
+            resolveOrgPipelineFileAccessLevel(ctx, row, memberUserKey),
+          ),
+        );
     const ownershipRows = await Promise.all(
       visible.map((p) =>
-        buildPipelineOwnershipPresentation(ctx, p, memberUserKey),
+        buildPipelineOwnershipPresentation(ctx, p, memberUserKey, {
+          knownUnrestrictedAccess: unrestricted,
+        }),
       ),
     );
     const hierarchyRows = await Promise.all(
@@ -902,20 +983,12 @@ export const listTablePreview = query({
       ),
     ];
     const projectTitleById = new Map<string, string>();
-    const projectLinkedById = new Map<
-      string,
-      Awaited<ReturnType<typeof resolveProjectLinkedClients>>
-    >();
     await Promise.all(
       projectIds.map(async (pid) => {
         const project = await ctx.db.get(pid);
         if (!project) return;
         const title = project.title?.trim();
         if (title) projectTitleById.set(String(pid), title);
-        projectLinkedById.set(
-          String(pid),
-          await resolveProjectLinkedClients(ctx, project),
-        );
       }),
     );
     const clientLabelById = new Map<string, string>();
@@ -940,10 +1013,7 @@ export const listTablePreview = query({
     const contactIdsForTitle = new Set<Id<"contacts">>();
     await Promise.all(
       visible.map(async (p) => {
-        const links = await ctx.db
-          .query("contactFileLinks")
-          .withIndex("by_file", (q) => q.eq("fileId", p._id))
-          .collect();
+        const links = await takeContactFileLinksForFile(ctx, p._id);
         contactLinksByFile.set(String(p._id), links);
         for (const link of links) contactIdsForTitle.add(link.contactId);
       }),
@@ -963,42 +1033,13 @@ export const listTablePreview = query({
         });
       }),
     );
-    const capitalRollupByProject = await batchCapitalRollupsForProjects(
-      ctx,
-      projectIds,
-    );
-    const fileNoteCounts = await batchPipelineFileNoteCounts(ctx, visible);
-    const graphLinksByFile = await batchGraphLinksForPipelineFiles(
-      ctx,
-      visible,
-      organizationId,
-      visible.map((p, i) => {
-        const h = hierarchyRows[i]!;
-        return {
-          fileId: p._id,
-          linkedFromHierarchy: h.linkedClients.map((c) => ({
-            clientId: String(c.clientId),
-            displayName: c.displayName,
-            relationshipType: c.relationshipType,
-          })),
-          clientDisplayName:
-            h.client.kind === "record"
-              ? h.client.displayName
-              : h.client.displayName,
-          projectDisplayTitle:
-            h.project.kind === "record" ? h.project.title : h.project.title,
-        };
-      }),
-    );
     return visible.map((p, i) => {
       const h = hierarchyRows[i]!;
       const intake = resolveDealPayloadForPreview(p, intakeById);
-      const graphLinks = graphLinksByFile.get(String(p._id));
       const clientDisplayName = resolveTableRowClientDisplayName({
         hierarchy: h,
         intake,
         pipeline: p,
-        graphLinks,
         clientRecordLabel: p.clientId
           ? clientLabelById.get(String(p.clientId))
           : undefined,
@@ -1012,7 +1053,6 @@ export const listTablePreview = query({
         hierarchy: h,
         intake,
         pipeline: p,
-        graphLinks,
         projectRecordTitle: p.projectId
           ? projectTitleById.get(String(p.projectId))
           : undefined,
@@ -1048,18 +1088,139 @@ export const listTablePreview = query({
         clientDisplayName,
         projectDisplayTitle,
         linkedClients: h.linkedClients,
-        projectLinkedClients: p.projectId
-          ? (projectLinkedById.get(String(p.projectId)) ?? [])
-          : [],
-        projectCapitalRollup: p.projectId
-          ? capitalRollupByProject.get(String(p.projectId))
-          : undefined,
-        graphLinks,
-        fileNotesCount: fileNoteCounts.get(String(p._id)) ?? 0,
+        // Deferred — filled by listTablePreviewEnrichment.
+        // Leave unknown (undefined), never coerce to [] / 0 — consumers must
+        // not treat missing enrichment as authoritative empty.
+        projectLinkedClients: undefined,
+        projectCapitalRollup: undefined,
+        graphLinks: undefined,
+        fileNotesCount: undefined,
       };
     });
   },
 });
+
+/**
+ * Deferred hub enrichment for `listTablePreview`: graph badges, capital
+ * rollups, note counts, and project linked clients. Same ACL visible set as
+ * the first-paint query; merge client-side by file id.
+ *
+ * Soft-fails graph label fan-out so a dense org cannot 4096-kill the whole
+ * hub — notes/capital/projectLinkedClients still return; `graphLinks` is
+ * omitted (non-authoritative) on failure.
+ */
+export const listTablePreviewEnrichment = query({
+  args: {
+    includeArchived: v.optional(v.boolean()),
+    includeSnoozed: v.optional(v.boolean()),
+    ...orgListScopeArgs,
+  },
+  handler: async (ctx, { includeArchived, organizationId, memberUserKey }) => {
+    await assertOrgScopeArgs(ctx, organizationId, memberUserKey);
+    const rows = await collectOrgScopedPipelineRows(
+      ctx,
+      organizationId,
+      PIPELINE_TABLE_PREVIEW_MAX_ROWS,
+    );
+    const filtered = rows.filter(
+      (r) => includeArchived || r.archivedAt == null,
+    );
+    const aclVisible = await filterPipelineRowsForMember(
+      ctx,
+      filtered,
+      organizationId,
+      memberUserKey,
+    );
+    const visible = aclVisible.slice(0, PIPELINE_TABLE_PREVIEW_MAX_ROWS);
+    const projectIds = [
+      ...new Set(
+        visible
+          .map((p) => p.projectId)
+          .filter((id): id is Id<"projects"> => id != null),
+      ),
+    ];
+    const projectLinkedById = new Map<
+      string,
+      Awaited<ReturnType<typeof resolveProjectLinkedClients>>
+    >();
+    // Notes / capital / project-linked first so they land even when graph hits the budget.
+    const [capitalRollupByProject, fileNoteCounts] = await Promise.all([
+      batchCapitalRollupsForProjects(ctx, projectIds),
+      batchPipelineFileNoteCounts(ctx, visible),
+    ]);
+    await Promise.all(
+      projectIds.map(async (pid) => {
+        const project = await ctx.db.get(pid);
+        if (!project) return;
+        projectLinkedById.set(
+          String(pid),
+          await resolveProjectLinkedClients(ctx, project),
+        );
+      }),
+    );
+    /**
+     * Skip a second full-hub `safeResolveFileHierarchy` pass here. Core
+     * `listTablePreview` already resolved hierarchy for table columns; graph
+     * badges get multi-client links from `fileClients` / stamped FKs inside
+     * `batchGraphLinksForPipelineFiles`. Re-resolving hierarchy doubled
+     * per-file edge reads on the enrichment subscription.
+     */
+    let graphLinksByFile: Awaited<
+      ReturnType<typeof batchGraphLinksForPipelineFiles>
+    > | null = null;
+    try {
+      graphLinksByFile = await batchGraphLinksForPipelineFiles(
+        ctx,
+        visible,
+        organizationId,
+        visible.map((p) => ({
+          fileId: p._id,
+          linkedFromHierarchy: [],
+          clientDisplayName: "",
+          projectDisplayTitle: "",
+        })),
+      );
+    } catch (err) {
+      /**
+       * Fail soft: notes/capital already resolved. Never let graph label
+       * over-read kill the enrichment query (page-level Server Error).
+       * CRITICAL: omit `graphLinks` (leave undefined) — do NOT publish `[]`.
+       * Clients treat `graphLinks !== undefined` as authoritative enrichment.
+       */
+      console.warn(
+        "[listTablePreviewEnrichment] graph links failed; omitting graphLinks (non-authoritative)",
+        err instanceof Error ? err.message : err,
+      );
+      graphLinksByFile = null;
+    }
+    return visible.map((p) => {
+      const base = {
+        fileId: p._id,
+        fileNotesCount: fileNoteCounts.get(String(p._id)) ?? 0,
+        projectCapitalRollup: p.projectId
+          ? capitalRollupByProject.get(String(p.projectId))
+          : undefined,
+        projectLinkedClients: p.projectId
+          ? (projectLinkedById.get(String(p.projectId)) ?? [])
+          : [],
+      };
+      if (!graphLinksByFile) {
+        return base;
+      }
+      const graphLinks =
+        graphLinksByFile.get(String(p._id)) ?? {
+          clients: [],
+          projects: [],
+          lenders: [],
+          referrals: [],
+          team: [],
+          tasks: [],
+        };
+      return { ...base, graphLinks };
+    });
+  },
+});
+
 
 /**
  * Rows with a given pipeline stage (via `by_status` index).
