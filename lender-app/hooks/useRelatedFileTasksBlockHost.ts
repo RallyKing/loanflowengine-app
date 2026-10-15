@@ -10,7 +10,7 @@ import { useLiveConnection } from "@/lib/useLiveConnection";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 
 export type RelatedFileTasksBlockHostArgs = {
-  /** When false, Convex task queries are skipped (unless `tasks` is supplied). */
+  /** When false, Convex task queries are skipped. */
   enabled: boolean;
   pipelineFileId: Id<"pipeline">;
   organizationId: Id<"organizations">;
@@ -18,16 +18,12 @@ export type RelatedFileTasksBlockHostArgs = {
   actorUserKey?: string;
   canEdit: boolean;
   onOpenTask: (id: Id<"tasks">) => void;
-  /**
-   * Preloaded tasks from an existing subscription (e.g. file workspace).
-   * When set, this hook does not open a second `byRelatedFile` subscription.
-   */
-  tasks?: Doc<"tasks">[] | undefined;
-  attachmentCounts?: Record<string, number> | undefined;
 };
 
 /**
- * Shared FileTasksBlock host for workspace overview + hub card modal.
+ * FileTasksBlock host for hub card modal (and future shared callers).
+ * Queries skip when `enabled` is false. Workspace overview keeps its own
+ * offline-aware `runPatchTask` path.
  */
 export function useRelatedFileTasksBlockHost(
   args: RelatedFileTasksBlockHostArgs,
@@ -40,12 +36,9 @@ export function useRelatedFileTasksBlockHost(
     actorUserKey,
     canEdit,
     onOpenTask,
-    tasks: externalTasks,
-    attachmentCounts: externalAttachmentCounts,
   } = args;
 
   const { canUseHub } = useLiveConnection();
-  const useExternalTasks = externalTasks !== undefined;
 
   const orgScope = useMemo(
     () => ({ organizationId, memberUserKey }),
@@ -54,30 +47,18 @@ export function useRelatedFileTasksBlockHost(
 
   const linkedTasks = useQuery(
     api.tasks.byRelatedFile,
-    enabled && !useExternalTasks
-      ? { fileId: pipelineFileId, ...orgScope }
-      : "skip",
+    enabled ? { fileId: pipelineFileId, ...orgScope } : "skip",
   );
-
-  const resolvedTasks = useExternalTasks ? externalTasks : linkedTasks;
 
   const taskIds = useMemo(
-    () => (resolvedTasks ?? []).map((t) => t._id),
-    [resolvedTasks],
+    () => (linkedTasks ?? []).map((t) => t._id),
+    [linkedTasks],
   );
 
-  const queriedAttachmentCounts = useQuery(
+  const attachmentCounts = useQuery(
     api.tasks.countTaskFilesForTasks,
-    enabled &&
-      !useExternalTasks &&
-      taskIds.length > 0
-      ? { taskIds, ...orgScope }
-      : "skip",
+    enabled && taskIds.length > 0 ? { taskIds, ...orgScope } : "skip",
   );
-
-  const attachmentCounts = useExternalTasks
-    ? externalAttachmentCounts
-    : queriedAttachmentCounts;
 
   const createTask = useMutation(api.tasks.create);
   const patchTaskMutation = useMutation(api.tasks.patch);
@@ -178,13 +159,9 @@ export function useRelatedFileTasksBlockHost(
     [actor, orgScope, patchTaskMutation],
   );
 
-  const loading = useExternalTasks
-    ? resolvedTasks === undefined
-    : enabled && linkedTasks === undefined;
-
   return {
-    tasks: resolvedTasks ?? [],
-    loading,
+    tasks: linkedTasks ?? [],
+    loading: enabled && linkedTasks === undefined,
     attachmentCounts: attachmentCounts ?? undefined,
     organizationId,
     memberUserKey,

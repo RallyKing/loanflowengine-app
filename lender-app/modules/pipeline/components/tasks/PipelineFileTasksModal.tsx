@@ -23,8 +23,9 @@ export type PipelineFileTasksModalProps = {
 };
 
 /**
- * Hub / board file-card tasks modal — full {@link FileTasksBlock} via the
- * shared related-file host (same orchestration as the loan-file overview).
+ * Hub / board file-card tasks modal — full {@link FileTasksBlock} via
+ * {@link useRelatedFileTasksBlockHost}. Workspace overview keeps a separate
+ * offline-aware patch path.
  */
 export function PipelineFileTasksModal({
   open,

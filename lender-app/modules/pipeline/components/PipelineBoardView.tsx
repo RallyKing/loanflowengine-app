@@ -389,7 +389,10 @@ function BoardCard({
       <HubTriageHighlightFrame
         highlight={triageHighlight}
         underBadge={tasksUnderBadge}
-        className="rounded-dlc-md pr-1 md:pr-2"
+        className={cn(
+          "rounded-dlc-md",
+          (triageHighlight || tasksUnderBadge) && "md:pr-28",
+        )}
         badgeClassName="top-1.5 right-1.5"
       >
         <BoardCardContent

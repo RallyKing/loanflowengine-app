@@ -21,8 +21,8 @@ export type PipelineFileTasksCardControlProps = {
 };
 
 /**
- * Card-owned preview + modal host. Task list query is skipped until opened
- * (one subscription for the active card only).
+ * Card-owned preview + modal host. Modal mounts only while open so hub rows
+ * do not pay for OverlayShell/TaskDrawer trees when idle.
  */
 export function PipelineFileTasksCardControl({
   pipelineFileId,
@@ -49,7 +49,7 @@ export function PipelineFileTasksCardControl({
           setOpen(true);
         }}
       />
-      {organizationId && memberUserKey?.trim() ? (
+      {open && organizationId && memberUserKey?.trim() ? (
         <PipelineFileTasksModal
           open={open}
           onClose={() => setOpen(false)}
