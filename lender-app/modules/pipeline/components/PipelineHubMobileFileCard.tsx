@@ -15,10 +15,8 @@ import { ResourceOwnershipLine } from "@/components/ownership/ResourceOwnershipL
 import { useOrgPermissions } from "@/lib/useOrgPermissions";
 import { useActorUserKey } from "@/lib/useActorUserKey";
 import { useOrgMemberDisplayLabel } from "@/lib/useOrgMemberDisplayLabel";
-import {
-  HubTriageHighlightFrame,
-  TaskRollupBadge,
-} from "@/components/pipeline/tasks/HubTriageHighlightChrome";
+import { HubTriageHighlightFrame } from "@/components/pipeline/tasks/HubTriageHighlightChrome";
+import { PipelineFileTasksCardControl } from "@/components/pipeline/tasks/PipelineFileTasksCardControl";
 import {
   EMPTY_HUB_TRIAGE_HIGHLIGHT_MAP,
   resolveTaskRollupCounts,
@@ -71,15 +69,29 @@ export function PipelineHubMobileFileCard({
     kind: "file",
     id: String(r._id),
   });
+  const tasksUnderBadge =
+    activeOrganizationId && memberUserKey ? (
+      <PipelineFileTasksCardControl
+        pipelineFileId={r._id}
+        fileName={r.fileName}
+        organizationId={activeOrganizationId}
+        memberUserKey={memberUserKey}
+        canEdit={r.canEditFile}
+        highlight={fileHighlight}
+        counts={fileTaskCounts}
+      />
+    ) : null;
+
   return (
     <HubTriageHighlightFrame
       highlight={fileHighlight}
+      underBadge={tasksUnderBadge}
       className={cn(
         hubMobileFileCardClass,
         archived && "opacity-65",
         selected &&
           "ring-2 ring-primary/30 ring-offset-2 ring-offset-background",
-        fileHighlight && "md:pr-28",
+        (fileHighlight || tasksUnderBadge) && "md:pr-32",
       )}
       badgeClassName="top-2 right-2"
     >
@@ -156,7 +168,6 @@ export function PipelineHubMobileFileCard({
             lastActivityAt={r.updatedAt}
             compact
           />
-          <TaskRollupBadge counts={fileTaskCounts} />
         </div>
         {r.ownership?.ownershipLine ? (
           <ResourceOwnershipLine

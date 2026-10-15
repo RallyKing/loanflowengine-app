@@ -1,5 +1,15 @@
 [
   {
+    "slug": "2026-10-14-pipeline-card-file-tasks-preview",
+    "title": "Open file tasks from pipeline cards without opening the file",
+    "summary": "List and board file cards show a clickable preview of open tasks under the triage status badge. Tap it to manage tasks in a modal — complete, edit, schedule, snooze, and triage — without leaving the pipeline hub.",
+    "body": [
+      "On pipeline list, hierarchy, mobile, and board cards, the far-right rail under the triage badge (for example BFS or CLIENT) now shows assigned open task titles and a count, or a No open tasks empty state.",
+      "Clicking the preview opens the same in-file tasks block used inside the loan file, so you can add and work tasks without navigating into the full file workspace."
+    ],
+    "changeType": "improved"
+  },
+  {
     "slug": "2026-10-14-pipeline-clear-search",
     "title": "Clear pipeline hub search in one tap",
     "summary": "When the Pipeline hub search box has text, a Clear search control appears beside it so you can reset the query without hunting for the small X inside the field.",

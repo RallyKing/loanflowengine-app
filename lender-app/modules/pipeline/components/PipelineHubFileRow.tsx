@@ -21,10 +21,8 @@ import {
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
 import type { InlineSelectOption } from "@/components/inline";
 import { PipelineHubNotesIndicatorChip } from "@/components/pipeline/notes/PipelineHubNotesIndicatorChip";
-import {
-  HubTriageHighlightFrame,
-  TaskRollupBadge,
-} from "@/components/pipeline/tasks/HubTriageHighlightChrome";
+import { HubTriageHighlightFrame } from "@/components/pipeline/tasks/HubTriageHighlightChrome";
+import { PipelineFileTasksCardControl } from "@/components/pipeline/tasks/PipelineFileTasksCardControl";
 import {
   EMPTY_HUB_TRIAGE_HIGHLIGHT_MAP,
   resolveTaskRollupCounts,
@@ -112,15 +110,29 @@ export function PipelineHubFileRow({
     />
   );
 
+  const tasksUnderBadge =
+    organizationId && memberUserKey ? (
+      <PipelineFileTasksCardControl
+        pipelineFileId={row._id}
+        fileName={row.fileName}
+        organizationId={organizationId}
+        memberUserKey={memberUserKey}
+        canEdit={row.canEditFile}
+        highlight={fileHighlight}
+        counts={fileTaskCounts}
+      />
+    ) : null;
+
   return (
     <HubTriageHighlightFrame
       highlight={fileHighlight}
+      underBadge={tasksUnderBadge}
       className={cn(
         "relative",
         hubLoanCardClass,
         stackTotal > 1 && "ml-3 border-l-2 border-l-primary/30",
         focused && hubLoanCardFocusedClass,
-        fileHighlight && "md:pr-28",
+        (fileHighlight || tasksUnderBadge) && "md:pr-32",
       )}
       badgeClassName="top-1.5"
     >
@@ -176,7 +188,6 @@ export function PipelineHubFileRow({
                   lastActivityAt={row.updatedAt}
                   compact
                 />
-                <TaskRollupBadge counts={fileTaskCounts} />
                 {(row.linkedClients?.length ?? 0) > 1 ? (
                   <LinkedClientChipRow linkedClients={row.linkedClients ?? []} />
                 ) : null}
@@ -259,7 +270,6 @@ export function PipelineHubFileRow({
                 compact
                 className="ml-0.5"
               />
-              <TaskRollupBadge counts={fileTaskCounts} className="ml-0.5" />
             </>
           }
           tertiary={

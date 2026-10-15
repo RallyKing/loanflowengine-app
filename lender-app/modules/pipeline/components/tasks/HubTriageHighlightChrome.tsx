@@ -87,53 +87,60 @@ export function HubTriageHighlightBadge({
 }
 
 /**
- * 4px left border + triage badge.
- * Mobile: badge is in document flow (own row) so it never overlays titles.
- * Desktop (md+): absolute top-right; callers reserve space with `md:pr-28`.
+ * Optional left accent + single top-right badge stack (one React mount).
+ * Mobile: in-flow via `max-md:static`; desktop: absolute top-right.
+ * Callers reserve space with `md:pr-28` / `md:pr-32` when chrome is present.
  */
 export function HubTriageHighlightFrame({
   highlight,
   children,
   className,
   badgeClassName,
+  underBadge,
 }: {
   highlight?: HubTriageHighlightView | null;
   children: ReactNode;
   className?: string;
-  /** Desktop absolute offset only (e.g. `top-1.5`). Ignored on max-md flow badge. */
+  /** Desktop absolute offset only (e.g. `top-1.5`). */
   badgeClassName?: string;
+  /** Rendered under the triage badge (far-right card rail). Mount once. */
+  underBadge?: ReactNode;
 }) {
-  if (!highlight) {
+  const hasChrome = Boolean(highlight) || underBadge != null;
+
+  if (!hasChrome) {
     return <div className={className}>{children}</div>;
   }
 
   return (
     <div
       className={cn("relative", className)}
-      style={{
-        borderLeftWidth: 4,
-        borderLeftColor: highlight.hexCode,
-        boxShadow: `inset 4px 0 14px -4px ${highlight.hexCode}33`,
-      }}
-      data-testid="hub-triage-highlight-frame"
-      data-triage-color={highlight.hexCode}
+      style={
+        highlight
+          ? {
+              borderLeftWidth: 4,
+              borderLeftColor: highlight.hexCode,
+              boxShadow: `inset 4px 0 14px -4px ${highlight.hexCode}33`,
+            }
+          : undefined
+      }
+      data-testid={
+        highlight ? "hub-triage-highlight-frame" : "hub-file-tasks-frame"
+      }
+      data-triage-color={highlight?.hexCode}
     >
-      {/* Mobile: in-flow — never overlays title / project / ★ lines */}
-      <div
-        className="pointer-events-none flex w-full justify-end px-2.5 pb-0 pt-2 md:hidden"
-        data-testid="hub-triage-highlight-badge-slot-mobile"
-      >
-        <HubTriageHighlightBadge highlight={highlight} />
-      </div>
-      {/* Desktop: absolute top-right (pointer-events-none so stage pill stays clickable) */}
+      {/* One stack — in-flow on mobile, absolute on md+ (never duplicate stateful underBadge). */}
       <div
         className={cn(
-          "pointer-events-none absolute right-2 top-2 z-[2] hidden md:block",
+          "pointer-events-none z-[2] flex max-w-full flex-col items-end gap-1",
+          "max-md:relative max-md:w-full max-md:px-2.5 max-md:pb-0 max-md:pt-2",
+          "md:absolute md:right-2 md:top-2",
           badgeClassName,
         )}
-        data-testid="hub-triage-highlight-badge-slot-desktop"
+        data-testid="hub-triage-highlight-badge-stack"
       >
-        <HubTriageHighlightBadge highlight={highlight} />
+        {highlight ? <HubTriageHighlightBadge highlight={highlight} /> : null}
+        {underBadge}
       </div>
       {children}
     </div>
