@@ -7,6 +7,11 @@ import { normalizePortalToken } from "@/lib/portalToken";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+function looksLikeStorageId(raw: string): boolean {
+  // Convex document ids are typically table-prefix + alphanumeric body.
+  return /^[a-zA-Z0-9_-]{16,128}$/.test(raw);
+}
+
 /**
  * Public redirect: bundle-token + storageId → short-lived Convex storage URL.
  * Only clientTemplateAttachments on in-scope tasks are authorized server-side.
@@ -26,7 +31,7 @@ export async function GET(
   const companySlug =
     req.nextUrl.searchParams.get("companySlug")?.trim() || undefined;
 
-  if (!bundleToken || !storageId) {
+  if (!bundleToken || !storageId || !looksLikeStorageId(storageId)) {
     return new NextResponse("Invalid template link.", { status: 400 });
   }
 
@@ -47,7 +52,19 @@ export async function GET(
       });
     }
     return NextResponse.redirect(result.url, 302);
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Invalid Convex Id / argument validation → treat as missing (fail closed).
+    if (
+      /ArgumentValidationError|invalid.*id|does not match|Value does not match/i.test(
+        message,
+      )
+    ) {
+      return new NextResponse("Template not available for this link.", {
+        status: 404,
+      });
+    }
+    console.error("[client-template-download]", message);
     return new NextResponse("Could not resolve template download.", {
       status: 502,
     });
