@@ -359,3 +359,45 @@ export function allTrackRecordAssociatedContactIds(input: {
       .filter(Boolean) as string[],
   ]);
 }
+
+/**
+ * Normalize free-text / locale dates to `YYYY-MM-DD` for `<input type="date">`.
+ * Returns "" when empty or unparseable (caller keeps prior display via raw value).
+ */
+export function toTrackRecordDateInputValue(
+  value: string | undefined | null,
+): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const mdy = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (mdy) {
+    const month = Number(mdy[1]);
+    const day = Number(mdy[2]);
+    let year = Number(mdy[3]);
+    if (year < 100) year += year >= 70 ? 1900 : 2000;
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && year >= 1900) {
+      return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return "";
+  const d = new Date(parsed);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/** True when any guarantor owns the row but Project Type is blank (Excel counts stay 0). */
+export function trackRecordRowNeedsProjectTypeForExperience(
+  row: DealTrackRecordRow | undefined | null,
+): boolean {
+  if (!row) return false;
+  if ((row.projectType ?? "").trim()) return false;
+  return OWNED_KEYS.some((key) => normalizeYesNo(row[key]) === "Yes");
+}
+
+export function countTrackRecordRowsNeedingProjectType(
+  rows: readonly DealTrackRecordRow[] | undefined | null,
+): number {
+  return (rows ?? []).filter(trackRecordRowNeedsProjectTypeForExperience).length;
+}

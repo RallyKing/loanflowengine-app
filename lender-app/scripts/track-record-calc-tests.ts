@@ -10,10 +10,13 @@ import {
 import {
   computeTrackRecordExperience,
   computeTrackRecordScheduleTotals,
+  countTrackRecordRowsNeedingProjectType,
   createEmptyTrackRecordRow,
   rowHasNewConstructionExperience,
   rowHasRehabExperience,
+  toTrackRecordDateInputValue,
   trackRecordRowHasIdentity,
+  trackRecordRowNeedsProjectTypeForExperience,
   type DealTrackRecordRow,
 } from "../lib/trackRecord/trackRecordModel";
 
@@ -172,9 +175,37 @@ function testCopyBlockMergesAssigneesAndGuarantors() {
   assert.equal(trackRecordRowHasIdentity(merged.rows[0]!), true);
 }
 
+function testProjectTypeCueAndDateNormalization() {
+  const needsType: DealTrackRecordRow = {
+    ...createEmptyTrackRecordRow(),
+    address: "Cue St",
+    ownedByGuarantor1: "Yes",
+  };
+  assert.equal(trackRecordRowNeedsProjectTypeForExperience(needsType), true);
+  assert.equal(
+    trackRecordRowNeedsProjectTypeForExperience({
+      ...needsType,
+      projectType: "Rehab",
+    }),
+    false,
+  );
+  assert.equal(
+    countTrackRecordRowsNeedingProjectType([
+      needsType,
+      createEmptyTrackRecordRow(),
+      { ...needsType, ownedByGuarantor1: "No" },
+    ]),
+    1,
+  );
+  assert.equal(toTrackRecordDateInputValue("2024-06-15"), "2024-06-15");
+  assert.equal(toTrackRecordDateInputValue("6/15/2024"), "2024-06-15");
+  assert.equal(toTrackRecordDateInputValue(""), "");
+}
+
 testRehabAndNewConstructionFlags();
 testExperienceCountsAndQualifyingMax();
 testMoneyTotalsIgnoreEmptyRows();
 testCopyRowsPreservesAssigneesWithoutBlockMeta();
 testCopyBlockMergesAssigneesAndGuarantors();
-console.log("5 track-record calc/copy tests passed.");
+testProjectTypeCueAndDateNormalization();
+console.log("6 track-record calc/copy tests passed.");
