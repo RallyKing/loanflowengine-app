@@ -1,15 +1,23 @@
 /**
  * Email-ready paste block after Generate Client Link.
  * Bullets include the full request: title, description, instruction text, and links.
+ * Tasks with client template attachments also get secure Download template: URLs.
  */
 
 import { fileTaskTitleForClientLinkEmail } from "./fileTaskClientTemplates";
+
+export type ClientLinkEmailTemplateDownload = {
+  fileName: string;
+  url: string;
+};
 
 export type ClientLinkEmailItem = {
   title: string;
   description?: string;
   instructionText?: string;
   instructionUrl?: string;
+  /** Tokenized (or otherwise durable) client template download URLs. */
+  templateDownloads?: ClientLinkEmailTemplateDownload[];
 };
 
 export function flattenRichTextForEmail(raw: string): string {
@@ -60,10 +68,12 @@ export function clientLinkEmailItemFromFileTask(task: {
   clientInstructionText?: string | null;
   instructionUrl?: string | null;
   clientTemplateAttachments?: { length: number } | null;
+  templateDownloads?: readonly ClientLinkEmailTemplateDownload[] | null;
 }): ClientLinkEmailItem {
   const title = fileTaskTitleForClientLinkEmail(
     task.title?.trim() || "Document request",
-    (task.clientTemplateAttachments?.length ?? 0) > 0,
+    (task.clientTemplateAttachments?.length ?? 0) > 0 ||
+      (task.templateDownloads?.length ?? 0) > 0,
   );
   const description = flattenRichTextForEmail(task.description ?? "");
   const instructionText = flattenRichTextForEmail(task.clientInstructionText ?? "");
@@ -74,6 +84,13 @@ export function clientLinkEmailItemFromFileTask(task: {
   }
   if (instructionText) item.instructionText = instructionText;
   if (instructionUrl) item.instructionUrl = instructionUrl;
+  const downloads = (task.templateDownloads ?? [])
+    .map((d) => ({
+      fileName: d.fileName.trim(),
+      url: d.url.trim(),
+    }))
+    .filter((d) => d.url.length > 0);
+  if (downloads.length > 0) item.templateDownloads = downloads;
   return item;
 }
 
@@ -100,6 +117,21 @@ function formatEmailBullet(item: ClientLinkEmailItem): string | null {
   if (url && !urlAlreadyIncluded) {
     lines.push(`  ${url}`);
   }
+
+  const downloads = item.templateDownloads ?? [];
+  const multi = downloads.length > 1;
+  for (const dl of downloads) {
+    const dlUrl = dl.url.trim();
+    if (!dlUrl) continue;
+    if (combinedBody.toLowerCase().includes(dlUrl.toLowerCase())) continue;
+    const name = dl.fileName.trim();
+    if (multi && name) {
+      lines.push(`  Download template (${name}): ${dlUrl}`);
+    } else {
+      lines.push(`  Download template: ${dlUrl}`);
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -118,4 +150,40 @@ export function buildClientLinkEmailCopy(
     bullets.length > 0 ? bullets.join("\n") : "• (document requests)";
   const url = portalUrl.trim();
   return `${block}\n\nPlease upload the documents securely using the link below:\n\n${url}`;
+}
+
+/** Document-list portion of email-ready copy (excludes the portal upload footer). */
+export function clientLinkEmailDocumentListBlock(emailCopy: string): string {
+  return emailCopy
+    .replace(
+      /\n\nPlease upload the documents securely using the link below:\n\n[\s\S]*$/i,
+      "",
+    )
+    .trim();
+}
+
+/**
+ * Ensure Send Invite body includes the document list (with template download
+ * links) while keeping {{Upload_Link}} / portal URL handling intact.
+ */
+export function mergeClientLinkListIntoInviteBody(
+  bodyText: string,
+  emailCopy: string,
+): string {
+  const listBlock = clientLinkEmailDocumentListBlock(emailCopy);
+  if (!listBlock) return bodyText;
+  if (
+    bodyText.includes(listBlock) ||
+    bodyText.includes("Download template:")
+  ) {
+    return bodyText;
+  }
+  if (bodyText.includes("{{Upload_Link}}")) {
+    return bodyText.replace(
+      "{{Upload_Link}}",
+      `${listBlock}\n\n{{Upload_Link}}`,
+    );
+  }
+  const trimmed = bodyText.trim();
+  return trimmed ? `${trimmed}\n\n${listBlock}` : listBlock;
 }

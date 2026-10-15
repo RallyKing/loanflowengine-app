@@ -41,6 +41,30 @@ export function buildLegacyClientPortalUrl(plainToken: string): string {
   return `${origin}/client-portal/${encodeURIComponent(plainToken.trim())}`;
 }
 
+/**
+ * Durable client-template download URL scoped to a portal bundle token.
+ * Resolves via `/client-portal/{token}/template/{storageId}` (slug form rewritten in middleware).
+ * Only storage ids attached as `clientTemplateAttachments` on in-scope tasks are served.
+ */
+export function buildClientTemplateDownloadUrl(
+  companySlug: string,
+  plainToken: string,
+  storageId: string,
+): string {
+  const portal = buildClientPortalUrl(companySlug, plainToken);
+  const id = encodeURIComponent(storageId.trim());
+  return `${portal}/template/${id}`;
+}
+
+export function buildLegacyClientTemplateDownloadUrl(
+  plainToken: string,
+  storageId: string,
+): string {
+  const portal = buildLegacyClientPortalUrl(plainToken);
+  const id = encodeURIComponent(storageId.trim());
+  return `${portal}/template/${id}`;
+}
+
 /** Reserved first path segments — not company slugs. */
 export const PORTAL_COMPANY_SLUG_RESERVED = new Set([
   "pipeline",
@@ -87,4 +111,27 @@ export function parseCompanySlugPortalPath(pathname: string): {
   if (PORTAL_COMPANY_SLUG_RESERVED.has(companySlug.toLowerCase())) return null;
   if (!/^[a-zA-Z0-9._-]{8,128}$/.test(token)) return null;
   return { companySlug, token };
+}
+
+/** `/{companySlug}/{token}/template/{storageId}` — email-ready client template download. */
+export function parseCompanySlugPortalTemplatePath(pathname: string): {
+  companySlug: string;
+  token: string;
+  storageId: string;
+} | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 4) return null;
+  const [companySlug, token, templateSeg, storageIdRaw] = parts;
+  if (!companySlug || !token || !storageIdRaw) return null;
+  if (templateSeg !== "template") return null;
+  if (PORTAL_COMPANY_SLUG_RESERVED.has(companySlug.toLowerCase())) return null;
+  if (!/^[a-zA-Z0-9._-]{8,128}$/.test(token)) return null;
+  let storageId = storageIdRaw;
+  try {
+    storageId = decodeURIComponent(storageIdRaw);
+  } catch {
+    /* keep raw */
+  }
+  if (!/^[a-zA-Z0-9_-]{10,128}$/.test(storageId)) return null;
+  return { companySlug, token, storageId };
 }

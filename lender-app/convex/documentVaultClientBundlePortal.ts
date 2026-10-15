@@ -47,7 +47,12 @@ import {
   portalDealSheetDtoFromSources,
   portalPublicTaskRow,
 } from "./portalPublicDtos";
-import { buildClientPortalUrl, clientPortalPublicOrigin, slugifyCompanySlug } from "../lib/clientPortalUrl";
+import {
+  buildClientPortalUrl,
+  buildClientTemplateDownloadUrl,
+  clientPortalPublicOrigin,
+  slugifyCompanySlug,
+} from "../lib/clientPortalUrl";
 import {
   loadLinkByTokenHash,
   registerClientPortalLink,
@@ -164,6 +169,68 @@ async function loadBundleByPlain(
   }
   return { ok: true, row, link };
 }
+
+/**
+ * Bearer-token client template download for email-ready links.
+ * Auth: valid active bundle token + storageId must be a `clientTemplateAttachments`
+ * entry on a task in the bundle scope. Does not require portal OTP/passcode so the
+ * emailed "Download template:" URL works before the client opens the portal UI.
+ * Never serves arbitrary vault storage — only client-template attachments.
+ */
+export const resolveClientTemplateDownload = query({
+  args: {
+    bundleToken: v.string(),
+    storageId: v.id("_storage"),
+    companySlug: v.optional(v.string()),
+    /** Caller-supplied clock — never Date.now() inside the query handler. */
+    now: v.number(),
+  },
+  handler: async (ctx, { bundleToken, storageId, companySlug, now }) => {
+    const trimmed = normalizePortalToken(bundleToken);
+    if (!trimmed || trimmed.length > 128) {
+      return { status: "invalid" as const };
+    }
+    const tokenHash = await sha256Hex(trimmed);
+    const link = await loadLinkByTokenHash(ctx, tokenHash);
+    if (link?.status === "revoked") {
+      return { status: "revoked" as const };
+    }
+    const row = await ctx.db
+      .query("documentVaultClientBundleTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
+      .first();
+    if (!row || row.status !== "active") {
+      return { status: "revoked" as const };
+    }
+    if (row.expiresAt < now || link?.status === "expired") {
+      return { status: "expired" as const };
+    }
+    if (companySlug?.trim() && link) {
+      const expected = slugifyCompanySlug(companySlug);
+      if (link.companySlug !== expected) {
+        return { status: "slug_mismatch" as const };
+      }
+    }
+
+    const allTasks = await loadPipelineVaultTasks(ctx, row.pipelineFileId);
+    const scopedTaskIds = resolveBundleFileTaskIds(row, allTasks);
+    for (const taskId of scopedTaskIds) {
+      const task = await ctx.db.get(taskId);
+      if (!task || task.isArchived) continue;
+      for (const att of task.clientTemplateAttachments ?? []) {
+        if (att.storageId !== storageId) continue;
+        const url = await ctx.storage.getUrl(att.storageId);
+        if (!url) return { status: "not_found" as const };
+        return {
+          status: "ok" as const,
+          url,
+          fileName: att.fileName,
+        };
+      }
+    }
+    return { status: "unauthorized" as const };
+  },
+});
 
 /** Token-authorized deal sheet for client portal block editing (no member session). */
 export const getPortalDealSheet = query({
@@ -519,12 +586,22 @@ export const issueBundleToken = mutation({
     const portalUrl = portalUrlForSlug(companySlug, plainToken);
     const taskItems = selected.map((id) => {
       const task = allTasks.find((t) => t._id === id);
+      const attachments = task?.clientTemplateAttachments ?? [];
+      const templateDownloads = attachments.map((att) => ({
+        fileName: att.fileName,
+        url: buildClientTemplateDownloadUrl(
+          companySlug,
+          plainToken,
+          String(att.storageId),
+        ),
+      }));
       return clientLinkEmailItemFromFileTask({
         title: task?.title,
         description: task?.description,
         clientInstructionText: task?.clientInstructionText,
         instructionUrl: task?.instructionUrl,
-        clientTemplateAttachments: task?.clientTemplateAttachments,
+        clientTemplateAttachments: attachments,
+        templateDownloads,
       });
     });
     const taskTitles = taskItems.map((item) => item.title);
