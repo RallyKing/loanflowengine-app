@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { useQuery } from "convex/react";
+import { useQueries, type RequestForQueries } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useTriageClockTime } from "@/components/providers/TriageClockProvider";
@@ -38,7 +38,27 @@ export function useHubTriageHighlightMap(
     };
   }, [contextKey, organizationId, memberUserKey, nowBucket]);
 
-  const raw = useQuery(api.taskHighlights.getHubTriageHighlightMap, queryArgs);
+  /**
+   * Soft-fail: `useQueries` returns `Error` instead of throwing into the route
+   * error boundary when Convex aborts (system-op timeout). Server still must
+   * stay under budget — this only protects chrome when triage fails.
+   */
+  const triageQueries = useMemo((): RequestForQueries => {
+    if (queryArgs === "skip") return {};
+    return {
+      triage: {
+        query: api.taskHighlights.getHubTriageHighlightMap,
+        args: queryArgs,
+      },
+    };
+  }, [queryArgs]);
+  const triageResults = useQueries(triageQueries);
+  const raw =
+    queryArgs === "skip"
+      ? undefined
+      : triageResults.triage instanceof Error
+        ? undefined
+        : triageResults.triage;
 
   const lastKnownMapRef = useRef<HubTriageHighlightMapView>(
     EMPTY_HUB_TRIAGE_HIGHLIGHT_MAP,
