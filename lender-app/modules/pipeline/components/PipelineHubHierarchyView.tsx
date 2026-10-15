@@ -210,7 +210,7 @@ function LoanStackRow({
         hubLoanCardClass,
         stackTotal > 1 && "ml-4 border-l-2 border-l-primary/30 pl-3",
         focused && hubLoanCardFocusedClass,
-        "md:pr-32",
+        (fileHighlight || tasksUnderBadge) && "md:pr-32",
       )}
       badgeClassName="top-1.5"
     >
@@ -270,7 +270,6 @@ function LoanStackRow({
               lastActivityAt={row.updatedAt}
               compact
             />
-            <TaskRollupBadge counts={fileTaskCounts} />
           </div>
         </div>
         {organizationId && memberUserKey ? (
@@ -339,7 +338,6 @@ function LoanStackRow({
               lastActivityAt={row.updatedAt}
               compact
             />
-            <TaskRollupBadge counts={fileTaskCounts} />
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
