@@ -54,14 +54,8 @@ describeOrSkip("Pipeline hub — iPhone layout hygiene", () => {
     const frameCount = await frames.count();
     if (frameCount > 0) {
       const frame = frames.first();
-      const mobileSlot = frame.getByTestId(
-        "hub-triage-highlight-badge-slot-mobile",
-      );
-      await expect(mobileSlot).toBeVisible();
-      const desktopSlot = frame.getByTestId(
-        "hub-triage-highlight-badge-slot-desktop",
-      );
-      await expect(desktopSlot).toBeHidden();
+      const badgeStack = frame.getByTestId("hub-triage-highlight-badge-stack");
+      await expect(badgeStack).toBeVisible();
 
       const title = frame.getByTestId("pipeline-file-row-title").first();
       const badge = frame.getByTestId("hub-triage-highlight-badge").first();
