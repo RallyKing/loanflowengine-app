@@ -179,9 +179,11 @@ export function TrackRecordBlock({
       ? { pipelineFileId: fileId, memberUserKey }
       : "skip",
   );
+  // Public client portal embeds this block read-only without a session key.
+  // Skip the auth-gated contacts query there; server also soft-fails to [].
   const linkedContacts = useQuery(
     api.contactFileLinks.listLinkedContactsForFile,
-    fileId
+    fileId && !(readOnly && !memberUserKey)
       ? {
           fileId,
           ...(memberUserKey ? { memberUserKey } : {}),
