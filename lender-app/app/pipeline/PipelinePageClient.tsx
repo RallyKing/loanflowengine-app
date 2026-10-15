@@ -1856,14 +1856,29 @@ export function PipelinePageClient() {
               className="flex min-h-0 min-w-0 max-w-full flex-col flex-wrap items-stretch gap-4"
               data-testid="pipeline-hub-primary-toolbar"
             >
-              <SearchField
-                containerClassName="min-w-0 w-full shrink-0 basis-full sm:max-w-md sm:flex-1 sm:basis-[min(100%,20rem)]"
-                placeholder="Search client, project, loan, or deal fields…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onClear={() => setSearch("")}
-                aria-label="Search pipeline"
-              />
+              <div className="flex min-w-0 w-full shrink-0 basis-full items-center gap-2">
+                <SearchField
+                  containerClassName="min-w-0 flex-1 sm:max-w-md sm:flex-none sm:basis-[min(100%,20rem)]"
+                  placeholder="Search client, project, loan, or deal fields…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onClear={() => setSearch("")}
+                  aria-label="Search pipeline"
+                />
+                {search.length > 0 ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-10 min-h-10 shrink-0 rounded-dlc-sm px-3 text-xs font-medium text-muted-foreground hover:bg-dlc-surface-high/50 hover:text-foreground"
+                    data-testid="pipeline-hub-clear-search"
+                    aria-label="Clear search"
+                    onClick={() => setSearch("")}
+                  >
+                    Clear search
+                  </Button>
+                ) : null}
+              </div>
               <div className="min-w-0 w-full max-w-full flex-1 basis-full overflow-hidden sm:min-w-[12rem] sm:flex-[2_1_0%]">
                 <ProjectionModeSwitcher
                   className="w-full max-w-full"

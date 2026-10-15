@@ -1,5 +1,15 @@
 [
   {
+    "slug": "2026-10-14-pipeline-clear-search",
+    "title": "Clear pipeline hub search in one tap",
+    "summary": "When the Pipeline hub search box has text, a Clear search control appears beside it so you can reset the query without hunting for the small X inside the field.",
+    "body": [
+      "Type in the main Pipeline search (client, project, loan, or deal fields) and Clear search shows to the right of the field.",
+      "Clearing empties the search box and the saved hub search snapshot; filters and projection tabs are unchanged."
+    ],
+    "changeType": "improved"
+  },
+  {
     "slug": "2026-10-10-workspace-documents-tab-order",
     "title": "Documents sits next to Deal Info in the loan file",
     "summary": "On the pipeline loan file, the primary tabs are now Deal Info, Documents, Financials, Portals & Progress, then Forms & Applications — so the vault is one click from deal details.",
