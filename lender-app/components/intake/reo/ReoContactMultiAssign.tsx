@@ -102,9 +102,10 @@ export function ReoContactMultiAssign({
   const selected = normalizeContactIdList(selectedIds);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
+  // Skip on public client-portal embeds (read-only, no session); server also soft-fails.
   const fileContacts = useQuery(
     api.contactFileLinks.listLinkedContactsForFile,
-    fileId
+    fileId && !(readOnly && !memberUserKey)
       ? {
           fileId,
           ...(memberUserKey ? { memberUserKey } : {}),
