@@ -3,7 +3,12 @@ import {
   buildClientLinkEmailCopy,
   clientLinkEmailItemFromFileTask,
   flattenRichTextForEmail,
+  mergeClientLinkListIntoInviteBody,
 } from "../lib/clientLinkEmailCopy";
+import {
+  buildClientTemplateDownloadUrl,
+  parseCompanySlugPortalTemplatePath,
+} from "../lib/clientPortalUrl";
 
 function run() {
   const titleOnly = buildClientLinkEmailCopy(
@@ -74,6 +79,76 @@ function run() {
     clientTemplateAttachments: [{ length: 1 } as never],
   });
   assert.equal(templated.title, "Experience Track Record (see attached template)");
+
+  const templateUrl = buildClientTemplateDownloadUrl(
+    "direct-lending-connection",
+    "e61eb7fb4ec3a4522f9f80de2184ddc3473ab915ac0e10d8",
+    "kg27storageidtemplate01",
+  );
+  assert.equal(
+    templateUrl,
+    "https://paperworkprocessing.com/direct-lending-connection/e61eb7fb4ec3a4522f9f80de2184ddc3473ab915ac0e10d8/template/kg27storageidtemplate01",
+  );
+  assert.deepEqual(
+    parseCompanySlugPortalTemplatePath(
+      "/direct-lending-connection/e61eb7fb4ec3a4522f9f80de2184ddc3473ab915ac0e10d8/template/kg27storageidtemplate01",
+    ),
+    {
+      companySlug: "direct-lending-connection",
+      token: "e61eb7fb4ec3a4522f9f80de2184ddc3473ab915ac0e10d8",
+      storageId: "kg27storageidtemplate01",
+    },
+  );
+
+  const withTemplateDownload = buildClientLinkEmailCopy(
+    [
+      clientLinkEmailItemFromFileTask({
+        title: "Track Record",
+        clientTemplateAttachments: [{ length: 1 } as never],
+        templateDownloads: [
+          {
+            fileName: "Track Record Template.xlsx",
+            url: templateUrl,
+          },
+        ],
+      }),
+    ],
+    "https://paperworkprocessing.com/direct-lending-connection/e61eb7fb4ec3a4522f9f80de2184ddc3473ab915ac0e10d8",
+  );
+  assert.equal(
+    withTemplateDownload,
+    [
+      "• Track Record (see attached template)",
+      `  Download template: ${templateUrl}`,
+      "",
+      "Please upload the documents securely using the link below:",
+      "",
+      "https://paperworkprocessing.com/direct-lending-connection/e61eb7fb4ec3a4522f9f80de2184ddc3473ab915ac0e10d8",
+    ].join("\n"),
+  );
+
+  const multiTemplate = buildClientLinkEmailCopy(
+    [
+      {
+        title: "Track Record (see attached template)",
+        templateDownloads: [
+          { fileName: "A.xlsx", url: "https://example.com/a" },
+          { fileName: "B.xlsx", url: "https://example.com/b" },
+        ],
+      },
+    ],
+    "https://portal.example/x",
+  );
+  assert.ok(multiTemplate.includes("Download template (A.xlsx): https://example.com/a"));
+  assert.ok(multiTemplate.includes("Download template (B.xlsx): https://example.com/b"));
+
+  const inviteMerged = mergeClientLinkListIntoInviteBody(
+    "Hi {{Client_Name}},\n\nOpen:\n{{Upload_Link}}\n",
+    withTemplateDownload,
+  );
+  assert.ok(inviteMerged.includes("Download template:"));
+  assert.ok(inviteMerged.includes("{{Upload_Link}}"));
+  assert.ok(inviteMerged.indexOf("Download template:") < inviteMerged.indexOf("{{Upload_Link}}"));
 
   const noDuplicateUrl = buildClientLinkEmailCopy(
     [

@@ -339,6 +339,33 @@ export const generateUploadUrl = mutation({
   },
 });
 
+/**
+ * Staff download for a client template attached to a vault file task.
+ * Auth: pipeline read access. Scope: storageId must be on that task's
+ * clientTemplateAttachments (never arbitrary vault files).
+ */
+export const getClientTemplateDownloadUrl = query({
+  args: {
+    fileTaskId: v.id("documentVaultFileTasks"),
+    storageId: v.id("_storage"),
+    ...memberKeyArg,
+  },
+  handler: async (ctx, { fileTaskId, storageId, memberUserKey }) => {
+    const task = await ctx.db.get(fileTaskId);
+    if (!task) return null;
+    const pipeline = await ctx.db.get(task.pipelineFileId);
+    if (!pipeline) return null;
+    await assertCanReadPipelineRow(ctx, pipeline, memberUserKey);
+    const att = (task.clientTemplateAttachments ?? []).find(
+      (a) => a.storageId === storageId,
+    );
+    if (!att) return null;
+    const url = await ctx.storage.getUrl(att.storageId);
+    if (!url) return null;
+    return { url, fileName: att.fileName };
+  },
+});
+
 export const createWithConfig = mutation({
   args: {
     pipelineFileId: v.id("pipeline"),

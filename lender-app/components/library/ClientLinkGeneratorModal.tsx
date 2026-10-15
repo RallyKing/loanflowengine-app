@@ -12,6 +12,8 @@ import { cn } from "@/lib/cn";
 import {
   buildClientLinkEmailCopy,
   clientLinkEmailItemFromFileTask,
+  mergeClientLinkListIntoInviteBody,
+  type ClientLinkEmailItem,
 } from "@/lib/clientLinkEmailCopy";
 import { showOperationalToast } from "@/lib/ui/operationalToast";
 
@@ -112,13 +114,16 @@ export function ClientLinkGeneratorModal({
             : undefined,
         memberUserKey,
       });
+      // Prefer server taskItems (includes tokenized template download URLs).
+      const serverItems = (result.taskItems ?? []) as ClientLinkEmailItem[];
       const selectedTasks =
         mode === "selective"
           ? activeTasks.filter((t) => selected.has(String(t._id)))
           : activeTasks;
-      const items = selectedTasks.map((task) =>
-        clientLinkEmailItemFromFileTask(task),
-      );
+      const items: ClientLinkEmailItem[] =
+        serverItems.length > 0
+          ? serverItems
+          : selectedTasks.map((task) => clientLinkEmailItemFromFileTask(task));
       const titles = items
         .map((item) => item.title.trim())
         .filter((title) => title.length > 0);
@@ -126,6 +131,7 @@ export function ClientLinkGeneratorModal({
       setPortalUrl(result.portalUrl);
       setIncludedTitles(titles);
       setEmailCopy(copyText);
+      setBodyText((prev) => mergeClientLinkListIntoInviteBody(prev, copyText));
       showOperationalToast({
         title: "Client link generated",
         description: `${result.fileTaskCount} task(s) included.`,
@@ -169,11 +175,14 @@ export function ClientLinkGeneratorModal({
     }
     setInviteBusy(true);
     try {
+      const inviteBody = emailCopy
+        ? mergeClientLinkListIntoInviteBody(bodyText, emailCopy)
+        : bodyText;
       await sendInvite({
         pipelineFileId,
         to: inviteEmail.trim(),
         subject,
-        bodyText,
+        bodyText: inviteBody,
         portalUrl,
         clientName: clientName.trim() || undefined,
         memberUserKey,

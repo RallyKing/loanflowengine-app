@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import { useSortable } from "@dnd-kit/sortable";
 import { useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -30,6 +30,7 @@ import {
   GripVertical,
   Link2,
   Maximize2,
+  Paperclip,
   Pencil,
   FileText,
   RotateCcw,
@@ -189,6 +190,7 @@ export function FileTaskContainer({
   onLinkDocument,
   children,
 }: FileTaskContainerProps) {
+  const convex = useConvex();
   const issueUploadToken = useMutation(
     api.documentVaultFileTaskUploadPortal.issueUploadToken,
   );
@@ -222,6 +224,50 @@ export function FileTaskContainer({
       : undefined;
   const instructionUrlLabel =
     fileTask.instructionUrl?.trim() || instructionHref || "";
+  const clientTemplates = fileTask.clientTemplateAttachments ?? [];
+  const showAttachedTemplates =
+    (taskType === "document_upload" || taskType === "client_instruction") &&
+    clientTemplates.length > 0;
+
+  const openClientTemplate = useCallback(
+    async (storageId: Id<"_storage">) => {
+      if (!memberUserKey) {
+        showOperationalToast({
+          title: "Sign in required",
+          description: "Sign in to download the attached template.",
+          variant: "destructive",
+        });
+        return;
+      }
+      try {
+        const result = await convex.query(
+          api.documentVaultFileTasks.getClientTemplateDownloadUrl,
+          {
+            fileTaskId: fileTask._id,
+            storageId,
+            memberUserKey,
+          },
+        );
+        if (!result?.url) {
+          showOperationalToast({
+            title: "Template unavailable",
+            description: "Could not open this attached template.",
+            variant: "destructive",
+          });
+          return;
+        }
+        window.open(result.url, "_blank", "noopener,noreferrer");
+      } catch (e) {
+        showOperationalToast({
+          title: "Download failed",
+          description:
+            e instanceof Error ? e.message : "Could not open template.",
+          variant: "destructive",
+        });
+      }
+    },
+    [convex, fileTask._id, memberUserKey],
+  );
 
   const cardSurfaceClass = isComplete
     ? "border-2 border-emerald-200/80 border-l-4 border-l-emerald-500 bg-emerald-50/50 dark:border-emerald-800/80 dark:border-l-emerald-500 dark:bg-emerald-950/20"
@@ -609,6 +655,28 @@ export function FileTaskContainer({
                 <span className="shrink-0">Direct Link</span>
                 <span className="min-w-0 truncate">{instructionUrlLabel}</span>
               </a>
+            </div>
+          ) : null}
+
+          {showAttachedTemplates ? (
+            <div
+              className="mt-0.5 min-w-0 space-y-0.5 pl-[calc(1rem+1.25rem)]"
+              data-testid={`file-task-attached-templates-${fileTask._id}`}
+            >
+              {clientTemplates.map((att) => (
+                <button
+                  key={String(att.storageId)}
+                  type="button"
+                  className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-dlc-sm py-1 pr-1 text-left text-[11px] font-medium text-amber-800 transition-colors duration-dlc-short ease-dlc-standard hover:text-amber-950 hover:underline dark:text-amber-300 dark:hover:text-amber-200"
+                  title={`Download ${att.fileName}`}
+                  data-testid={`file-task-attached-template-${fileTask._id}-${att.storageId}`}
+                  onClick={() => void openClientTemplate(att.storageId)}
+                >
+                  <Paperclip className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="shrink-0">Attached template</span>
+                  <span className="min-w-0 truncate">{att.fileName}</span>
+                </button>
+              ))}
             </div>
           ) : null}
 

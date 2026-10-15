@@ -11,7 +11,10 @@ import {
 } from "@/lib/middlewareHostMapping";
 import { LENDER_HOST_ORG_COOKIE } from "@/lib/hostOrgCookie";
 import { SESSION_COOKIE_NAME, verifySession } from "@/lib/sessionAuth";
-import { parseCompanySlugPortalPath } from "@/lib/clientPortalUrl";
+import {
+  parseCompanySlugPortalPath,
+  parseCompanySlugPortalTemplatePath,
+} from "@/lib/clientPortalUrl";
 import { fetchPortalLinkRoute } from "@/lib/middlewarePortalRouting";
 
 /**
@@ -156,6 +159,23 @@ export default async function middleware(req: NextRequest) {
         nextWithRequestObservability(req, requestId, correlationId),
         hostOrgId,
       ),
+      requestId,
+      correlationId,
+      pathname,
+    );
+  }
+
+  const companyPortalTemplate = parseCompanySlugPortalTemplatePath(pathname);
+  if (companyPortalTemplate) {
+    const rewriteUrl = req.nextUrl.clone();
+    rewriteUrl.pathname = `/client-portal/${encodeURIComponent(companyPortalTemplate.token)}/template/${encodeURIComponent(companyPortalTemplate.storageId)}`;
+    rewriteUrl.searchParams.set("companySlug", companyPortalTemplate.companySlug);
+    trace.debug("auth.middleware", {
+      outcome: "company_portal_template_rewrite",
+      companySlug: companyPortalTemplate.companySlug,
+    });
+    return withObservability(
+      applyHostOrgCookie(NextResponse.rewrite(rewriteUrl), hostOrgId),
       requestId,
       correlationId,
       pathname,
