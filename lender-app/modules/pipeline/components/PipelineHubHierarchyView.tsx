@@ -66,6 +66,7 @@ import {
   HubTriageHighlightFrame,
   TaskRollupBadge,
 } from "@/components/pipeline/tasks/HubTriageHighlightChrome";
+import { PipelineFileTasksCardControl } from "@/components/pipeline/tasks/PipelineFileTasksCardControl";
 import {
   resolveTaskRollupCounts,
   resolveTriageHighlight,
@@ -188,15 +189,28 @@ function LoanStackRow({
     kind: "file",
     id: String(row._id),
   });
+  const tasksUnderBadge =
+    organizationId && memberUserKey ? (
+      <PipelineFileTasksCardControl
+        pipelineFileId={row._id}
+        fileName={row.fileName}
+        organizationId={organizationId}
+        memberUserKey={memberUserKey}
+        canEdit={row.canEditFile}
+        highlight={fileHighlight}
+        counts={fileTaskCounts}
+      />
+    ) : null;
   return (
     <HubTriageHighlightFrame
       highlight={fileHighlight}
+      underBadge={tasksUnderBadge}
       className={cn(
         "group/loan-row flex flex-col gap-1 px-3 py-2",
         hubLoanCardClass,
         stackTotal > 1 && "ml-4 border-l-2 border-l-primary/30 pl-3",
         focused && hubLoanCardFocusedClass,
-        fileHighlight && "md:pr-28",
+        "md:pr-32",
       )}
       badgeClassName="top-1.5"
     >

@@ -34,8 +34,12 @@ import {
 } from "@/lib/pipeline/pipelineTableFormatting";
 import { pipelineDealEditorHref } from "@/lib/pipeline/routes";
 import { HubTriageHighlightFrame } from "@/components/pipeline/tasks/HubTriageHighlightChrome";
+import { PipelineFileTasksCardControl } from "@/components/pipeline/tasks/PipelineFileTasksCardControl";
 import { useHubTriageHighlightMap } from "@/hooks/useHubTriageHighlightMap";
-import { resolveTriageHighlight } from "@/lib/pipeline/hubTriageHighlight";
+import {
+  resolveTaskRollupCounts,
+  resolveTriageHighlight,
+} from "@/lib/pipeline/hubTriageHighlight";
 import { ResourceOwnershipLine } from "@/components/ownership/ResourceOwnershipLine";
 import type { PipelineTablePreviewRow } from "@/lib/pipelineTablePreview";
 import {
@@ -332,6 +336,9 @@ function BoardCard({
   onMomentumCommit,
   assigneeLabel,
   triageHighlight,
+  taskCounts,
+  organizationId,
+  memberUserKey,
 }: {
   row: PipelineTablePreviewRow;
   hubFocusFileId: Id<"pipeline"> | null;
@@ -341,6 +348,9 @@ function BoardCard({
   onMomentumCommit?: (n: ClientMomentumCommitValue) => void;
   assigneeLabel: (userKey: string) => string;
   triageHighlight?: ReturnType<typeof resolveTriageHighlight>;
+  taskCounts?: ReturnType<typeof resolveTaskRollupCounts>;
+  organizationId?: Id<"organizations">;
+  memberUserKey?: string;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: String(row._id),
@@ -350,6 +360,19 @@ function BoardCard({
   const dragHandleProps = dragDisabled
     ? undefined
     : { ...attributes, ...listeners };
+
+  const tasksUnderBadge =
+    organizationId && memberUserKey ? (
+      <PipelineFileTasksCardControl
+        pipelineFileId={row._id}
+        fileName={row.fileName}
+        organizationId={organizationId}
+        memberUserKey={memberUserKey}
+        canEdit={row.canEditFile}
+        highlight={triageHighlight}
+        counts={taskCounts}
+      />
+    ) : null;
 
   return (
     <li
@@ -365,7 +388,8 @@ function BoardCard({
     >
       <HubTriageHighlightFrame
         highlight={triageHighlight}
-        className="rounded-dlc-md"
+        underBadge={tasksUnderBadge}
+        className="rounded-dlc-md pr-1 md:pr-2"
         badgeClassName="top-1.5 right-1.5"
       >
         <BoardCardContent
@@ -547,6 +571,12 @@ export function PipelineBoardView({
                               triageHighlights,
                               { kind: "file", id: String(r._id) },
                             )}
+                            taskCounts={resolveTaskRollupCounts(
+                              triageHighlights,
+                              { kind: "file", id: String(r._id) },
+                            )}
+                            organizationId={activeOrganizationId ?? undefined}
+                            memberUserKey={memberUserKey}
                           />
                         ))}
                       </ul>
@@ -576,6 +606,12 @@ export function PipelineBoardView({
                     kind: "file",
                     id: String(r._id),
                   })}
+                  taskCounts={resolveTaskRollupCounts(triageHighlights, {
+                    kind: "file",
+                    id: String(r._id),
+                  })}
+                  organizationId={activeOrganizationId ?? undefined}
+                  memberUserKey={memberUserKey}
                 />
               ))}
             </BoardColumn>

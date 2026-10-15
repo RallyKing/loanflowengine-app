@@ -19,6 +19,7 @@ import {
   HubTriageHighlightFrame,
   TaskRollupBadge,
 } from "@/components/pipeline/tasks/HubTriageHighlightChrome";
+import { PipelineFileTasksCardControl } from "@/components/pipeline/tasks/PipelineFileTasksCardControl";
 import {
   EMPTY_HUB_TRIAGE_HIGHLIGHT_MAP,
   resolveTaskRollupCounts,
@@ -71,15 +72,29 @@ export function PipelineHubMobileFileCard({
     kind: "file",
     id: String(r._id),
   });
+  const tasksUnderBadge =
+    activeOrganizationId && memberUserKey ? (
+      <PipelineFileTasksCardControl
+        pipelineFileId={r._id}
+        fileName={r.fileName}
+        organizationId={activeOrganizationId}
+        memberUserKey={memberUserKey}
+        canEdit={r.canEditFile}
+        highlight={fileHighlight}
+        counts={fileTaskCounts}
+      />
+    ) : null;
+
   return (
     <HubTriageHighlightFrame
       highlight={fileHighlight}
+      underBadge={tasksUnderBadge}
       className={cn(
         hubMobileFileCardClass,
         archived && "opacity-65",
         selected &&
           "ring-2 ring-primary/30 ring-offset-2 ring-offset-background",
-        fileHighlight && "md:pr-28",
+        "md:pr-32",
       )}
       badgeClassName="top-2 right-2"
     >
