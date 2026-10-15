@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type DragEvent } from "react";
 import { useMutation } from "convex/react";
 import { Download, Loader2, Paperclip, X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -10,6 +10,10 @@ import {
   MAX_FILE_TASK_CLIENT_TEMPLATES,
   type FileTaskClientTemplateAttachment,
 } from "@/lib/fileTaskClientTemplates";
+import {
+  isOsFileDragEvent,
+  readOsFilesFromDragEvent,
+} from "@/lib/library/documentVaultOsFileDrop";
 import {
   postFileToConvexUploadUrl,
   validateTaskAttachmentFile,
@@ -56,6 +60,7 @@ export function FileTaskClientTemplateAttach({
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploads, setUploads] = useState<UploadRow[]>([]);
+  const [dragOver, setDragOver] = useState(false);
   const generatePipelineUploadUrl = useMutation(
     api.documentVaultFileTasks.generateUploadUrl,
   );
@@ -68,6 +73,7 @@ export function FileTaskClientTemplateAttach({
   const canUpload = Boolean(
     memberUserKey && (pipelineFileId || organizationId),
   );
+  const dropEnabled = !disabled && !anyUploading && !atCap && canUpload;
 
   const removeAt = (storageId: string) => {
     onChange(value.filter((a) => a.storageId !== storageId));
@@ -142,10 +148,55 @@ export function FileTaskClientTemplateAttach({
     if (inputRef.current) inputRef.current.value = "";
   };
 
+  const onDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (!dropEnabled || !isOsFileDragEvent(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  };
+
+  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!dropEnabled || !isOsFileDragEvent(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+    setDragOver(true);
+  };
+
+  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragOver(false);
+  };
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    if (!dropEnabled) return;
+    const files = readOsFilesFromDragEvent(e);
+    if (files.length === 0) return;
+    void uploadFiles(files);
+  };
+
   return (
     <div
-      className={cn("space-y-2", className)}
+      className={cn(
+        "space-y-2 rounded-dlc-md border border-dashed p-2.5 transition-colors duration-dlc-standard ease-dlc-standard",
+        dragOver && dropEnabled
+          ? "border-primary bg-primary/5"
+          : "border-border/70 bg-muted/5",
+        className,
+      )}
       data-testid="file-task-client-templates"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      data-drag-over={dragOver && dropEnabled ? "true" : undefined}
+      role="region"
+      aria-label="Client template attachments. Drag and drop files or use Attach."
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -154,8 +205,14 @@ export function FileTaskClientTemplateAttach({
           </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             Optional file(s) the client can download while completing this
-            request (max {MAX_FILE_TASK_CLIENT_TEMPLATES}).
+            request (max {MAX_FILE_TASK_CLIENT_TEMPLATES}). Drag and drop or use
+            Attach.
           </p>
+          {dragOver && dropEnabled ? (
+            <p className="mt-1 text-[11px] font-medium text-primary" role="status">
+              Drop to attach
+            </p>
+          ) : null}
         </div>
         <div className="shrink-0">
           <input
