@@ -6,6 +6,7 @@ import { borrower, guarantor, incomeRow, assetRow, liabilityRow, reoBlockMeta, r
 import { pfsInstanceV } from "./pfsStatementValidators";
 import { simplePlInstanceV } from "./simplePlValidators";
 import {
+  dealPatchIsNoOp,
   mergePatchIntoDeal,
   resolveDealBaseForPipelinePatch,
 } from "./dealDataMerge";
@@ -3432,6 +3433,11 @@ async function applyTrackRecordDealPatch(
     cleaned.trackRecordMeta = normalizeTrackRecordMeta(trackRecordMeta);
   }
   const deal = await resolveDealBaseForPipelinePatch(ctx, file);
+  // Retry-safe: skip no-op patches (same rows/meta) so dual-write + OCC retries
+  // do not bump updatedAt or rewrite intake when nothing changed.
+  if (dealPatchIsNoOp(deal, cleaned)) {
+    return { ok: true as const };
+  }
   const mergedDeal = mergePatchIntoDeal(deal, cleaned) as Record<string, unknown>;
   const now = Date.now();
   await ctx.db.patch(
@@ -3744,6 +3750,7 @@ export const pullContactTrackRecordToDeal = mutation({
     if (!contact) throw new Error("Contact not found");
     await assertCanReadContactRow(ctx, contact, memberUserKey);
 
+    // bounded: one contact's sticky Track Record properties (not org-wide)
     const stored = await ctx.db
       .query("contactTrackRecordProperties")
       .withIndex("by_contact_sort", (q) => q.eq("contactId", args.contactId))

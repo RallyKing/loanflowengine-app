@@ -240,6 +240,17 @@
     "deploymentId": "dpl_5fEhZh7sX7jvR8MGLYztScgRxhHw"
   },
   {
+    "slug": "2026-10-14-track-record-excel-complete",
+    "title": "Track Record: Excel-complete polish",
+    "summary": "Investment Property Track Record now keeps Project Type next to owned-by flags so rehab/new-construction counts update immediately, uses date pickers, links guarantor contacts, flushes sticky dual-write on leave, and skips no-op Convex patches.",
+    "body": [
+      "Project Type sits right after the #1–#4 owned-by-guarantor columns (same Excel dropdowns: Rehab, Extensive Rehab, New Construction) so experience totals update without scrolling past title and acquisition fields. A cue appears when a Yes flag is set without a project type.",
+      "Acquisition and sold/leased dates use native date inputs. Each guarantor row can link a contact. Leaving the block flushes pending contact dual-write so sticky properties are not dropped mid-debounce.",
+      "Track Record deal patches skip when rows and meta are unchanged (retry-safe), matching resource-safety expectations for dual-write saves."
+    ],
+    "changeType": "improved"
+  },
+  {
     "slug": "2026-08-07-file-task-complete-delete-note-modal",
     "title": "Optional note when completing or deleting a file task",
     "summary": "On a pipeline file, completing or deleting a task now asks if you want to leave a note — and that note lands in the same file Notes block.",

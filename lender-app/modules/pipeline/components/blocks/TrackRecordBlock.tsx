@@ -5,6 +5,11 @@
  * (see `lib/trackRecord/trackRecordModel.ts`). Persists under deal
  * `trackRecord` / `trackRecordMeta`; dual-writes sticky rows to
  * `contactTrackRecordProperties`.
+ *
+ * Column order: Excel fields are all present. Project Type sits immediately
+ * after owned-by-guarantor flags so rehab / new-construction counts update
+ * without scrolling past Title / acquisition columns (Excel puts Project Type
+ * after Acquisition Price — same data, UX-first for experience formulas).
  */
 import {
   useCallback,
@@ -42,10 +47,13 @@ import {
   TRACK_RECORD_YES_NO,
   computeTrackRecordExperience,
   computeTrackRecordScheduleTotals,
+  countTrackRecordRowsNeedingProjectType,
   createEmptyTrackRecordMeta,
   createEmptyTrackRecordRow,
   formatTrackRecordUsd,
   normalizeTrackRecordMeta,
+  toTrackRecordDateInputValue,
+  trackRecordRowNeedsProjectTypeForExperience,
   type DealTrackRecordRow,
   type TrackRecordBlockMeta,
   type TrackRecordGuarantorSlot,
@@ -53,6 +61,46 @@ import {
 
 const CELL =
   "h-10 min-h-[40px] min-w-0 rounded-dlc-sm border border-border/80 bg-dlc-surface px-2 text-xs text-foreground";
+
+const OWNED_KEYS = [
+  "ownedByGuarantor1",
+  "ownedByGuarantor2",
+  "ownedByGuarantor3",
+  "ownedByGuarantor4",
+] as const;
+
+/** Date cell: prefer `<input type="date">`; keep text if legacy value won't parse. */
+function TrackRecordDateCell(props: {
+  value: string | undefined;
+  disabled?: boolean;
+  "aria-label": string;
+  onChange: (next: string | undefined) => void;
+}) {
+  const raw = (props.value ?? "").trim();
+  const normalized = toTrackRecordDateInputValue(raw);
+  if (raw && !normalized) {
+    return (
+      <input
+        type="text"
+        className={cn(CELL, "w-36")}
+        value={props.value ?? ""}
+        disabled={props.disabled}
+        aria-label={props["aria-label"]}
+        onChange={(e) => props.onChange(e.target.value || undefined)}
+      />
+    );
+  }
+  return (
+    <input
+      type="date"
+      className={cn(CELL, "w-36")}
+      value={normalized}
+      disabled={props.disabled}
+      aria-label={props["aria-label"]}
+      onChange={(e) => props.onChange(e.target.value || undefined)}
+    />
+  );
+}
 
 export type TrackRecordBlockProps = {
   contactId?: Id<"contacts"> | null;
@@ -97,6 +145,20 @@ export function TrackRecordBlock({
   const [copyOpen, setCopyOpen] = useState(false);
   const dirtyRef = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingDualWriteRef = useRef<{
+    rows: DealTrackRecordRow[];
+    meta: TrackRecordBlockMeta;
+  } | null>(null);
+  const fileIdRef = useRef(fileId);
+  const memberUserKeyRef = useRef(memberUserKey);
+  const saveDualWriteRef = useRef<
+    ((args: {
+      fileId: Id<"pipeline">;
+      trackRecord: DealTrackRecordRow[];
+      trackRecordMeta: TrackRecordBlockMeta;
+      preferencesAccountId?: string;
+    }) => Promise<unknown>) | null
+  >(null);
 
   const generateUploadUrl = useMutation(api.libraryDocuments.generateUploadUrl);
   const createDocument = useMutation(api.libraryDocuments.createDocument);
@@ -127,6 +189,10 @@ export function TrackRecordBlock({
       : "skip",
   );
 
+  fileIdRef.current = fileId;
+  memberUserKeyRef.current = memberUserKey;
+  saveDualWriteRef.current = (args) => saveDualWrite(args);
+
   const vaultMutations = useMemo((): VaultUploadMutations => {
     return {
       generateUploadUrl: (args) => generateUploadUrl(args),
@@ -155,9 +221,39 @@ export function TrackRecordBlock({
     [contactNameById],
   );
 
+  const flushDualWritePending = useCallback(() => {
+    const id = fileIdRef.current;
+    const save = saveDualWriteRef.current;
+    const snapshot = pendingDualWriteRef.current;
+    if (readOnly || !id || !save || !snapshot) return;
+    void save({
+      fileId: id,
+      trackRecord: snapshot.rows,
+      trackRecordMeta: snapshot.meta,
+      ...(memberUserKeyRef.current
+        ? { preferencesAccountId: memberUserKeyRef.current }
+        : {}),
+    })
+      .then(() => {
+        // Only clear if nothing newer was staged while this flush was in flight.
+        if (pendingDualWriteRef.current === snapshot) {
+          dirtyRef.current = false;
+          pendingDualWriteRef.current = null;
+        }
+      })
+      .catch(() => {
+        showOperationalToast({
+          title: "Could not save Track Record",
+          description: "Try again. Your last edits may not have synced.",
+          variant: "destructive",
+        });
+      });
+  }, [readOnly]);
+
   const persist = useCallback(
     (nextRows: DealTrackRecordRow[], nextMeta: TrackRecordBlockMeta) => {
       dirtyRef.current = true;
+      pendingDualWriteRef.current = { rows: nextRows, meta: nextMeta };
       (update as (key: string, value: unknown) => void)("trackRecord", nextRows);
       (update as (key: string, value: unknown) => void)(
         "trackRecordMeta",
@@ -166,26 +262,26 @@ export function TrackRecordBlock({
       if (readOnly || !fileId) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        void saveDualWrite({
-          fileId,
-          trackRecord: nextRows,
-          trackRecordMeta: nextMeta,
-          ...(memberUserKey ? { preferencesAccountId: memberUserKey } : {}),
-        }).catch(() => {
-          showOperationalToast({
-            title: "Could not save Track Record",
-            description: "Try again. Your last edits may not have synced.",
-            variant: "destructive",
-          });
-        });
+        flushDualWritePending();
       }, 450);
     },
-    [fileId, memberUserKey, readOnly, saveDualWrite, update],
+    [fileId, flushDualWritePending, readOnly, update],
   );
 
+  const flushDualWritePendingRef = useRef(flushDualWritePending);
+  flushDualWritePendingRef.current = flushDualWritePending;
+
+  // Unmount-only flush of pending dual-write (contact sticky sync). Deal draft
+  // flush is owned by useDealWorkspaceEditor; this timer must not discard work.
   useEffect(
     () => () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      if (dirtyRef.current && pendingDualWriteRef.current) {
+        flushDualWritePendingRef.current();
+      }
     },
     [],
   );
@@ -198,6 +294,10 @@ export function TrackRecordBlock({
     () => computeTrackRecordScheduleTotals(rows),
     [rows],
   );
+  const missingProjectTypeCount = useMemo(
+    () => countTrackRecordRowsNeedingProjectType(rows),
+    [rows],
+  );
 
   const setRow = (i: number, patch: Partial<DealTrackRecordRow>) => {
     persist(
@@ -207,7 +307,9 @@ export function TrackRecordBlock({
   };
 
   const setGuarantor = (i: number, patch: Partial<TrackRecordGuarantorSlot>) => {
-    const guarantors = [...(meta.guarantors ?? createEmptyTrackRecordMeta().guarantors!)];
+    const guarantors = [
+      ...(meta.guarantors ?? createEmptyTrackRecordMeta().guarantors!),
+    ];
     while (guarantors.length < 4) guarantors.push({});
     guarantors[i] = { ...guarantors[i], ...patch };
     persist(rows, { ...meta, guarantors });
@@ -398,11 +500,25 @@ export function TrackRecordBlock({
         <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Experience
         </h3>
+        {missingProjectTypeCount > 0 ? (
+          <p
+            className="rounded-dlc-sm border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground"
+            role="status"
+            data-testid="track-record-project-type-cue"
+          >
+            {missingProjectTypeCount} propert
+            {missingProjectTypeCount === 1 ? "y has" : "ies have"} an owned-by
+            guarantor flag but no Project type. Set Rehab, Extensive Rehab, or
+            New Construction on those rows so experience counts match the Excel
+            workbook.
+          </p>
+        ) : null}
         <div className="max-w-full overflow-x-auto overscroll-x-contain touch-pan-x [-webkit-overflow-scrolling:touch]">
-          <table className="w-full min-w-[640px] border-separate border-spacing-y-1 text-xs">
+          <table className="w-full min-w-[720px] border-separate border-spacing-y-1 text-xs">
             <thead>
               <tr className="text-left font-medium uppercase tracking-wide text-muted-foreground">
                 <th className="px-2 py-1">Name</th>
+                <th className="px-2 py-1">Contact</th>
                 <th className="px-2 py-1 text-right">Rehab</th>
                 <th className="px-2 py-1 text-right">New const.</th>
                 <th className="px-2 py-1 text-right">Total</th>
@@ -426,6 +542,34 @@ export function TrackRecordBlock({
                       />
                     )}
                   </td>
+                  <td className="px-2 py-1 align-top">
+                    <ReoContactMultiAssign
+                      compact
+                      selectedIds={
+                        meta.guarantors?.[i]?.contactId
+                          ? [meta.guarantors[i]!.contactId!]
+                          : []
+                      }
+                      onChange={(ids) => {
+                        const nextId = ids[0];
+                        const nameFromContact = nextId
+                          ? contactNameById.get(nextId)
+                          : undefined;
+                        setGuarantor(i, {
+                          contactId: nextId || undefined,
+                          ...(nameFromContact &&
+                          !(meta.guarantors?.[i]?.name ?? "").trim()
+                            ? { name: nameFromContact }
+                            : {}),
+                        });
+                      }}
+                      organizationId={organizationId}
+                      memberUserKey={memberUserKey || undefined}
+                      fileId={fileId}
+                      label={`Link guarantor #${i + 1} contact`}
+                      readOnly={readOnly}
+                    />
+                  </td>
                   <td className="px-2 py-1 text-right tabular-nums">
                     {g.rehabCount}
                   </td>
@@ -438,7 +582,7 @@ export function TrackRecordBlock({
                 </tr>
               ))}
               <tr className="font-semibold">
-                <td className="px-2 py-1">
+                <td className="px-2 py-1" colSpan={2}>
                   Qualifying experience (highest individual)
                 </td>
                 <td className="px-2 py-1 text-right tabular-nums">
@@ -488,10 +632,10 @@ export function TrackRecordBlock({
               <th className="px-2">#2</th>
               <th className="px-2">#3</th>
               <th className="px-2">#4</th>
+              <th className="px-2">Project type</th>
               <th className="px-2">Title held in name</th>
               <th className="px-2">Acquisition date</th>
               <th className="px-2">Acquisition price</th>
-              <th className="px-2">Project type</th>
               <th className="px-2">Rehab / construction $</th>
               <th className="px-2">Exit</th>
               <th className="px-2">Date sold / leased</th>
@@ -576,62 +720,31 @@ export function TrackRecordBlock({
                     ))}
                   </select>
                 </td>
-                {(["ownedByGuarantor1", "ownedByGuarantor2", "ownedByGuarantor3", "ownedByGuarantor4"] as const).map(
-                  (key, gi) => (
-                    <td key={key} className="px-1">
-                      <select
-                        className={cn(CELL, "w-16")}
-                        value={row[key] ?? "No"}
-                        disabled={readOnly}
-                        aria-label={`Owned by guarantor ${gi + 1} row ${i + 1}`}
-                        onChange={(e) => setRow(i, { [key]: e.target.value })}
-                      >
-                        {TRACK_RECORD_YES_NO.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  ),
-                )}
-                <td className="px-1">
-                  <input
-                    className={cn(CELL, "min-w-[10rem]")}
-                    value={row.titleHeldInName ?? ""}
-                    disabled={readOnly}
-                    aria-label={`Title held ${i + 1}`}
-                    onChange={(e) =>
-                      setRow(i, { titleHeldInName: e.target.value })
-                    }
-                  />
-                </td>
-                <td className="px-1">
-                  <input
-                    className={cn(CELL, "w-32")}
-                    value={row.acquisitionDate ?? ""}
-                    disabled={readOnly}
-                    aria-label={`Acquisition date ${i + 1}`}
-                    onChange={(e) =>
-                      setRow(i, { acquisitionDate: e.target.value })
-                    }
-                  />
-                </td>
-                <td className="px-1">
-                  <input
-                    className={cn(CELL, "w-28 text-right tabular-nums")}
-                    value={row.acquisitionPrice ?? ""}
-                    disabled={readOnly}
-                    inputMode="decimal"
-                    aria-label={`Acquisition price ${i + 1}`}
-                    onChange={(e) =>
-                      setRow(i, { acquisitionPrice: e.target.value })
-                    }
-                  />
-                </td>
+                {OWNED_KEYS.map((key, gi) => (
+                  <td key={key} className="px-1">
+                    <select
+                      className={cn(CELL, "w-16")}
+                      value={row[key] ?? "No"}
+                      disabled={readOnly}
+                      aria-label={`Owned by guarantor ${gi + 1} row ${i + 1}`}
+                      onChange={(e) => setRow(i, { [key]: e.target.value })}
+                    >
+                      {TRACK_RECORD_YES_NO.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                ))}
                 <td className="px-1">
                   <select
-                    className={cn(CELL, "w-40")}
+                    className={cn(
+                      CELL,
+                      "w-40",
+                      trackRecordRowNeedsProjectTypeForExperience(row) &&
+                        "border-amber-500/60",
+                    )}
                     value={row.projectType ?? ""}
                     disabled={readOnly}
                     aria-label={`Project type ${i + 1}`}
@@ -646,6 +759,37 @@ export function TrackRecordBlock({
                       </option>
                     ))}
                   </select>
+                </td>
+                <td className="px-1">
+                  <input
+                    className={cn(CELL, "min-w-[10rem]")}
+                    value={row.titleHeldInName ?? ""}
+                    disabled={readOnly}
+                    aria-label={`Title held ${i + 1}`}
+                    onChange={(e) =>
+                      setRow(i, { titleHeldInName: e.target.value })
+                    }
+                  />
+                </td>
+                <td className="px-1">
+                  <TrackRecordDateCell
+                    value={row.acquisitionDate}
+                    disabled={readOnly}
+                    aria-label={`Acquisition date ${i + 1}`}
+                    onChange={(next) => setRow(i, { acquisitionDate: next })}
+                  />
+                </td>
+                <td className="px-1">
+                  <input
+                    className={cn(CELL, "w-28 text-right tabular-nums")}
+                    value={row.acquisitionPrice ?? ""}
+                    disabled={readOnly}
+                    inputMode="decimal"
+                    aria-label={`Acquisition price ${i + 1}`}
+                    onChange={(e) =>
+                      setRow(i, { acquisitionPrice: e.target.value })
+                    }
+                  />
                 </td>
                 <td className="px-1">
                   <input
@@ -678,14 +822,11 @@ export function TrackRecordBlock({
                   </select>
                 </td>
                 <td className="px-1">
-                  <input
-                    className={cn(CELL, "w-36")}
-                    value={row.dateSoldOrLeased ?? ""}
+                  <TrackRecordDateCell
+                    value={row.dateSoldOrLeased}
                     disabled={readOnly}
                     aria-label={`Date sold or leased ${i + 1}`}
-                    onChange={(e) =>
-                      setRow(i, { dateSoldOrLeased: e.target.value })
-                    }
+                    onChange={(next) => setRow(i, { dateSoldOrLeased: next })}
                   />
                 </td>
                 <td className="px-1">
@@ -733,13 +874,17 @@ export function TrackRecordBlock({
               </tr>
             ))}
             <tr className="font-semibold">
-              <td colSpan={12} className="px-2 py-2 text-right">
+              {/*
+                Columns before Acquisition price:
+                checkbox, #, address, city, ST, zip, type, #1–#4, project type,
+                title, acquisition date = 14.
+              */}
+              <td colSpan={14} className="px-2 py-2 text-right">
                 Totals
               </td>
               <td className="px-2 py-2 text-right tabular-nums">
                 {formatTrackRecordUsd(totals.acquisitionPrice)}
               </td>
-              <td />
               <td className="px-2 py-2 text-right tabular-nums">
                 {formatTrackRecordUsd(totals.rehabOrConstructionAmount)}
               </td>
